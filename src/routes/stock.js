@@ -1,0 +1,37 @@
+const { Router } = require("express");
+const stockController = require("../controllers/stockController");
+const { requireAuth } = require("../middleware/auth");
+
+const router = Router();
+
+router.get("/national", requireAuth, stockController.getStockNATIONAL);
+router.get("/regional", requireAuth, stockController.getStockREGIONAL);
+router.get("/district", requireAuth, stockController.getStockDISTRICT);
+router.get("/health-center", requireAuth, stockController.getStockHEALTHCENTER);
+
+router.post("/national", requireAuth, stockController.createStockNATIONAL);
+router.post("/regional", requireAuth, stockController.createStockREGIONAL);
+router.post("/district", requireAuth, stockController.createStockDISTRICT);
+router.post("/health-center", requireAuth, stockController.createStockHEALTHCENTER);
+
+router.put("/national", requireAuth, stockController.updateStockNATIONAL);
+router.put("/regional", requireAuth, stockController.updateStockREGIONAL);
+router.put("/district", requireAuth, stockController.updateStockDISTRICT);
+router.put("/health-center", requireAuth, stockController.updateStockHEALTHCENTER);
+
+router.put("/add-national", requireAuth, stockController.addStockNATIONAL);
+router.put("/add-regional", requireAuth, stockController.addStockREGIONAL);
+router.put("/add-district", requireAuth, stockController.addStockDISTRICT);
+router.put("/add-health-center", requireAuth, stockController.addStockHEALTHCENTER);
+
+router.put("/reduce-national", requireAuth, stockController.reduceStockNATIONAL);
+router.put("/reduce-regional", requireAuth, stockController.reduceStockREGIONAL);
+router.put("/reduce-district", requireAuth, stockController.reduceStockDISTRICT);
+router.put("/reduce-health-center", requireAuth, stockController.reduceStockHEALTHCENTER);
+
+router.get("/stats/national", requireAuth, stockController.getNationalStockStats);
+router.get("/stats/regional", requireAuth, stockController.getRegionalStockStats);
+router.get("/stats/district", requireAuth, stockController.getDistrictStockStats);
+router.get("/stats/health-center", requireAuth, stockController.getHealthCenterStockStats);
+
+module.exports = router;

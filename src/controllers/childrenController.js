@@ -1,0 +1,682 @@
+const prisma = require("../config/prismaClient");
+const { sendParentAccessCode } = require("../services/notification");
+const { generateAccessCode } = require("../utils/accessCode");
+
+const mapChildrenForResponse = (child) => {
+  const dueVaccines =
+    child.dueVaccines?.map((entry) => ({
+      name: entry.vaccine.name,
+      scheduledFor: entry.scheduledFor,
+      ageWindow: {
+        unit: entry.vaccineCalendar.ageUnit,
+        specificAge: entry.vaccineCalendar.specificAge,
+        min: entry.vaccineCalendar.minAge,
+        max: entry.vaccineCalendar.maxAge,
+      },
+    })) ?? [];
+
+  const scheduledVaccines =
+    child.scheduledVaccines?.map((entry) => ({
+      name: entry.vaccine.name,
+      scheduledFor: entry.scheduledFor,
+      plannerId: entry.plannerId,
+    })) ?? [];
+
+  const lateVaccines =
+    child.lateVaccines?.map((entry) => ({
+      name: entry.vaccine.name,
+      dueDate: entry.dueDate,
+    })) ?? [];
+
+  const overdueVaccines =
+    child.overdueVaccines?.map((entry) => ({
+      name: entry.vaccine.name,
+      dueDate: entry.dueDate,
+    })) ?? [];
+
+  const completedVaccines =
+    child.completedVaccines?.map((entry) => ({
+      name: entry.vaccine.name,
+      administeredAt: entry.administeredAt,
+      administeredById: entry.administeredById,
+    })) ?? [];
+
+  return {
+    id: child.id,
+    firstName: child.firstName,
+    lastName: child.lastName,
+    name: `${child.firstName} ${child.lastName}`.trim(),
+    gender: child.gender,
+    birthDate: child.birthDate,
+    region: child.healthCenter?.district?.commune?.region?.name ?? child.healthCenter?.district?.name ?? "",
+    healthCenter: child.healthCenter?.name ?? "",
+    parentName: child.fatherName || child.motherName || "",
+    parentPhone: child.phoneParent,
+    address: child.address ?? "",
+    status: child.status,
+    nextAppointment: child.nextAppointment,
+    vaccinesDue: dueVaccines,
+    vaccinesScheduled: scheduledVaccines,
+    vaccinesLate: lateVaccines,
+    vaccinesOverdue: overdueVaccines,
+    vaccinesCompleted: completedVaccines,
+    createdAt: child.birthDate,
+    updatedAt: child.birthDate,
+  };
+};
+
+const createChildren = async (req, res, next) => {
+  const {
+    firstName,
+    lastName,
+    birthDate,
+    birthPlace,
+    address,
+    gender,
+    healthCenterId,
+    emailParent,
+    phoneParent,
+    fatherName,
+    motherName,
+  } = req.body;
+
+  const now = new Date();
+  const birth = new Date(birthDate);
+
+  const ageInDays = Math.floor((now.getTime() - birth.getTime()) / 86400000);
+  const ageInWeeks = Math.floor(ageInDays / 7);
+  const ageInMonths = Math.floor(ageInDays / 30.4375);
+  const ageInYears = Math.floor(ageInDays / 365.25);
+
+  const getAgeByUnit = (unit) => {
+    switch (unit) {
+      case "WEEKS":
+        return ageInWeeks;
+      case "MONTHS":
+        return ageInMonths;
+      case "YEARS":
+        return ageInYears;
+      default:
+        return ageInWeeks;
+    }
+  };
+
+  const computeDueDate = (unit, value) => {
+    const result = new Date(birth);
+    if (value == null) return result;
+    if (unit === "WEEKS") {
+      result.setDate(result.getDate() + value * 7);
+    } else if (unit === "MONTHS") {
+      result.setMonth(result.getMonth() + value);
+    } else if (unit === "YEARS") {
+      result.setFullYear(result.getFullYear() + value);
+    } else {
+      result.setDate(result.getDate() + value);
+    }
+    return result;
+  };
+
+  try {
+    const calendarEntries = await prisma.vaccineCalendar.findMany({
+      include: { vaccines: true },
+    });
+
+    let createdChild;
+
+    await prisma.$transaction(async (tx) => {
+      createdChild = await tx.children.create({
+        data: {
+          firstName,
+          lastName,
+          birthDate: birth,
+          birthPlace,
+          address,
+          gender,
+          healthCenterId,
+          status: "A_JOUR",
+          emailParent,
+          phoneParent,
+          fatherName,
+          motherName,
+          code: generateAccessCode(),
+        },
+      });
+
+      const duePayload = [];
+      const latePayload = [];
+      let hasLate = false;
+
+      for (const entry of calendarEntries) {
+        const age = getAgeByUnit(entry.ageUnit);
+        const dueDate =
+          entry.specificAge != null
+            ? computeDueDate(entry.ageUnit, entry.specificAge)
+            : computeDueDate(entry.ageUnit, entry.maxAge);
+
+        const isWithinRange =
+          entry.specificAge != null
+            ? age === entry.specificAge
+            : age >= entry.minAge && age <= entry.maxAge;
+
+        const isPastRange =
+          entry.specificAge != null
+            ? age > entry.specificAge
+            : age > entry.maxAge;
+
+        if (isWithinRange) {
+          for (const vaccine of entry.vaccines) {
+            duePayload.push({
+              childId: createdChild.id,
+              vaccineCalendarId: entry.id,
+              vaccineId: vaccine.id,
+              scheduledFor: dueDate,
+            });
+          }
+        } else if (isPastRange) {
+          for (const vaccine of entry.vaccines) {
+            latePayload.push({
+              childId: createdChild.id,
+              vaccineCalendarId: entry.id,
+              vaccineId: vaccine.id,
+              dueDate,
+            });
+            hasLate = true;
+          }
+        }
+      }
+
+      if (duePayload.length > 0) {
+        await tx.childVaccineDue.createMany({
+          data: duePayload,
+          skipDuplicates: true,
+        });
+      }
+
+      if (latePayload.length > 0) {
+        await tx.childVaccineLate.createMany({
+          data: latePayload,
+          skipDuplicates: true,
+        });
+      }
+
+      if (hasLate) {
+        await tx.children.update({
+          where: { id: createdChild.id },
+          data: { status: "PAS_A_JOUR" },
+        });
+      }
+    });
+
+    const fullChild = await prisma.children.findUnique({
+      where: { id: createdChild.id },
+      include: {
+        healthCenter: {
+          select: {
+            name: true,
+            district: {
+              select: {
+                name: true,
+                commune: {
+                  select: {
+                    region: { select: { name: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+        completedVaccines: {
+          include: { vaccine: { select: { name: true } } },
+        },
+        dueVaccines: {
+          include: {
+            vaccine: { select: { name: true } },
+            vaccineCalendar: {
+              select: {
+                ageUnit: true,
+                specificAge: true,
+                minAge: true,
+                maxAge: true,
+              },
+            },
+          },
+        },
+        scheduledVaccines: {
+          include: { vaccine: { select: { name: true } } },
+        },
+        lateVaccines: {
+          include: { vaccine: { select: { name: true } } },
+        },
+        overdueVaccines: {
+          include: { vaccine: { select: { name: true } } },
+        },
+      },
+    });
+
+    res.status(201).json(mapChildrenForResponse(fullChild));
+
+    await sendParentAccessCode({
+      to: fullChild.phoneParent,
+      parentName: fatherName || motherName || "Parent",
+      childName: `${fullChild.firstName} ${fullChild.lastName}`,
+      accessCode: fullChild.code,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const updateChildren = async (req, res, next) => {
+  if (req.user.role !== "AGENT" && req.user.role !== "DISTRICT") {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  try {
+    const { nextVaccineId, nextAgentId, nextAppointment } = req.body;
+    const childrenId = req.params.id;
+
+    const existingChild = await prisma.children.findUnique({
+      where: { id: childrenId },
+    });
+
+    if (!existingChild) {
+      return res.status(404).json({ message: "Enfant non trouvé" });
+    }
+
+    const updatedChild = await prisma.children.update({
+      where: { id: childrenId },
+      data: {
+        nextVaccineId,
+        nextAgentId,
+        nextAppointment,
+      },
+    });
+
+    res.json(updatedChild);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getChildren = async (req, res, next) => {
+  if (!["NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  try {
+    let whereClause = {};
+
+    if (req.user.role === "REGIONAL") {
+      const regional = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { regionId: true },
+      });
+
+      if (!regional?.regionId) {
+        return res.json({ total: 0, items: [] });
+      }
+
+      whereClause = {
+        healthCenter: {
+          district: {
+            commune: {
+              regionId: regional.regionId,
+            },
+          },
+        },
+      };
+    }
+
+    if (req.user.role === "DISTRICT") {
+      const districtUser = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { districtId: true },
+      });
+
+      if (!districtUser?.districtId) {
+        return res.json({ total: 0, items: [] });
+      }
+
+      whereClause = {
+        healthCenter: {
+          districtId: districtUser.districtId,
+        },
+      };
+    }
+
+    if (req.user.role === "AGENT") {
+      const agent = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { healthCenterId: true },
+      });
+
+      if (!agent?.healthCenterId) {
+        return res.json({ total: 0, items: [] });
+      }
+
+      whereClause = {
+        healthCenterId: agent.healthCenterId,
+      };
+    }
+
+    const children = await prisma.children.findMany({
+      where: whereClause,
+      include: {
+        healthCenter: {
+          select: {
+            name: true,
+            district: {
+              select: {
+                name: true,
+                commune: {
+                  select: {
+                    region: { select: { name: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+        completedVaccines: {
+          include: { vaccine: { select: { name: true } } },
+        },
+        dueVaccines: {
+          include: {
+            vaccine: { select: { name: true } },
+            vaccineCalendar: {
+              select: {
+                ageUnit: true,
+                specificAge: true,
+                minAge: true,
+                maxAge: true,
+              },
+            },
+          },
+        },
+        scheduledVaccines: {
+          include: {
+            vaccine: { select: { name: true } },
+            planner: { select: { id: true, firstName: true, lastName: true } },
+          },
+        },
+        lateVaccines: {
+          include: { vaccine: { select: { name: true } } },
+        },
+        overdueVaccines: {
+          include: { vaccine: { select: { name: true } } },
+        },
+      },
+    });
+
+    res.json({
+      total: children.length,
+      items: children.map(mapChildrenForResponse),
+    });
+  } catch (error) {
+    console.error("getChildren error:", error);
+    next(error);
+  }
+};
+
+const getChildVaccinations = async (req, res, next) => {
+  if (req.user.role !== "NATIONAL") {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  const { id } = req.params;
+
+  try {
+    const child = await prisma.children.findUnique({
+      where: { id },
+      include: {
+        healthCenter: {
+          select: {
+            name: true,
+            district: {
+              select: {
+                name: true,
+                commune: {
+                  select: {
+                    region: { select: { name: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+        dueVaccines: {
+          include: {
+            vaccine: { select: { id: true, name: true } },
+            vaccineCalendar: {
+              select: {
+                id: true,
+                description: true,
+                ageUnit: true,
+                specificAge: true,
+                minAge: true,
+                maxAge: true,
+              },
+            },
+          },
+        },
+        scheduledVaccines: {
+          include: {
+            vaccine: { select: { id: true, name: true } },
+            planner: {
+              select: { id: true, firstName: true, lastName: true },
+            },
+          },
+        },
+        lateVaccines: {
+          include: {
+            vaccine: { select: { id: true, name: true } },
+            vaccineCalendar: { select: { id: true, description: true } },
+          },
+        },
+        overdueVaccines: {
+          include: {
+            vaccine: { select: { id: true, name: true } },
+            vaccineCalendar: { select: { id: true, description: true } },
+          },
+        },
+        completedVaccines: {
+          include: {
+            vaccine: { select: { id: true, name: true } },
+            administeredBy: {
+              select: { id: true, firstName: true, lastName: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!child) {
+      return res.status(404).json({ message: "Enfant non trouvé" });
+    }
+
+    res.json({
+      child: {
+        id: child.id,
+        firstName: child.firstName,
+        lastName: child.lastName,
+        name: `${child.firstName} ${child.lastName}`.trim(),
+        gender: child.gender,
+        birthDate: child.birthDate,
+        status: child.status,
+        parentName: child.fatherName || child.motherName || "",
+        parentPhone: child.phoneParent,
+        address: child.address,
+        region: child.healthCenter?.district?.commune?.region?.name ?? child.healthCenter?.district?.name ?? "",
+        healthCenter: child.healthCenter?.name ?? "",
+      },
+      vaccinations: {
+        due: child.dueVaccines.map((entry) => ({
+          id: entry.id,
+          vaccineId: entry.vaccineId,
+          vaccineName: entry.vaccine.name,
+          scheduledFor: entry.scheduledFor,
+          calendarId: entry.vaccineCalendarId,
+          calendarDescription: entry.vaccineCalendar.description,
+          ageUnit: entry.vaccineCalendar.ageUnit,
+          specificAge: entry.vaccineCalendar.specificAge,
+          minAge: entry.vaccineCalendar.minAge,
+          maxAge: entry.vaccineCalendar.maxAge,
+        })),
+        scheduled: child.scheduledVaccines.map((entry) => ({
+          id: entry.id,
+          vaccineId: entry.vaccineId,
+          vaccineName: entry.vaccine.name,
+          scheduledFor: entry.scheduledFor,
+          plannerId: entry.plannerId,
+          plannerName: entry.planner
+            ? `${entry.planner.firstName ?? ""} ${entry.planner.lastName ?? ""}`.trim()
+            : null,
+          calendarId: entry.vaccineCalendarId,
+        })),
+        late: child.lateVaccines.map((entry) => ({
+          id: entry.id,
+          vaccineId: entry.vaccineId,
+          vaccineName: entry.vaccine.name,
+          dueDate: entry.dueDate,
+          calendarId: entry.vaccineCalendarId,
+          calendarDescription: entry.vaccineCalendar?.description,
+        })),
+        overdue: child.overdueVaccines.map((entry) => ({
+          id: entry.id,
+          vaccineId: entry.vaccineId,
+          vaccineName: entry.vaccine.name,
+          dueDate: entry.dueDate,
+          calendarId: entry.vaccineCalendarId,
+          calendarDescription: entry.vaccineCalendar?.description,
+        })),
+        completed: child.completedVaccines.map((entry) => ({
+          id: entry.id,
+          vaccineId: entry.vaccineId,
+          vaccineName: entry.vaccine.name,
+          administeredAt: entry.administeredAt,
+          administeredById: entry.administeredById,
+          administeredByName: entry.administeredBy
+            ? `${entry.administeredBy.firstName ?? ""} ${entry.administeredBy.lastName ?? ""}`.trim()
+            : null,
+          calendarId: entry.vaccineCalendarId,
+        })),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getParentsOverview = async (req, res, next) => {
+  if (!["NATIONAL", "REGIONAL"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  try {
+    let whereClause = {};
+
+    if (req.user.role === "REGIONAL") {
+      const regionUser = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { regionId: true },
+      });
+
+      if (!regionUser?.regionId) {
+        return res.json({ success: true, data: [] });
+      }
+
+      whereClause = {
+        healthCenter: {
+          district: {
+            commune: {
+              regionId: regionUser.regionId,
+            },
+          },
+        },
+      };
+    }
+
+    const children = await prisma.children.findMany({
+      where: whereClause,
+      include: {
+        healthCenter: {
+          select: {
+            name: true,
+            district: {
+              select: {
+                name: true,
+                commune: {
+                  select: {
+                    region: { select: { name: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const parentsMap = new Map();
+
+    children.forEach((child) => {
+      const key =
+        child.phoneParent ||
+        `${child.fatherName ?? ""}-${child.motherName ?? ""}`.trim();
+      if (!key) return;
+
+      if (!parentsMap.has(key)) {
+        parentsMap.set(key, {
+          parentPhone: child.phoneParent ?? "",
+          parentName: child.fatherName || child.motherName || "Parent",
+          parentEmail: child.emailParent ?? null,
+          children: [],
+          regions: new Set(),
+          healthCenters: new Set(),
+        });
+      }
+
+      const parentEntry = parentsMap.get(key);
+      parentEntry.children.push({
+        id: child.id,
+        firstName: child.firstName,
+        lastName: child.lastName,
+        gender: child.gender,
+        status: child.status,
+        region: child.healthCenter?.district?.commune?.region?.name ?? child.healthCenter?.district?.name ?? "",
+        healthCenter: child.healthCenter?.name ?? "",
+        nextAppointment: child.nextAppointment,
+        birthDate: child.birthDate,
+      });
+
+      if (child.healthCenter?.district?.commune?.region?.name) {
+        parentEntry.regions.add(child.healthCenter.district.commune.region.name);
+      }
+      if (child.healthCenter?.name) {
+        parentEntry.healthCenters.add(child.healthCenter.name);
+      }
+    });
+
+    const data = Array.from(parentsMap.values()).map((entry) => ({
+      parentPhone: entry.parentPhone,
+      parentName: entry.parentName,
+      parentEmail: entry.parentEmail,
+      childrenCount: entry.children.length,
+      children: entry.children,
+      regions: Array.from(entry.regions),
+      healthCenters: Array.from(entry.healthCenters),
+    }));
+
+    res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+module.exports = {
+  createChildren,
+  updateChildren,
+  getChildren,
+  getChildVaccinations,
+  getParentsOverview,
+};

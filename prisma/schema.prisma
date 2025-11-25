@@ -1,0 +1,312 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                      String        @id @default(uuid())
+  firstName               String
+  lastName                String
+  email                   String        @unique
+  emailVerified           Boolean       @default(false)
+  pendingEmail            String?
+  emailVerificationCode   String?
+  emailVerificationExpiry DateTime?
+  password                String
+  code                    String?        
+  phone                   String
+  role                    Role
+  regionId                String?
+  region                  Region? @relation(fields: [regionId], references: [id])
+  agentLevel              AgentLevel?
+  districtId              String?
+  district                District? @relation(fields: [districtId], references: [id])
+  healthCenterId          String?
+  healthCenter            HealthCenter? @relation(fields: [healthCenterId], references: [id])
+  isActive                Boolean       @default(false)
+
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+
+  activationToken         String?
+  activationExpires       DateTime?
+
+  childrens               Children[]
+  records                 Record[]
+  vaccinesCompleted      ChildVaccineCompleted[] @relation("UserAsAdministered")
+  vaccinesScheduled      ChildVaccineScheduled[] @relation("UserAsScheduler")
+  vaccinesEscalated      ChildVaccineOverdue[]   @relation("UserAsEscalated")
+}
+
+enum Role {
+  NATIONAL
+  REGIONAL
+  DISTRICT
+  AGENT
+}
+
+enum AgentLevel {
+  ADMIN
+  STAFF
+}
+
+model HealthCenter {
+  id                      String          @id @default(uuid())
+  name                    String
+  address                 String
+  districtId              String
+  district                District        @relation(fields: [districtId], references: [id])
+
+  users                   User[]
+  stockHEALTHCENTER       StockHEALTHCENTER[]  
+  childrens               Children[]
+  records                 Record[]
+
+
+}
+
+model Region {
+  id                      String        @id @default(uuid())
+  name                    String
+
+  users         User[]
+  communes      Commune[]
+  stockREGIONAL   StockREGIONAL[]
+}
+
+model VaccineCalendar {
+  id            String  @id @default(uuid())
+  vaccines      Vaccine[]
+  description   String
+  ageUnit       AgeUnit
+  specificAge   Int
+  minAge        Int
+  maxAge        Int
+
+  completedEntries   ChildVaccineCompleted[]
+  dueEntries         ChildVaccineDue[]
+  scheduledEntries   ChildVaccineScheduled[]
+  overdueEntries     ChildVaccineOverdue[] 
+  lateEntries        ChildVaccineLate[]
+}
+
+enum AgeUnit {
+  WEEKS
+  MONTHS
+  YEARS
+}
+
+model Vaccine {
+  id                String        @id @default(uuid())
+  name              String
+  description       String
+  dosesRequired     String
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  vaccineCalendars                VaccineCalendar[]
+  StockNATIONAL                   StockNATIONAL?
+  StockREGIONAL                   StockREGIONAL[]
+  StockDISTRICT                   StockDISTRICT[]
+  StockHEALTHCENTER               StockHEALTHCENTER[]
+  childrens                       Children[]
+  records                         Record[]
+  completedByChildren  ChildVaccineCompleted[]
+  dueForChildren       ChildVaccineDue[]
+  scheduledForChildren ChildVaccineScheduled[]
+  overdueForChildren   ChildVaccineOverdue[]
+  lateForChildren      ChildVaccineLate[]
+}
+
+model Commune {
+  id          String  @id @default(uuid())
+  name        String
+  regionId    String
+  region      Region @relation(fields: [regionId], references: [id])
+  district    District?
+}
+
+model District {
+  id                String          @id @default(uuid())
+  name              String
+  communeId         String          @unique
+  commune           Commune         @relation(fields: [communeId], references: [id])
+
+  healthCenters     HealthCenter[]
+  users             User[]
+  stockDISTRICT     StockDISTRICT[]
+  
+
+}
+
+model StockNATIONAL {
+  id                String          @id @default(uuid())
+  vaccineId         String          @unique
+  vaccine           Vaccine         @relation(fields: [vaccineId], references: [id])
+  quantity          Int?
+}
+
+model StockREGIONAL {
+  id                String          @id @default(uuid())
+  vaccineId         String          
+  vaccine           Vaccine         @relation(fields: [vaccineId], references: [id])
+  regionId          String          
+  region            Region          @relation(fields: [regionId], references: [id])
+  quantity          Int?            @default(0)
+
+    @@unique([vaccineId, regionId])
+}
+
+model StockDISTRICT {
+  id                String          @id @default(uuid())
+  vaccineId         String          
+  vaccine           Vaccine         @relation(fields: [vaccineId], references: [id])
+  districtId        String          
+  district          District        @relation(fields: [districtId], references: [id])
+  quantity          Int?
+
+  @@unique([vaccineId, districtId])
+
+}
+
+model StockHEALTHCENTER {
+  id                String          @id @default(uuid())
+  vaccineId         String          
+  vaccine           Vaccine         @relation(fields: [vaccineId], references: [id])
+  healthCenterId    String          
+  healthCenter      HealthCenter    @relation(fields: [healthCenterId], references: [id])
+  quantity          Int?
+
+  @@unique([vaccineId, healthCenterId])
+}
+
+model Children {
+  id                      String          @id @default(uuid())
+  firstName               String
+  lastName                String
+  birthDate               DateTime
+  birthPlace              String
+  gender                  Gender
+  address                 String
+  healthCenterId          String          @unique
+  healthCenter            HealthCenter    @relation(fields: [healthCenterId], references: [id])
+  status                  Status
+  emailParent             String
+  passwordParent          String          @default("0000")
+  code                    String?
+  phoneParent             String
+  fatherName              String
+  motherName              String
+  nextVaccineId           String?
+  vaccine                 Vaccine?         @relation(fields: [nextVaccineId], references: [id])
+  nextAgentId             String?
+  user                    User?            @relation(fields: [nextAgentId], references: [id])
+  nextAppointment         DateTime?
+
+  records                 Record[]
+  completedVaccines      ChildVaccineCompleted[]
+  dueVaccines            ChildVaccineDue[]
+  scheduledVaccines      ChildVaccineScheduled[]
+  overdueVaccines        ChildVaccineOverdue[]
+  lateVaccines           ChildVaccineLate[]
+}
+
+enum Gender {
+  M
+  F
+}
+
+enum Status {
+  A_JOUR
+  PAS_A_JOUR
+}
+
+model Record {
+  id                      String          @id @default(uuid())
+  healthCenterId          String
+  healthCenter            HealthCenter    @relation(fields: [healthCenterId], references: [id])
+  vaccineId               String
+  vaccine                 Vaccine         @relation(fields: [vaccineId], references: [id])
+  agentId                 String
+  user                    User            @relation(fields: [agentId], references: [id])
+  childrenId              String
+  children                Children        @relation(fields: [childrenId], references: [id])
+}
+
+
+model ChildVaccineCompleted {
+  id                 String           @id @default(uuid())
+  childId            String
+  child              Children         @relation(fields: [childId], references: [id])
+  vaccineCalendarId  String
+  vaccineCalendar    VaccineCalendar  @relation(fields: [vaccineCalendarId], references: [id])
+  vaccineId          String
+  vaccine            Vaccine          @relation(fields: [vaccineId], references: [id])
+  administeredAt     DateTime         @default(now())
+  administeredById   String?
+  administeredBy     User?            @relation("UserAsAdministered", fields: [administeredById], references: [id])
+  notes              String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@unique([childId, vaccineCalendarId])
+}
+
+model ChildVaccineDue {
+  id                 String           @id @default(uuid())
+  childId            String
+  child              Children         @relation(fields: [childId], references: [id])
+  vaccineCalendarId  String
+  vaccineCalendar    VaccineCalendar  @relation(fields: [vaccineCalendarId], references: [id])
+  vaccineId          String
+  vaccine            Vaccine          @relation(fields: [vaccineId], references: [id])
+  scheduledFor       DateTime
+
+  @@unique([childId, vaccineCalendarId, vaccineId])
+}
+
+model ChildVaccineScheduled {
+  id                 String           @id @default(uuid())
+  childId            String
+  child              Children         @relation(fields: [childId], references: [id])
+  vaccineCalendarId  String
+  vaccineCalendar    VaccineCalendar  @relation(fields: [vaccineCalendarId], references: [id])
+  vaccineId          String
+  vaccine            Vaccine          @relation(fields: [vaccineId], references: [id])
+  scheduledFor       DateTime
+  plannerId          String?
+  planner            User?            @relation("UserAsScheduler", fields: [plannerId], references: [id])
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@unique([childId, vaccineCalendarId, vaccineId])
+}
+
+model ChildVaccineOverdue {
+  id                 String           @id @default(uuid())
+  childId            String
+  child              Children         @relation(fields: [childId], references: [id])
+  vaccineCalendarId  String
+  vaccineCalendar    VaccineCalendar  @relation(fields: [vaccineCalendarId], references: [id])
+  vaccineId          String
+  vaccine            Vaccine          @relation(fields: [vaccineId], references: [id])
+  dueDate            DateTime
+  escalatedToId      String?
+  escalatedTo        User?            @relation("UserAsEscalated", fields: [escalatedToId], references: [id])
+}
+
+model ChildVaccineLate {
+  id                 String           @id @default(uuid())
+  childId            String
+  child              Children         @relation(fields: [childId], references: [id])
+  vaccineCalendarId  String
+  vaccineCalendar    VaccineCalendar  @relation(fields: [vaccineCalendarId], references: [id])
+  vaccineId          String
+  vaccine            Vaccine          @relation(fields: [vaccineId], references: [id])
+  dueDate            DateTime         
+  detectedAt         DateTime         @default(now()) // moment où le retard est détecté
+}
