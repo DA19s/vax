@@ -69,37 +69,136 @@ export default function ManagedUsersPage() {
   const isNational = user?.role === "NATIONAL";
   const isRegional = user?.role === "REGIONAL";
   const isDistrict = user?.role === "DISTRICT";
+  const isAgentAdmin = user?.role === "AGENT" && user?.agentLevel === "ADMIN";
 
-  const title = isNational
-    ? "Gestion des régionaux"
-    : isRegional
-    ? "Gestion des agents de district"
-    : "Gestion des agents";
-  const description = isNational
-    ? "Administration des utilisateurs responsables des régions."
-    : isRegional
-    ? "Administration des administrateurs de district pour votre région."
-    : "Administration des agents de santé rattachés à vos centres.";
-  const createLabel = isNational
-    ? "Ajouter un régional"
-    : isRegional
-    ? "Ajouter un agent de district"
-    : "Ajouter un agent";
-  const emptyLabel = isNational
-    ? "Aucun régional enregistré"
-    : isRegional
-    ? "Aucun agent de district enregistré"
-    : "Aucun agent enregistré";
-  const scopeLabel = isNational ? "Région" : isRegional ? "District" : "Centre de santé";
-  const scopeApiPath = isNational ? "region" : isRegional ? "district" : "healthCenter";
-  const usersApiPath = isNational ? "regional" : isRegional ? "district" : "agent-admin";
-  const expectedRole = isNational ? "REGIONAL" : isRegional ? "DISTRICT" : "AGENT";
-  const expectedAgentLevel = isDistrict ? "ADMIN" : undefined;
-  const activePath = isNational
-    ? "/dashboard/regionaux"
-    : isRegional
-    ? "/dashboard/regionaux"
-    : "/dashboard/agents";
+  const config = useMemo(() => {
+    if (isNational) {
+      return {
+        mode: "national" as const,
+        title: "Gestion des régionaux",
+        description: "Administration des utilisateurs responsables des régions.",
+        createLabel: "Ajouter un régional",
+        emptyLabel: "Aucun régional enregistré",
+        scopeLabel: "Région",
+        scopeApiPath: "region",
+        usersApiPath: "regional",
+        expectedRole: "REGIONAL",
+        expectedAgentLevel: undefined,
+        activePath: "/dashboard/regionaux",
+        statsTitle: "Total régionaux",
+        canManage: true,
+        showScopeSelect: true,
+        scopeField: "regionId" as const,
+        defaultScopeId: undefined,
+        defaultScopeName: undefined,
+      };
+    }
+
+    if (isRegional) {
+      return {
+        mode: "regional" as const,
+        title: "Gestion des agents de district",
+        description: "Administration des administrateurs de district pour votre région.",
+        createLabel: "Ajouter un agent de district",
+        emptyLabel: "Aucun agent de district enregistré",
+        scopeLabel: "District",
+        scopeApiPath: "district",
+        usersApiPath: "district",
+        expectedRole: "DISTRICT",
+        expectedAgentLevel: undefined,
+        activePath: "/dashboard/regionaux",
+        statsTitle: "Total agents de district",
+        canManage: true,
+        showScopeSelect: true,
+        scopeField: "districtId" as const,
+        defaultScopeId: undefined,
+        defaultScopeName: undefined,
+      };
+    }
+
+    if (isDistrict) {
+      return {
+        mode: "district" as const,
+        title: "Gestion des agents",
+        description: "Administration des agents de santé rattachés à vos centres.",
+        createLabel: "Ajouter un agent",
+        emptyLabel: "Aucun agent enregistré",
+        scopeLabel: "Centre de santé",
+        scopeApiPath: "healthCenter",
+        usersApiPath: "agent-admin",
+        expectedRole: "AGENT",
+        expectedAgentLevel: "ADMIN" as const,
+        activePath: "/dashboard/agents",
+        statsTitle: "Total agents",
+        canManage: true,
+        showScopeSelect: true,
+        scopeField: "healthCenterId" as const,
+        defaultScopeId: undefined,
+        defaultScopeName: undefined,
+      };
+    }
+
+    if (isAgentAdmin) {
+      return {
+        mode: "agentAdmin" as const,
+        title: "Gestion de l'équipe",
+        description: "Administrez les agents staff de votre centre de santé.",
+        createLabel: "Ajouter un agent staff",
+        emptyLabel: "Aucun agent staff enregistré",
+        scopeLabel: null,
+        scopeApiPath: null,
+        usersApiPath: "agent-staff",
+        expectedRole: "AGENT",
+        expectedAgentLevel: "STAFF" as const,
+        activePath: "/dashboard/equipe",
+        statsTitle: "Total agents staff",
+        canManage: true,
+        showScopeSelect: false,
+        scopeField: "healthCenterId" as const,
+        defaultScopeId: user?.healthCenterId ?? "",
+        defaultScopeName: user?.healthCenterName ?? "Votre centre de santé",
+      };
+    }
+
+    return {
+      mode: "unsupported" as const,
+      title: "Gestion des utilisateurs",
+      description: "Votre rôle ne permet pas d’accéder à cette section.",
+      createLabel: "",
+      emptyLabel: "Aucun utilisateur",
+      scopeLabel: null,
+      scopeApiPath: null,
+      usersApiPath: "",
+      expectedRole: "",
+      expectedAgentLevel: undefined,
+      activePath: "/dashboard",
+      statsTitle: "Total utilisateurs",
+      canManage: false,
+      showScopeSelect: false,
+      scopeField: "healthCenterId" as const,
+      defaultScopeId: "",
+      defaultScopeName: "",
+    };
+  }, [isNational, isRegional, isDistrict, isAgentAdmin, user?.healthCenterId, user?.healthCenterName]);
+
+  const title = config.title;
+  const description = config.description;
+  const createLabel = config.createLabel;
+  const emptyLabel = config.emptyLabel;
+  const scopeLabel = config.scopeLabel;
+  const scopeApiPath = config.scopeApiPath;
+  const usersApiPath = config.usersApiPath;
+  const expectedRole = config.expectedRole;
+  const expectedAgentLevel = config.expectedAgentLevel;
+  const activePath = config.activePath;
+  const statsTitle = config.statsTitle;
+  const canManage = config.canManage;
+  const showScopeSelect = config.showScopeSelect;
+  const scopeField = config.scopeField;
+  const defaultScopeId = config.defaultScopeId ?? "";
+  const defaultScopeName = config.defaultScopeName ?? "";
+
+  const isUnsupported = config.mode === "unsupported";
 
   const [scopes, setScopes] = useState<ScopeOption[]>([]);
   const [usersList, setUsersList] = useState<ManagedUser[]>([]);
@@ -115,8 +214,43 @@ export default function ManagedUsersPage() {
   const [deleteTarget, setDeleteTarget] = useState<ManagedUser | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  const fallbackScopeName = defaultScopeName || "Votre centre de santé";
+
+  const editTitle =
+    config.mode === "national"
+      ? "Modifier le régional"
+      : config.mode === "regional"
+      ? "Modifier l'agent de district"
+      : config.mode === "district"
+      ? "Modifier l'agent"
+      : "Modifier l'agent staff";
+
+  const createTitle =
+    config.mode === "national"
+      ? "Nouveau régional"
+      : config.mode === "regional"
+      ? "Nouvel agent de district"
+      : config.mode === "district"
+      ? "Nouvel agent"
+      : "Nouvel agent staff";
+
+  const disableIdentityFields =
+    formMode === "edit" && !(isNational || isRegional || isAgentAdmin);
+
+  useEffect(() => {
+    if (!showScopeSelect) {
+      if (defaultScopeId) {
+        setScopes([{ id: defaultScopeId, name: fallbackScopeName }]);
+      } else {
+        setScopes([]);
+      }
+    }
+  }, [showScopeSelect, defaultScopeId, fallbackScopeName]);
+
   const fetchScopes = useCallback(async () => {
-    if (!accessToken) return;
+    if (!accessToken || !showScopeSelect || !scopeApiPath) {
+      return;
+    }
 
     try {
       const res = await fetch(`${API_URL}/api/${scopeApiPath}`, {
@@ -142,12 +276,19 @@ export default function ManagedUsersPage() {
       setScopes(items.map((entry: any) => ({ id: entry.id, name: entry.name })));
     } catch (err) {
       console.error("Erreur chargement", scopeApiPath, err);
-      setError((prev) => prev ?? `Impossible de charger les ${scopeLabel.toLowerCase()}s`);
+      const scopeLabelForErrors = scopeLabel ?? "affectations";
+      setError((prev) => prev ?? `Impossible de charger les ${scopeLabelForErrors.toLowerCase()}s`);
     }
-  }, [accessToken, scopeApiPath, scopeLabel]);
+  }, [accessToken, scopeApiPath, scopeLabel, showScopeSelect]);
 
   const fetchUsers = useCallback(async () => {
     if (!accessToken) {
+      setLoading(false);
+      return;
+    }
+
+    if (!expectedRole) {
+      setUsersList([]);
       setLoading(false);
       return;
     }
@@ -179,15 +320,28 @@ export default function ManagedUsersPage() {
         return true;
       });
 
-      const items = filtered.map<ManagedUser>((entry) => ({
-        id: entry.id,
-        email: entry.email,
-        firstName: entry.firstName ?? "",
-        lastName: entry.lastName ?? "",
-        phone: entry.phone ?? "",
-        scopeId: isNational ? entry.regionId ?? null : isRegional ? entry.districtId ?? null : entry.healthCenterId ?? null,
-        agentLevel: entry.role === "AGENT" ? entry.agentLevel ?? undefined : undefined,
-      }));
+      const items = filtered.map<ManagedUser>((entry) => {
+        const rawScopeId =
+          scopeField === "regionId"
+            ? entry.regionId ?? null
+            : scopeField === "districtId"
+            ? entry.districtId ?? null
+            : entry.healthCenterId ?? null;
+
+        const normalizedScopeId = showScopeSelect
+          ? rawScopeId
+          : defaultScopeId || rawScopeId || null;
+
+        return {
+          id: entry.id,
+          email: entry.email,
+          firstName: entry.firstName ?? "",
+          lastName: entry.lastName ?? "",
+          phone: entry.phone ?? "",
+          scopeId: normalizedScopeId,
+          agentLevel: entry.role === "AGENT" ? entry.agentLevel ?? undefined : undefined,
+        };
+      });
 
       setUsersList(items);
     } catch (err) {
@@ -196,7 +350,7 @@ export default function ManagedUsersPage() {
     } finally {
       setLoading(false);
     }
-  }, [accessToken, expectedRole, isNational, isRegional, expectedAgentLevel]);
+  }, [accessToken, expectedRole, expectedAgentLevel, scopeField, showScopeSelect, defaultScopeId]);
 
   useEffect(() => {
     fetchScopes();
@@ -208,7 +362,7 @@ export default function ManagedUsersPage() {
     setCurrentId(null);
     setForm({
       ...EMPTY_FORM,
-      scopeId: scopes[0]?.id ?? "",
+      scopeId: showScopeSelect ? scopes[0]?.id ?? "" : defaultScopeId,
     });
     setShowFormModal(true);
   };
@@ -221,7 +375,7 @@ export default function ManagedUsersPage() {
       lastName: userToEdit.lastName,
       email: userToEdit.email,
       phone: userToEdit.phone,
-      scopeId: userToEdit.scopeId ?? "",
+      scopeId: userToEdit.scopeId ?? (showScopeSelect ? "" : defaultScopeId),
     });
     setShowFormModal(true);
   };
@@ -238,8 +392,16 @@ export default function ManagedUsersPage() {
 
     const isEdit = formMode === "edit" && currentId;
 
-    if (!form.scopeId.trim()) {
-      setError(`Veuillez sélectionner un ${scopeLabel.toLowerCase()}.`);
+    const targetScopeId = showScopeSelect ? form.scopeId.trim() : defaultScopeId;
+
+    if (showScopeSelect) {
+      if (!targetScopeId) {
+        const scopeLabelForErrors = scopeLabel ?? "élément";
+        setError(`Veuillez sélectionner un ${scopeLabelForErrors.toLowerCase()}.`);
+        return;
+      }
+    } else if (!targetScopeId) {
+      setError("Votre compte n'est pas rattaché à un centre de santé.");
       return;
     }
 
@@ -257,14 +419,14 @@ export default function ManagedUsersPage() {
 
     const payload = isEdit
       ? {
-          [isNational ? "regionId" : isRegional ? "districtId" : "healthCenterId"]: form.scopeId.trim(),
+          [scopeField]: targetScopeId,
         }
       : {
           firstName: form.firstName.trim(),
           lastName: form.lastName.trim(),
           email: form.email.trim(),
           phone: form.phone.trim(),
-          [isNational ? "regionId" : isRegional ? "districtId" : "healthCenterId"]: form.scopeId.trim(),
+          [scopeField]: targetScopeId,
         };
 
     try {
@@ -327,11 +489,25 @@ export default function ManagedUsersPage() {
   };
 
   const scopeMap = useMemo(() => {
-    return scopes.reduce<Record<string, string>>((acc, scope) => {
+    const map = scopes.reduce<Record<string, string>>((acc, scope) => {
       acc[scope.id] = scope.name;
       return acc;
     }, {});
-  }, [scopes]);
+
+    if (!showScopeSelect && defaultScopeId) {
+      map[defaultScopeId] = fallbackScopeName;
+    }
+
+    return map;
+  }, [scopes, showScopeSelect, defaultScopeId, fallbackScopeName]);
+
+  const displayScopeLabel =
+    scopeLabel ??
+    (scopeField === "regionId"
+      ? "Région"
+      : scopeField === "districtId"
+      ? "District"
+      : "Centre de santé");
 
   const cards = useMemo(() => {
     if (loading) {
@@ -364,7 +540,7 @@ export default function ManagedUsersPage() {
           <p className="mt-1 text-sm text-slate-400">
             Ajoutez votre premier utilisateur pour commencer.
           </p>
-          {(isNational || isRegional || isDistrict) && (
+          {canManage && (
             <button
               type="button"
               onClick={openCreateModal}
@@ -380,7 +556,13 @@ export default function ManagedUsersPage() {
 
     return usersList.map((item, index) => {
       const initials = `${item.firstName.charAt(0) ?? ""}${item.lastName.charAt(0) ?? ""}`.trim() || "U";
-      const scopeName = item.scopeId ? scopeMap[item.scopeId] ?? "Non assigné" : "Non assigné";
+      const scopeName =
+        item.scopeId != null
+          ? scopeMap[item.scopeId] ??
+            (showScopeSelect ? "Non assigné" : fallbackScopeName)
+          : showScopeSelect
+          ? "Non assigné"
+          : fallbackScopeName;
 
       return (
         <div
@@ -399,7 +581,7 @@ export default function ManagedUsersPage() {
               <div className="mt-1 flex items-center gap-2 text-sm text-slate-600">
                 <MapPin className="h-4 w-4" />
                 <span>
-                  {scopeLabel}: {scopeName}
+                  {displayScopeLabel}: {scopeName}
                 </span>
               </div>
               {item.agentLevel && (
@@ -421,7 +603,7 @@ export default function ManagedUsersPage() {
             )}
           </div>
 
-          {(isNational || isRegional || isDistrict) && (
+          {canManage && (
             <div className="mt-4 flex gap-2 border-t border-slate-100 pt-4">
               <button
                 type="button"
@@ -446,7 +628,28 @@ export default function ManagedUsersPage() {
         </div>
       );
     });
-  }, [loading, error, usersList, emptyLabel, createLabel, isNational, isRegional, isDistrict, scopeLabel, scopeMap]);
+  }, [
+    loading,
+    error,
+    usersList,
+    emptyLabel,
+    createLabel,
+    canManage,
+    showScopeSelect,
+    scopeMap,
+    displayScopeLabel,
+    fallbackScopeName,
+  ]);
+
+  if (isUnsupported) {
+    return (
+      <DashboardShell active={activePath}>
+        <div className="rounded-3xl border border-amber-200 bg-amber-50/80 p-6 text-sm text-amber-700">
+          Vous n&apos;avez pas accès à cette section.
+        </div>
+      </DashboardShell>
+    );
+  }
 
   return (
     <>
@@ -465,7 +668,7 @@ export default function ManagedUsersPage() {
               >
                 <RefreshCw className="h-4 w-4" /> Actualiser
               </button>
-              {(isNational || isRegional || isDistrict) && (
+              {canManage && (
                 <button
                   type="button"
                   onClick={openCreateModal}
@@ -479,7 +682,7 @@ export default function ManagedUsersPage() {
 
           <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
             <StatCard
-              title={isNational ? "Total régionaux" : isRegional ? "Total agents de district" : "Total agents"}
+              title={statsTitle}
               value={loading ? "…" : usersList.length}
               icon={Users}
               accent="blue"
@@ -503,17 +706,7 @@ export default function ManagedUsersPage() {
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
               <div className="flex items-center gap-2 text-lg font-semibold text-slate-800">
                 <Users className="h-5 w-5 text-blue-600" />
-                {formMode === "edit"
-                  ? isNational
-                    ? "Modifier le régional"
-                    : isRegional
-                    ? "Modifier l'agent de district"
-                    : "Modifier l'agent"
-                  : isNational
-                  ? "Nouveau régional"
-                  : isRegional
-                  ? "Nouvel agent de district"
-                  : "Nouvel agent"}
+                {formMode === "edit" ? editTitle : createTitle}
               </div>
               <button
                 type="button"
@@ -532,8 +725,10 @@ export default function ManagedUsersPage() {
                     type="text"
                     value={form.firstName}
                     onChange={(event) => setForm((prev) => ({ ...prev, firstName: event.target.value }))}
-                    disabled={formMode === "edit" && !isNational && !isRegional}
-                    className={`mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${formMode === "edit" && !isNational && !isRegional ? "bg-slate-100 text-slate-500" : ""}`}
+                    disabled={disableIdentityFields}
+                    className={`mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${
+                      disableIdentityFields ? "bg-slate-100 text-slate-500" : ""
+                    }`}
                   />
                 </div>
                 <div>
@@ -542,8 +737,10 @@ export default function ManagedUsersPage() {
                     type="text"
                     value={form.lastName}
                     onChange={(event) => setForm((prev) => ({ ...prev, lastName: event.target.value }))}
-                    disabled={formMode === "edit" && !isNational && !isRegional}
-                    className={`mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${formMode === "edit" && !isNational && !isRegional ? "bg-slate-100 text-slate-500" : ""}`}
+                    disabled={disableIdentityFields}
+                    className={`mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${
+                      disableIdentityFields ? "bg-slate-100 text-slate-500" : ""
+                    }`}
                   />
                 </div>
               </div>
@@ -555,8 +752,10 @@ export default function ManagedUsersPage() {
                     type="tel"
                     value={form.phone}
                     onChange={(event) => setForm((prev) => ({ ...prev, phone: event.target.value }))}
-                    disabled={formMode === "edit" && !isNational && !isRegional}
-                    className={`mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${formMode === "edit" && !isNational && !isRegional ? "bg-slate-100 text-slate-500" : ""}`}
+                    disabled={disableIdentityFields}
+                    className={`mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${
+                      disableIdentityFields ? "bg-slate-100 text-slate-500" : ""
+                    }`}
                   />
                 </div>
                 <div>
@@ -565,27 +764,40 @@ export default function ManagedUsersPage() {
                     type="email"
                     value={form.email}
                     onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
-                    disabled={formMode === "edit" && !isNational && !isRegional}
-                    className={`mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${formMode === "edit" && !isNational && !isRegional ? "bg-slate-100 text-slate-500" : ""}`}
+                    disabled={disableIdentityFields}
+                    className={`mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${
+                      disableIdentityFields ? "bg-slate-100 text-slate-500" : ""
+                    }`}
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="text-sm font-medium text-slate-600">{scopeLabel}</label>
-                <select
-                  value={form.scopeId}
-                  onChange={(event) => setForm((prev) => ({ ...prev, scopeId: event.target.value }))}
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                >
-                  <option value="">— Sélectionner —</option>
-                  {scopes.map((scope) => (
-                    <option key={scope.id} value={scope.id}>
-                      {scope.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {showScopeSelect ? (
+                <div>
+                  <label className="text-sm font-medium text-slate-600">
+                    {scopeLabel ?? "Affectation"}
+                  </label>
+                  <select
+                    value={form.scopeId}
+                    onChange={(event) => setForm((prev) => ({ ...prev, scopeId: event.target.value }))}
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  >
+                    <option value="">— Sélectionner —</option>
+                    {scopes.map((scope) => (
+                      <option key={scope.id} value={scope.id}>
+                        {scope.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                  <p className="text-xs font-medium uppercase text-slate-500">
+                    Centre de santé
+                  </p>
+                  <p className="mt-1 font-semibold text-slate-900">{fallbackScopeName}</p>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end gap-3 border-t border-slate-100 bg-slate-50 px-6 py-4">

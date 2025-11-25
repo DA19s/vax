@@ -31,11 +31,12 @@ const statusLabel = (child: Child): string => {
 };
 
 export default function EnfantsPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const [activeTab, setActiveTab] = useState<TabKey>("children");
   const [children, setChildren] = useState<Child[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [regionOptions, setRegionOptions] = useState<string[]>([]);
 
   const loadChildren = useCallback(async () => {
     if (!accessToken) {
@@ -59,7 +60,13 @@ export default function EnfantsPage() {
 
       const data: ApiChildrenResponse = await response.json();
       const items = Array.isArray(data.items) ? data.items : [];
-      setChildren(items);
+      const normalized = items.map((child) => ({
+        ...child,
+        region: child.region ?? "",
+        district: child.district ?? "",
+        healthCenter: child.healthCenter ?? "",
+      }));
+      setChildren(normalized);
     } catch (err) {
       console.error("Erreur chargement enfants:", err);
       setError(err instanceof Error ? err.message : "Erreur de chargement");
@@ -69,11 +76,53 @@ export default function EnfantsPage() {
     }
   }, [accessToken]);
 
+  const loadRegions = useCallback(async () => {
+    if (!accessToken || user?.role !== "NATIONAL") {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/api/region`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Erreur ${response.status}`);
+      }
+
+      const payload = await response.json();
+      const entries = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.regions)
+          ? payload.regions
+          : [];
+      const names = Array.from(
+        new Set(
+          entries
+            .map((entry: { name?: string }) => entry?.name?.trim())
+            .filter((name): name is string => Boolean(name)),
+        ),
+      ).sort((a, b) => a.localeCompare(b, "fr", { sensitivity: "base" }));
+      setRegionOptions(names);
+    } catch (err) {
+      console.error("Erreur chargement régions pour filtre:", err);
+      setRegionOptions([]);
+    }
+  }, [accessToken, user?.role]);
+
   useEffect(() => {
     if (accessToken) {
       loadChildren();
+      if (user?.role === "NATIONAL") {
+        loadRegions();
+      } else {
+        setRegionOptions([]);
+      }
     }
-  }, [accessToken, loadChildren]);
+  }, [accessToken, user?.role, loadChildren, loadRegions]);
 
   const stats = useMemo(() => {
     const total = children.length;
@@ -130,6 +179,8 @@ export default function EnfantsPage() {
                 loading={loading}
                 error={error}
                 onRefresh={loadChildren}
+                regionOptions={user?.role === "NATIONAL" ? regionOptions : undefined}
+                role={user?.role ?? null}
               />
             )}
             {activeTab === "parents" && (

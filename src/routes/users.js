@@ -13,6 +13,7 @@ router.post("/agent-staff", requireAuth, userController.createAgentStaff);
 router.post("/:id/activate", userController.activateUser);
 
 router.get("/", requireAuth, userController.listUsers);
+router.get("/me", requireAuth, userController.getSelf);
 router.patch("/me", requireAuth, userController.updateSelf);
 router.post("/me/verify-email", requireAuth, userController.verifyEmail);
 

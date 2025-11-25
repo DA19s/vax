@@ -16,7 +16,7 @@ type ChildrenResponse =
   | unknown[];
 
 export default function DashboardPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const [totalChildren, setTotalChildren] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -63,16 +63,71 @@ export default function DashboardPage() {
     loadChildrenStats();
   }, [accessToken]);
 
+  const role = user?.role?.toUpperCase() ?? "";
+  const isAgent = role === "AGENT";
+  const isAgentAdmin = isAgent && user?.agentLevel === "ADMIN";
+  const regionName = (user?.regionName ?? "").trim();
+  const districtName = (user?.districtName ?? "").trim();
+  const centerLabel = (user?.healthCenterName ?? "").trim();
+
+  const title = (() => {
+    if (!user) {
+      return "Tableau de bord";
+    }
+    if (role === "NATIONAL") {
+      return "Tableau de bord national";
+    }
+    if (role === "REGIONAL") {
+      return regionName
+        ? `Régional de la ville de ${regionName}`
+        : "Régional";
+    }
+    if (role === "DISTRICT") {
+      return districtName
+        ? `Agent du district de ${districtName}`
+        : "Agent du district";
+    }
+    if (isAgentAdmin) {
+      return centerLabel
+        ? `Administrateur ${centerLabel}`
+        : "Administrateur";
+    }
+    if (isAgent) {
+      return centerLabel ? `Agent ${centerLabel}` : "Agent";
+    }
+    return "Tableau de bord";
+  })();
+
+  const subtitle = (() => {
+    if (!user) {
+      return "Vue d'ensemble de la couverture vaccinale.";
+    }
+    if (role === "NATIONAL") {
+      return "Vue d'ensemble de la couverture vaccinale nationale.";
+    }
+    if (role === "REGIONAL") {
+      return "Vue d'ensemble des performances de votre région.";
+    }
+    if (role === "DISTRICT") {
+      return "Suivi des indicateurs de votre district.";
+    }
+    if (isAgentAdmin) {
+      return "Gestion des ressources et des stocks de votre centre de santé.";
+    }
+    if (isAgent) {
+      return "Suivi des activités de votre centre de santé.";
+    }
+    return "Vue d'ensemble des indicateurs clés.";
+  })();
+
   return (
     <DashboardShell active="/dashboard">
       <div className="space-y-8">
         <div className="space-y-2">
           <h2 className="text-2xl font-semibold text-slate-900">
-            Tableau de bord national
+            {title}
           </h2>
-          <p className="text-sm text-slate-500">
-            Vue d&apos;ensemble de la couverture vaccinale nationale.
-          </p>
+          <p className="text-sm text-slate-500">{subtitle}</p>
         </div>
 
         <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">

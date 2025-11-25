@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   Baby,
@@ -76,6 +76,8 @@ type Props = {
   onRefresh?: () => void;
   apiBase: string;
   token: string | null;
+  regionOptions?: string[];
+  role?: string | null;
 };
 
 export default function ChildrenTab({
@@ -85,42 +87,186 @@ export default function ChildrenTab({
   onRefresh,
   apiBase,
   token,
+  regionOptions,
+  role,
 }: Props) {
   const [selectedChild, setSelectedChild] = useState<Child | null>(null);
   const [search, setSearch] = useState("");
   const [regionFilter, setRegionFilter] = useState<string>("Toutes");
+  const [districtFilter, setDistrictFilter] = useState<string>("Tous");
+  const [healthCenterFilter, setHealthCenterFilter] = useState<string>("Tous");
   const [statusFilter, setStatusFilter] = useState<string>("Tous");
   const [page, setPage] = useState(1);
   const pageSize = 10;
 
-  const regions = useMemo(() => {
+  const normalizedRole = role?.toUpperCase() ?? "NATIONAL";
+  const showRegionFilter = normalizedRole === "NATIONAL" || normalizedRole === "REGIONAL";
+  const showDistrictFilter =
+    normalizedRole === "NATIONAL" || normalizedRole === "REGIONAL";
+  const showHealthCenterFilter =
+    normalizedRole === "NATIONAL" ||
+    normalizedRole === "REGIONAL" ||
+    normalizedRole === "DISTRICT";
+
+  const derivedRegions = useMemo(() => {
     const values = new Set<string>();
     children.forEach((child) => {
-      if (child.region) values.add(child.region);
+      const name = child.region?.trim();
+      if (name) values.add(name);
     });
     return Array.from(values);
   }, [children]);
 
+  const regions = useMemo(() => {
+    const values = new Set<string>();
+    derivedRegions.forEach((region) => values.add(region.trim()));
+    regionOptions?.forEach((name) => {
+      const label = name.trim();
+      if (label) values.add(label);
+    });
+    return Array.from(values).sort((a, b) =>
+      a.localeCompare(b, "fr", { sensitivity: "base" })
+    );
+  }, [derivedRegions, regionOptions]);
+
+  const districts = useMemo(() => {
+    const values = new Set<string>();
+    children.forEach((child) => {
+      const regionMatch =
+        !showRegionFilter ||
+        regionFilter === "Toutes" ||
+        child.region?.trim().localeCompare(regionFilter, "fr", {
+          sensitivity: "base",
+        }) === 0;
+
+      if (!regionMatch) return;
+
+      const name = child.district?.trim();
+      if (name) values.add(name);
+    });
+    return Array.from(values).sort((a, b) =>
+      a.localeCompare(b, "fr", { sensitivity: "base" })
+    );
+  }, [children, regionFilter, showRegionFilter]);
+
+  const healthCenters = useMemo(() => {
+    const values = new Set<string>();
+    children.forEach((child) => {
+      const regionMatch =
+        !showRegionFilter ||
+        regionFilter === "Toutes" ||
+        child.region?.trim().localeCompare(regionFilter, "fr", {
+          sensitivity: "base",
+        }) === 0;
+      if (!regionMatch) return;
+
+      const districtMatch =
+        !showDistrictFilter ||
+        districtFilter === "Tous" ||
+        child.district?.trim().localeCompare(districtFilter, "fr", {
+          sensitivity: "base",
+        }) === 0;
+      if (!districtMatch) return;
+
+      const name = child.healthCenter?.trim();
+      if (name) values.add(name);
+    });
+    return Array.from(values).sort((a, b) =>
+      a.localeCompare(b, "fr", { sensitivity: "base" })
+    );
+  }, [children, regionFilter, districtFilter, showRegionFilter, showDistrictFilter]);
+
+  useEffect(() => {
+    if (
+      showRegionFilter &&
+      regionFilter !== "Toutes" &&
+      !regions.includes(regionFilter)
+    ) {
+      setRegionFilter("Toutes");
+    }
+  }, [regionFilter, regions, showRegionFilter]);
+
+  useEffect(() => {
+    if (
+      showDistrictFilter &&
+      districtFilter !== "Tous" &&
+      !districts.includes(districtFilter)
+    ) {
+      setDistrictFilter("Tous");
+    }
+  }, [districtFilter, districts, showDistrictFilter]);
+
+  useEffect(() => {
+    if (
+      showHealthCenterFilter &&
+      healthCenterFilter !== "Tous" &&
+      !healthCenters.includes(healthCenterFilter)
+    ) {
+      setHealthCenterFilter("Tous");
+    }
+  }, [healthCenterFilter, healthCenters, showHealthCenterFilter]);
+
   const filteredChildren = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase();
+
     return children
       .filter((child) => {
         const statusLabel = formatStatusLabel(child);
         const matchesSearch =
-          child.name.toLowerCase().includes(search.toLowerCase()) ||
-          child.parentName.toLowerCase().includes(search.toLowerCase()) ||
-          (child.parentPhone ?? "").includes(search);
+          normalizedSearch.length === 0 ||
+          child.firstName.toLowerCase().startsWith(normalizedSearch) ||
+          child.lastName.toLowerCase().startsWith(normalizedSearch) ||
+          child.name.toLowerCase().startsWith(normalizedSearch) ||
+          (child.parentName ?? "").toLowerCase().startsWith(normalizedSearch) ||
+          (child.parentPhone ?? "").startsWith(normalizedSearch);
+
         const matchesRegion =
-          regionFilter === "Toutes" || child.region === regionFilter;
+          !showRegionFilter ||
+          regionFilter === "Toutes" ||
+          child.region?.trim().localeCompare(regionFilter, "fr", {
+            sensitivity: "base",
+          }) === 0;
+
+        const matchesDistrict =
+          !showDistrictFilter ||
+          districtFilter === "Tous" ||
+          child.district?.trim().localeCompare(districtFilter, "fr", {
+            sensitivity: "base",
+          }) === 0;
+
+        const matchesHealthCenter =
+          !showHealthCenterFilter ||
+          healthCenterFilter === "Tous" ||
+          child.healthCenter?.trim().localeCompare(healthCenterFilter, "fr", {
+            sensitivity: "base",
+          }) === 0;
+
         const matchesStatus =
           statusFilter === "Tous" || statusLabel === statusFilter;
-        return matchesSearch && matchesRegion && matchesStatus;
+        return (
+          matchesSearch &&
+          matchesRegion &&
+          matchesDistrict &&
+          matchesHealthCenter &&
+          matchesStatus
+        );
       })
       .sort((a, b) => {
         const ta = new Date(a.createdAt).getTime();
         const tb = new Date(b.createdAt).getTime();
         return tb - ta;
       });
-  }, [children, search, regionFilter, statusFilter]);
+  }, [
+    children,
+    search,
+    regionFilter,
+    districtFilter,
+    healthCenterFilter,
+    statusFilter,
+    showRegionFilter,
+    showDistrictFilter,
+    showHealthCenterFilter,
+  ]);
 
   const totalPages = Math.max(1, Math.ceil(filteredChildren.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -134,6 +280,13 @@ export default function ChildrenTab({
     const scheduled = children.filter((child) => child.vaccinesScheduled.length > 0 || child.nextAppointment).length;
     return { total, upToDate, late, scheduled };
   }, [children]);
+
+  let locationColumnLabel = "Centre";
+  if (normalizedRole === "NATIONAL") {
+    locationColumnLabel = "Région";
+  } else if (normalizedRole === "REGIONAL") {
+    locationColumnLabel = "District";
+  }
 
   return (
     <div className="space-y-6 p-6">
@@ -160,7 +313,7 @@ export default function ChildrenTab({
           <Filter className="h-5 w-5 text-slate-600" />
           <h3 className="text-sm font-semibold text-slate-900">Filtres</h3>
         </div>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
             <input
@@ -173,24 +326,70 @@ export default function ChildrenTab({
               className="w-full rounded-xl border border-slate-300 py-2.5 pl-11 pr-4 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
             />
           </div>
-          <div className="relative">
-            <MapPin className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-            <select
-              value={regionFilter}
-              onChange={(event) => {
-                setRegionFilter(event.target.value);
-                setPage(1);
-              }}
-              className="w-full appearance-none rounded-xl border border-slate-300 py-2.5 pl-11 pr-10 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-            >
-              <option value="Toutes">Toutes les régions</option>
-              {regions.map((region) => (
-                <option key={region} value={region}>
-                  {region}
-                </option>
-              ))}
-            </select>
-          </div>
+
+          {showRegionFilter && (
+            <div className="relative">
+              <MapPin className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+              <select
+                value={regionFilter}
+                onChange={(event) => {
+                  setRegionFilter(event.target.value);
+                  setPage(1);
+                }}
+                className="w-full appearance-none rounded-xl border border-slate-300 py-2.5 pl-11 pr-10 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+              >
+                <option value="Toutes">Toutes les régions</option>
+                {regions.map((region) => (
+                  <option key={region} value={region}>
+                    {region}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {showDistrictFilter && (
+            <div className="relative">
+              <MapPin className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+              <select
+                value={districtFilter}
+                onChange={(event) => {
+                  setDistrictFilter(event.target.value);
+                  setPage(1);
+                }}
+                className="w-full appearance-none rounded-xl border border-slate-300 py-2.5 pl-11 pr-10 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+              >
+                <option value="Tous">Tous les districts</option>
+                {districts.map((district) => (
+                  <option key={district} value={district}>
+                    {district}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {showHealthCenterFilter && (
+            <div className="relative">
+              <MapPin className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+              <select
+                value={healthCenterFilter}
+                onChange={(event) => {
+                  setHealthCenterFilter(event.target.value);
+                  setPage(1);
+                }}
+                className="w-full appearance-none rounded-xl border border-slate-300 py-2.5 pl-11 pr-10 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+              >
+                <option value="Tous">Tous les centres</option>
+                {healthCenters.map((center) => (
+                  <option key={center} value={center}>
+                    {center}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="relative">
             <AlertCircle className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
             <select
@@ -241,7 +440,7 @@ export default function ChildrenTab({
                   <tr className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-600">
                     <th className="px-6 py-4">Enfant</th>
                     <th className="px-6 py-4">Âge</th>
-                    <th className="px-6 py-4">Région</th>
+                    <th className="px-6 py-4">{locationColumnLabel}</th>
                     <th className="px-6 py-4">Centre</th>
                     <th className="px-6 py-4">Statut</th>
                   </tr>
@@ -274,7 +473,9 @@ export default function ChildrenTab({
                           </div>
                         </td>
                         <td className="px-6 py-4 text-slate-600">{formatAgeLabel(child.birthDate)}</td>
-                        <td className="px-6 py-4 text-slate-600">{child.region || "-"}</td>
+                        <td className="px-6 py-4 text-slate-600">
+                          {showRegionFilter ? child.region || "-" : child.district || "-"}
+                        </td>
                         <td className="px-6 py-4 text-slate-600">{child.healthCenter || "-"}</td>
                         <td className="px-6 py-4">
                           <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${statusBadgeClasses(badge)}`}>

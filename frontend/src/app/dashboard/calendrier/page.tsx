@@ -169,7 +169,7 @@ export default function CalendrierVaccinalPage() {
   }, [accessToken]);
 
   const fetchVaccines = useCallback(async () => {
-    if (!accessToken) {
+    if (!isNational || !accessToken) {
       setVaccines([]);
       return;
     }
@@ -208,7 +208,7 @@ export default function CalendrierVaccinalPage() {
       console.error("Erreur chargement vaccins:", err);
       setVaccines([]);
     }
-  }, [accessToken]);
+  }, [accessToken, isNational]);
 
   useEffect(() => {
     fetchCalendar();

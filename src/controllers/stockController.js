@@ -26,6 +26,19 @@ const resolveDistrictIdForUser = async (user) => {
   return dbUser?.districtId ?? null;
 };
 
+const resolveHealthCenterIdForUser = async (user) => {
+  if (user.healthCenterId) {
+    return user.healthCenterId;
+  }
+
+  const dbUser = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { healthCenterId: true },
+  });
+
+  return dbUser?.healthCenterId ?? null;
+};
+
 const ensureDistrictBelongsToRegion = async (districtId, regionId) => {
   const district = await prisma.district.findUnique({
     where: { id: districtId },
@@ -78,6 +91,7 @@ const getStockREGIONAL = async (req, res, next) => {
 
   try {
     let whereClause = {};
+    let resolvedDistrictId = null;
 
     if (req.user.role === "REGIONAL") {
       const regionId = await resolveRegionIdForUser(req.user);
@@ -127,6 +141,7 @@ const getStockDISTRICT = async (req, res, next) => {
       if (!districtId) {
         return res.json({ district: [] });
       }
+      resolvedDistrictId = districtId;
       whereClause = { districtId };
     }
 
@@ -139,7 +154,7 @@ const getStockDISTRICT = async (req, res, next) => {
       ],
     });
 
-    res.json({ district });
+    res.json({ districtId: resolvedDistrictId, district });
   } catch (error) {
     next(error);
   }
@@ -153,7 +168,47 @@ const getStockHEALTHCENTER = async (req, res, next) => {
   }
 
   try {
+    let whereClause = {};
+
+    if (req.user.role === "AGENT") {
+      if (req.user.agentLevel !== "ADMIN") {
+        return res.status(403).json({ message: "Accès refusé" });
+      }
+
+      const healthCenterId = await resolveHealthCenterIdForUser(req.user);
+      if (!healthCenterId) {
+        return res.json({ healthCenter: [] });
+      }
+
+      whereClause = { healthCenterId };
+    } else if (req.user.role === "DISTRICT") {
+      const districtId = await resolveDistrictIdForUser(req.user);
+      if (!districtId) {
+        return res.json({ healthCenter: [] });
+      }
+      whereClause = {
+        healthCenter: {
+          districtId,
+        },
+      };
+    } else if (req.user.role === "REGIONAL") {
+      const regionId = await resolveRegionIdForUser(req.user);
+      if (!regionId) {
+        return res.json({ healthCenter: [] });
+      }
+      whereClause = {
+        healthCenter: {
+          district: {
+            commune: {
+              regionId,
+            },
+          },
+        },
+      };
+    }
+
     const healthCenter = await prisma.stockHEALTHCENTER.findMany({
+      where: whereClause,
       include: { vaccine: true, healthCenter: true },
       orderBy: [
         { vaccine: { name: "asc" } },
@@ -285,10 +340,61 @@ const createStockHEALTHCENTER = async (req, res, next) => {
   }  
 
   try {
+    const { vaccineId, healthCenterId } = req.body ?? {};
+
+    if (!vaccineId) {
+      return res.status(400).json({ message: "vaccineId est requis" });
+    }
+
+    let targetHealthCenterId = healthCenterId;
+
+    if (req.user.role === "AGENT") {
+      if (req.user.agentLevel !== "ADMIN") {
+        return res.status(403).json({ message: "Accès refusé" });
+      }
+
+      targetHealthCenterId = await resolveHealthCenterIdForUser(req.user);
+      if (!targetHealthCenterId) {
+        return res.status(400).json({
+          message: "Votre compte n'est pas rattaché à un centre de santé",
+        });
+      }
+    } else {
+      if (!healthCenterId) {
+        return res
+          .status(400)
+          .json({ message: "healthCenterId est requis pour créer un stock" });
+      }
+
+      const districtId = await resolveDistrictIdForUser(req.user);
+      if (!districtId) {
+        return res.status(400).json({
+          message: "Votre compte n'est pas rattaché à un district",
+        });
+      }
+
+      const center = await prisma.healthCenter.findUnique({
+        where: { id: healthCenterId },
+        select: { districtId: true },
+      });
+
+      if (!center) {
+        return res.status(404).json({ message: "Centre de santé introuvable" });
+      }
+
+      if (center.districtId !== districtId) {
+        return res
+          .status(403)
+          .json({ message: "Ce centre de santé n'appartient pas à votre district" });
+      }
+
+      targetHealthCenterId = healthCenterId;
+    }
+
     const newStockHEALTHCENTER = await prisma.StockHEALTHCENTER.create({
       data: {
-        vaccineId: req.body.vaccineId,
-        healthCenterId: req.body.healthCenterId,
+        vaccineId,
+        healthCenterId: targetHealthCenterId,
       },
     });
 
@@ -450,25 +556,46 @@ const addStockDISTRICT = async (req, res, next) => {
 };
 
 const addStockHEALTHCENTER = async (req, res, next) => {
-  if (!["DISTRICT", "AGENT"].includes(req.user.role)) {
+  if (req.user.role !== "DISTRICT") {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
   try {
-    const { vaccineId, healthCenterId, districtId, quantity } = req.body;
+    const { vaccineId, healthCenterId, quantity } = req.body;
     const qty = Number(quantity);
 
     if (
       !vaccineId ||
       !healthCenterId ||
-      !districtId ||
       !Number.isFinite(qty) ||
       qty <= 0
     ) {
       return res.status(400).json({
         message:
-          "vaccineId, healthCenterId, districtId et quantity (> 0) sont requis",
+          "vaccineId, healthCenterId et quantity (> 0) sont requis",
       });
+    }
+
+    const districtId = await resolveDistrictIdForUser(req.user);
+    if (!districtId) {
+      return res.status(400).json({
+        message: "Votre compte n'est pas rattaché à un district",
+      });
+    }
+
+    const healthCenter = await prisma.healthCenter.findUnique({
+      where: { id: healthCenterId },
+      select: { districtId: true },
+    });
+
+    if (!healthCenter) {
+      return res.status(404).json({ message: "Centre de santé introuvable" });
+    }
+
+    if (healthCenter.districtId !== districtId) {
+      return res
+        .status(403)
+        .json({ message: "Ce centre de santé n'appartient pas à votre district" });
     }
 
     const healthCenterStock = await prisma.stockHEALTHCENTER.findUnique({
@@ -997,13 +1124,71 @@ const getHealthCenterStockStats = async (req, res, next) => {
   }
 
   try {
+    let whereClause = {};
+
+    if (req.user.role === "AGENT") {
+      if (req.user.agentLevel !== "ADMIN") {
+        return res.status(403).json({ message: "Accès refusé" });
+      }
+
+      const healthCenterId = await resolveHealthCenterIdForUser(req.user);
+      if (!healthCenterId) {
+        return res.json({
+          totalLots: 0,
+          totalQuantity: 0,
+          lowStockCount: 0,
+          threshold: LOW_STOCK_THRESHOLD,
+        });
+      }
+
+      whereClause = { healthCenterId };
+    } else if (req.user.role === "DISTRICT") {
+      const districtId = await resolveDistrictIdForUser(req.user);
+      if (!districtId) {
+        return res.json({
+          totalLots: 0,
+          totalQuantity: 0,
+          lowStockCount: 0,
+          threshold: LOW_STOCK_THRESHOLD,
+        });
+      }
+
+      whereClause = {
+        healthCenter: {
+          districtId,
+        },
+      };
+    } else if (req.user.role === "REGIONAL") {
+      const regionId = await resolveRegionIdForUser(req.user);
+      if (!regionId) {
+        return res.json({
+          totalLots: 0,
+          totalQuantity: 0,
+          lowStockCount: 0,
+          threshold: LOW_STOCK_THRESHOLD,
+        });
+      }
+
+      whereClause = {
+        healthCenter: {
+          district: {
+            commune: {
+              regionId,
+            },
+          },
+        },
+      };
+    }
+
     const aggregates = await prisma.stockHEALTHCENTER.aggregate({
+      where: whereClause,
       _sum: { quantity: true },
       _count: { _all: true },
     });
 
     const lowStockCount = await prisma.stockHEALTHCENTER.count({
       where: {
+        ...whereClause,
         quantity: {
           lt: LOW_STOCK_THRESHOLD,
           not: null,

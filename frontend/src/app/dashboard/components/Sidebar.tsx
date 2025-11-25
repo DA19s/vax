@@ -67,6 +67,18 @@ export default function Sidebar({ active = "/dashboard" }: SidebarProps) {
       ];
     }
 
+    if (user.role === "AGENT" && user.agentLevel === "ADMIN") {
+      return [
+        { label: "Tableau de bord", href: "/dashboard", icon: LayoutDashboard },
+        { label: "Campagnes", href: "/dashboard/campagnes", icon: Calendar },
+        { label: "Équipe", href: "/dashboard/equipe", icon: Users },
+        { label: "Stocks & lots", href: "/dashboard/stocks", icon: Package },
+        { label: "Vaccins", href: "/dashboard/vaccins", icon: Syringe },
+        { label: "Calendrier vaccinal", href: "/dashboard/calendrier", icon: Calendar },
+        { label: "Enfants", href: "/dashboard/enfants", icon: Users },
+      ];
+    }
+
     return navItems;
   }, [user]);
 

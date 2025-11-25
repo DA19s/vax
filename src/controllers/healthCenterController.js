@@ -13,6 +13,19 @@ const ensureDistrictUser = (user) => {
   }
 };
 
+const resolveHealthCenterIdForUser = async (user) => {
+  if (user.healthCenterId) {
+    return user.healthCenterId;
+  }
+
+  const dbUser = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { healthCenterId: true },
+  });
+
+  return dbUser?.healthCenterId ?? null;
+};
+
 const listHealthCenters = async (req, res, next) => {
   try {
     let whereClause = {};
@@ -22,6 +35,12 @@ const listHealthCenters = async (req, res, next) => {
         return res.json({ total: 0, items: [] });
       }
       whereClause = { districtId: req.user.districtId };
+    } else if (req.user.role === "AGENT") {
+      const healthCenterId = await resolveHealthCenterIdForUser(req.user);
+      if (!healthCenterId) {
+        return res.json({ total: 0, items: [] });
+      }
+      whereClause = { id: healthCenterId };
     } else if (req.user.role !== "NATIONAL" && req.user.role !== "REGIONAL") {
       return res.status(403).json({ message: "Accès refusé" });
     }

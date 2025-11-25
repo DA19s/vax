@@ -910,6 +910,103 @@ const deleteAgentStaff = async (req, res, next) => {
     next(error);
   }
 };
+
+const getSelf = async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        role: true,
+        agentLevel: true,
+        regionId: true,
+        districtId: true,
+        healthCenterId: true,
+        region: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        district: {
+          select: {
+            id: true,
+            name: true,
+            commune: {
+              select: {
+                id: true,
+                name: true,
+                region: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        healthCenter: {
+          select: {
+            id: true,
+            name: true,
+            district: {
+              select: {
+                id: true,
+                name: true,
+                commune: {
+                  select: {
+                    id: true,
+                    name: true,
+                    region: {
+                      select: {
+                        id: true,
+                        name: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "Utilisateur introuvable" });
+    }
+
+    const inferredRegion =
+      user.region ??
+      user.district?.commune?.region ??
+      user.healthCenter?.district?.commune?.region ??
+      null;
+
+    const inferredDistrict =
+      user.district ?? user.healthCenter?.district ?? null;
+
+    res.json({
+      id: user.id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email,
+      role: user.role,
+      agentLevel: user.agentLevel,
+      regionId: inferredRegion?.id ?? user.regionId ?? null,
+      regionName: inferredRegion?.name ?? null,
+      districtId: inferredDistrict?.id ?? user.districtId ?? null,
+      districtName: inferredDistrict?.name ?? null,
+      healthCenterId: user.healthCenterId ?? null,
+      healthCenterName: user.healthCenter?.name ?? null,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 module.exports = {
   //createUser,
   activateUser,
@@ -929,4 +1026,5 @@ module.exports = {
   deleteDistrict,
   deleteAgentAdmin,
   deleteAgentStaff,
+  getSelf,
 };

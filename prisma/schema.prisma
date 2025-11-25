@@ -310,3 +310,5 @@ model ChildVaccineLate {
   dueDate            DateTime         
   detectedAt         DateTime         @default(now()) // moment où le retard est détecté
 }
+
+

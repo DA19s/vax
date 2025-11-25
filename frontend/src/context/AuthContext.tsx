@@ -12,6 +12,8 @@ import Cookies from "js-cookie";
 import { jwtDecode } from "jwt-decode";
 import { usePathname, useRouter } from "next/navigation";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5050";
+
 type Role = "NATIONAL" | "REGIONAL" | "DISTRICT" | "AGENT" | string;
 
 type AuthUser = {
@@ -19,6 +21,14 @@ type AuthUser = {
   role: Role;
   email?: string | null;
   agentLevel?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  regionId?: string | null;
+  regionName?: string | null;
+  districtId?: string | null;
+  districtName?: string | null;
+  healthCenterId?: string | null;
+  healthCenterName?: string | null;
 };
 
 type AuthContextShape = {
@@ -51,6 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState(false);
 
   useEffect(() => {
     try {
@@ -63,6 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAccessToken(storedAccess);
         setRefreshToken(storedRefresh);
         setUser(parsedUser);
+        setProfileLoaded(false);
       }
     } catch {
       // ignore corrupted cookies
@@ -98,6 +110,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAccessToken(newAccess);
       setRefreshToken(newRefresh);
       setUser(authUser);
+      setProfileLoaded(false);
 
       Cookies.set(ACCESS_TOKEN_KEY, newAccess, { sameSite: "strict" });
       Cookies.set(REFRESH_TOKEN_KEY, newRefresh, { sameSite: "strict" });
@@ -115,15 +128,85 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAccessToken(null);
     setRefreshToken(null);
     setUser(null);
+    setProfileLoaded(false);
     Cookies.remove(ACCESS_TOKEN_KEY);
     Cookies.remove(REFRESH_TOKEN_KEY);
     Cookies.remove(USER_KEY);
     router.push("/login");
   }, [router]);
 
+  const isPublicPath = (path: string | null) => {
+    if (!path) return false;
+    return path.startsWith("/activate") || path.startsWith("/reset-password");
+  };
+
+  const persistUser = useCallback((value: AuthUser) => {
+    setUser(value);
+    Cookies.set(USER_KEY, JSON.stringify(value), {
+      sameSite: "strict",
+    });
+  }, []);
+
+  const fetchProfile = useCallback(
+    async (token: string, base?: AuthUser | null) => {
+      try {
+        const response = await fetch(`${API_URL}/api/users/me`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        });
+
+        if (response.status === 401) {
+          logout();
+          return;
+        }
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        const profile = await response.json();
+
+        const enriched: AuthUser = {
+          ...(base ?? user ?? {
+            id: profile.id,
+            role: profile.role,
+          }),
+          id: (base ?? user)?.id ?? profile.id,
+          role: (base ?? user)?.role ?? profile.role,
+          email: profile.email ?? (base ?? user)?.email ?? null,
+          agentLevel: profile.agentLevel ?? (base ?? user)?.agentLevel ?? null,
+          firstName: profile.firstName ?? (base ?? user)?.firstName ?? null,
+          lastName: profile.lastName ?? (base ?? user)?.lastName ?? null,
+          regionId: profile.regionId ?? (base ?? user)?.regionId ?? null,
+          regionName: profile.regionName ?? (base ?? user)?.regionName ?? null,
+          districtId: profile.districtId ?? (base ?? user)?.districtId ?? null,
+          districtName:
+            profile.districtName ?? (base ?? user)?.districtName ?? null,
+          healthCenterId:
+            profile.healthCenterId ?? (base ?? user)?.healthCenterId ?? null,
+          healthCenterName:
+            profile.healthCenterName ??
+            (base ?? user)?.healthCenterName ??
+            null,
+        };
+
+        persistUser(enriched);
+      } catch (error) {
+        console.error("Erreur chargement profil:", error);
+      } finally {
+        setProfileLoaded(true);
+      }
+    },
+    [logout, persistUser, user],
+  );
+
   useEffect(() => {
     if (!accessToken) {
-      if (pathname !== "/login") {
+      setProfileLoaded(false);
+      if (!isPublicPath(pathname) && pathname !== "/login") {
         router.push("/login");
       }
       return;
@@ -154,6 +237,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     };
   }, [accessToken, logout, pathname, router]);
+
+  useEffect(() => {
+    if (accessToken && !profileLoaded) {
+      setProfileLoaded(true);
+      fetchProfile(accessToken, user);
+    }
+  }, [accessToken, fetchProfile, profileLoaded, user]);
 
   return (
     <AuthContext.Provider

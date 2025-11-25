@@ -40,6 +40,7 @@ export type Child = {
   gender: "M" | "F";
   birthDate: string;
   region: string;
+  district: string;
   healthCenter: string;
   parentName: string;
   parentPhone: string;
@@ -68,6 +69,7 @@ export type VaccinationDetail = {
     parentPhone: string;
     address: string | null;
     region: string;
+    district: string;
     healthCenter: string;
   };
   vaccinations: {
@@ -141,3 +143,4 @@ export type ParentOverview = {
   regions: string[];
   healthCenters: string[];
 };
+

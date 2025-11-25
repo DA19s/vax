@@ -68,7 +68,8 @@ type RegionsResponse =
   | Region[];
 
 function NationalStocksPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
+  const canAdjust = user?.role === "NATIONAL";
 
   const [stocks, setStocks] = useState<NationalStock[]>([]);
   const [vaccines, setVaccines] = useState<VaccineInfo[]>([]);
@@ -583,13 +584,6 @@ const [stats, setStats] = useState<StockStats>(emptyStats);
                       <div className="flex justify-end gap-2">
                         <button
                           type="button"
-                          onClick={() => openUpdateModal(stock)}
-                          className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100"
-                        >
-                          Ajuster
-                        </button>
-                        <button
-                          type="button"
                           onClick={() => openTransferModal(stock)}
                           className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-100"
                         >
@@ -899,9 +893,39 @@ type RegionalStock = {
   } | null;
 };
 
+type DistrictStock = {
+  id: string;
+  vaccineId: string;
+  districtId: string;
+  quantity: number | null;
+  vaccine: VaccineInfo;
+  district?: {
+    id: string;
+    name: string;
+  } | null;
+};
+
 type DistrictOption = {
   id: string;
   name: string;
+};
+
+type HealthCenterOption = {
+  id: string;
+  name: string;
+  districtId?: string | null;
+};
+
+type HealthCenterStock = {
+  id: string;
+  vaccineId: string;
+  healthCenterId: string;
+  quantity: number | null;
+  vaccine: VaccineInfo;
+  healthCenter?: {
+    id: string;
+    name: string;
+  } | null;
 };
 
 function RegionalStocksPage() {
@@ -920,18 +944,6 @@ function RegionalStocksPage() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createVaccineId, setCreateVaccineId] = useState("");
   const [creating, setCreating] = useState(false);
-
-  const [updateModalOpen, setUpdateModalOpen] = useState(false);
-  const [updateContext, setUpdateContext] = useState<{
-    vaccineId: string;
-    vaccineName: string;
-    currentQuantity: number;
-  } | null>(null);
-  const [updateMode, setUpdateMode] = useState<"set" | "add">("set");
-  const [updateQuantity, setUpdateQuantity] = useState("");
-  const [addQuantity, setAddQuantity] = useState("");
-  const [addQuantityError, setAddQuantityError] = useState<string | null>(null);
-  const [updating, setUpdating] = useState(false);
 
   const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [transferContext, setTransferContext] = useState<RegionalStock | null>(null);
@@ -1070,15 +1082,6 @@ function RegionalStocksPage() {
     return vaccines.filter((vaccine) => !existing.has(vaccine.id));
   }, [stocks, vaccines]);
 
-  const resetUpdateModal = () => {
-    setUpdateModalOpen(false);
-    setUpdateContext(null);
-    setUpdateQuantity("");
-    setAddQuantity("");
-    setAddQuantityError(null);
-    setUpdating(false);
-  };
-
   const handleCreateStock = async (event: FormEvent) => {
     event.preventDefault();
     if (!createVaccineId || !accessToken) return;
@@ -1114,107 +1117,6 @@ function RegionalStocksPage() {
     }
   };
 
-  const openUpdateModal = (stock: RegionalStock) => {
-    setUpdateContext({
-      vaccineId: stock.vaccineId,
-      vaccineName: stock.vaccine.name,
-      currentQuantity: stock.quantity ?? 0,
-    });
-    setUpdateQuantity(String(stock.quantity ?? 0));
-    setUpdateMode("set");
-    setAddQuantity("");
-    setAddQuantityError(null);
-    setUpdateModalOpen(true);
-  };
-
-  const handleSetQuantitySubmit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!updateContext || !accessToken) return;
-
-    const quantityValue = Number(updateQuantity);
-    if (!Number.isFinite(quantityValue) || quantityValue < 0) {
-      setAddQuantityError("Veuillez saisir une quantité valide.");
-      return;
-    }
-
-    try {
-      setAddQuantityError(null);
-      setUpdating(true);
-      const response = await fetch(`${API_URL}/api/stock/regional`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          vaccineId: updateContext.vaccineId,
-          quantity: quantityValue,
-        }),
-      });
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.message ?? `status ${response.status}`);
-      }
-
-      resetUpdateModal();
-      await Promise.all([fetchRegionalStocks(), fetchRegionalStats()]);
-    } catch (err) {
-      console.error("Erreur mise à jour stock régional:", err);
-      setAddQuantityError(
-        err instanceof Error
-          ? err.message
-          : "Impossible de modifier le stock"
-      );
-    } finally {
-      setUpdating(false);
-    }
-  };
-
-  const handleAddQuantitySubmit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!updateContext || !accessToken) return;
-
-    const quantityValue = Number(addQuantity);
-    if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
-      setAddQuantityError("Veuillez saisir une quantité valide.");
-      return;
-    }
-
-    try {
-      setAddQuantityError(null);
-      setUpdating(true);
-      const response = await fetch(`${API_URL}/api/stock/add-regional`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          vaccineId: updateContext.vaccineId,
-          quantity: quantityValue,
-        }),
-      });
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.message ?? `status ${response.status}`);
-      }
-
-      resetUpdateModal();
-      await Promise.all([fetchRegionalStocks(), fetchRegionalStats()]);
-    } catch (err) {
-      console.error("Erreur ajout stock régional:", err);
-      setAddQuantityError(
-        err instanceof Error
-          ? err.message
-          : "Impossible d'ajouter au stock régional"
-      );
-    } finally {
-      setUpdating(false);
-    }
-  };
-
   const openTransferModal = (stock: RegionalStock) => {
     setTransferContext(stock);
     setTransferDistrictId("");
@@ -1239,7 +1141,7 @@ function RegionalStocksPage() {
       setTransferError(null);
       setPendingDistrictCreation(false);
 
-      const response = await fetch(`${API_URL}/api/stock/add-regional`, {
+      const response = await fetch(`${API_URL}/api/stock/add-district`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -1247,7 +1149,7 @@ function RegionalStocksPage() {
         },
         body: JSON.stringify({
           vaccineId: transferContext.vaccineId,
-          regionId: transferDistrictId,
+          districtId: transferDistrictId,
           quantity: quantityValue,
         }),
       });
@@ -1444,13 +1346,6 @@ function RegionalStocksPage() {
                       <div className="flex justify-end gap-2">
                         <button
                           type="button"
-                          onClick={() => openUpdateModal(stock)}
-                          className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100"
-                        >
-                          Ajuster
-                        </button>
-                        <button
-                          type="button"
                           onClick={() => openTransferModal(stock)}
                           className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-100"
                         >
@@ -1518,138 +1413,6 @@ function RegionalStocksPage() {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {updateModalOpen && updateContext && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-2xl rounded-3xl bg-white shadow-2xl">
-            <div className="p-6">
-              <h3 className="text-lg font-semibold text-slate-900">
-                Ajuster le stock — {updateContext.vaccineName}
-              </h3>
-
-              <div className="mt-6 flex flex-col gap-4 md:flex-row">
-                <button
-                  type="button"
-                  onClick={() => setUpdateMode("set")}
-                  className={`flex-1 rounded-2xl border px-4 py-3 text-center text-sm font-medium transition ${
-                    updateMode === "set"
-                      ? "border-emerald-300 bg-emerald-50 text-emerald-700 shadow"
-                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  Remplacer la quantité
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setUpdateMode("add")}
-                  className={`flex-1 rounded-2xl border px-4 py-3 text-center text-sm font-medium transition ${
-                    updateMode === "add"
-                      ? "border-blue-300 bg-blue-50 text-blue-700 shadow"
-                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  Ajouter au stock
-                </button>
-              </div>
-
-              {updateMode === "set" ? (
-                <form onSubmit={handleSetQuantitySubmit} className="mt-6 space-y-4">
-                  <div className="space-y-1">
-                    <label className="text-sm font-medium text-slate-600">
-                      Nouvelle quantité régionale
-                    </label>
-                    <input
-                      value={updateQuantity}
-                      onChange={(event) => setUpdateQuantity(event.target.value)}
-                      type="number"
-                      min="0"
-                      className="w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                      required
-                    />
-                    <p className="text-xs text-slate-500">
-                      Quantité actuelle : {(updateContext.currentQuantity ?? 0).toLocaleString("fr-FR")}
-                    </p>
-                  </div>
-
-                  {addQuantityError && (
-                    <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                      {addQuantityError}
-                    </div>
-                  )}
-
-                  <div className="flex justify-end gap-3">
-                    <button
-                      type="button"
-                      onClick={resetUpdateModal}
-                      className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
-                    >
-                      Annuler
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={updating}
-                      className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
-                    >
-                      {updating ? "Enregistrement…" : "Enregistrer"}
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                <form onSubmit={handleAddQuantitySubmit} className="mt-6 space-y-4">
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-1">
-                      <label className="text-sm font-medium text-slate-600">
-                        Quantité actuelle
-                      </label>
-                      <input
-                        value={(updateContext.currentQuantity ?? 0).toLocaleString("fr-FR")}
-                        disabled
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-500"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-sm font-medium text-slate-600">
-                        Quantité à ajouter
-                      </label>
-                      <input
-                        value={addQuantity}
-                        onChange={(event) => setAddQuantity(event.target.value)}
-                        type="number"
-                        min="1"
-                        className="w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  {addQuantityError && (
-                    <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                      {addQuantityError}
-                    </div>
-                  )}
-
-                  <div className="flex justify-end gap-3">
-                    <button
-                      type="button"
-                      onClick={resetUpdateModal}
-                      className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
-                    >
-                      Annuler
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={updating}
-                      className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-60"
-                    >
-                      {updating ? "Ajout…" : "Ajouter"}
-                    </button>
-                  </div>
-                </form>
-              )}
-            </div>
           </div>
         </div>
       )}
@@ -1752,6 +1515,1014 @@ function RegionalStocksPage() {
   );
 }
 
+function DistrictStocksPage() {
+  const { accessToken } = useAuth();
+
+  const [stocks, setStocks] = useState<DistrictStock[]>([]);
+  const [vaccines, setVaccines] = useState<VaccineInfo[]>([]);
+  const [healthCenters, setHealthCenters] = useState<HealthCenterOption[]>([]);
+  const [districtId, setDistrictId] = useState<string | null>(null);
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [stats, setStats] = useState<StockStats>(emptyStats);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [statsError, setStatsError] = useState<string | null>(null);
+
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [createVaccineId, setCreateVaccineId] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [transferContext, setTransferContext] = useState<DistrictStock | null>(null);
+  const [transferHealthCenterId, setTransferHealthCenterId] = useState("");
+  const [transferQuantity, setTransferQuantity] = useState("");
+  const [transferError, setTransferError] = useState<string | null>(null);
+  const [transferLoading, setTransferLoading] = useState(false);
+  const [pendingHealthCenterCreation, setPendingHealthCenterCreation] = useState(false);
+
+  const fetchDistrictStats = useCallback(async () => {
+    if (!accessToken) {
+      setStats(emptyStats);
+      setStatsLoading(false);
+      return;
+    }
+
+    try {
+      setStatsLoading(true);
+      setStatsError(null);
+
+      const response = await fetch(`${API_URL}/api/stock/stats/district`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      const payload = (await response.json()) as StockStats;
+      setStats(payload);
+    } catch (err) {
+      console.error("Erreur récupération stats district:", err);
+      setStats(emptyStats);
+      setStatsError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de charger les statistiques district"
+      );
+    } finally {
+      setStatsLoading(false);
+    }
+  }, [accessToken]);
+
+  const fetchDistrictStocks = useCallback(async () => {
+    if (!accessToken) {
+      setStocks([]);
+      setVaccines([]);
+      setHealthCenters([]);
+      setDistrictId(null);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const [stockRes, vaccineRes, healthRes] = await Promise.all([
+        fetch(`${API_URL}/api/stock/district`, {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }),
+        fetch(`${API_URL}/api/vaccine`, {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }),
+        fetch(`${API_URL}/api/healthCenter`, {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }),
+      ]);
+
+      if (!stockRes.ok || !vaccineRes.ok || !healthRes.ok) {
+        const payload =
+          (!stockRes.ok ? await stockRes.json().catch(() => null) : null) ??
+          (!vaccineRes.ok ? await vaccineRes.json().catch(() => null) : null) ??
+          (!healthRes.ok ? await healthRes.json().catch(() => null) : null);
+        throw new Error(payload?.message ?? "status non valide");
+      }
+
+      const stockPayload = await stockRes.json();
+      const stockItems = Array.isArray(stockPayload?.district)
+        ? stockPayload.district
+        : [];
+      setStocks(stockItems);
+
+      const vaccinePayload: VaccineResponse = await vaccineRes.json();
+      setVaccines(
+        Array.isArray(vaccinePayload)
+          ? vaccinePayload
+          : Array.isArray(vaccinePayload?.vaccines)
+          ? vaccinePayload.vaccines
+          : []
+      );
+
+      const healthPayload = await healthRes.json();
+      const healthItems = Array.isArray(healthPayload?.items)
+        ? healthPayload.items
+        : Array.isArray(healthPayload)
+        ? healthPayload
+        : [];
+
+      const mappedCenters: HealthCenterOption[] = healthItems.map(
+        (center: any) => ({
+          id: center.id,
+          name: center.name,
+          districtId: center.districtId ?? center.district?.id ?? null,
+        })
+      );
+      setHealthCenters(mappedCenters);
+
+      let derivedDistrictId =
+        stockPayload?.districtId ??
+        (stockItems.length > 0
+          ? stockItems[0].districtId ?? stockItems[0]?.district?.id ?? null
+          : null);
+
+      if (!derivedDistrictId) {
+        const withDistrict = mappedCenters.find(
+          (center) => center.districtId
+        );
+        derivedDistrictId = withDistrict?.districtId ?? null;
+      }
+
+      setDistrictId(derivedDistrictId ?? null);
+    } catch (err) {
+      console.error("Erreur chargement stocks district:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de charger les stocks district"
+      );
+      setStocks([]);
+      setVaccines([]);
+      setHealthCenters([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [accessToken]);
+
+  useEffect(() => {
+    fetchDistrictStocks();
+    fetchDistrictStats();
+  }, [fetchDistrictStocks, fetchDistrictStats]);
+
+  const availableVaccinesForCreation = useMemo(() => {
+    const existing = new Set(stocks.map((stock) => stock.vaccineId));
+    return vaccines.filter((vaccine) => !existing.has(vaccine.id));
+  }, [stocks, vaccines]);
+
+  const handleCreateStock = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!createVaccineId || !accessToken) return;
+    if (!districtId) {
+      setError(
+        "Impossible de déterminer votre district pour créer un stock."
+      );
+      return;
+    }
+
+    try {
+      setCreating(true);
+      const response = await fetch(`${API_URL}/api/stock/district`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          vaccineId: createVaccineId,
+          districtId,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      setCreateModalOpen(false);
+      setCreateVaccineId("");
+      await Promise.all([fetchDistrictStocks(), fetchDistrictStats()]);
+    } catch (err) {
+      console.error("Erreur création stock district:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de créer le stock district"
+      );
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const openTransferModal = (stock: DistrictStock) => {
+    setTransferContext(stock);
+    setTransferHealthCenterId("");
+    setTransferQuantity("");
+    setTransferError(null);
+    setPendingHealthCenterCreation(false);
+    setTransferModalOpen(true);
+  };
+
+  const handleTransferSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!accessToken || !transferContext) return;
+    if (!districtId) {
+      setTransferError("District introuvable pour ce transfert.");
+      return;
+    }
+
+    const quantityValue = Number(transferQuantity);
+    if (
+      !transferHealthCenterId ||
+      !Number.isFinite(quantityValue) ||
+      quantityValue <= 0
+    ) {
+      setTransferError(
+        "Sélectionnez un centre de santé et saisissez une quantité valide."
+      );
+      return;
+    }
+
+    try {
+      setTransferLoading(true);
+      setTransferError(null);
+      setPendingHealthCenterCreation(false);
+
+      const response = await fetch(`${API_URL}/api/stock/add-health-center`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          vaccineId: transferContext.vaccineId,
+          healthCenterId: transferHealthCenterId,
+          districtId,
+          quantity: quantityValue,
+        }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          setTransferError(
+            "Ce centre n'a pas encore de stock pour ce vaccin. Créez-le puis recommencez."
+          );
+          setPendingHealthCenterCreation(true);
+        } else {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+        return;
+      }
+
+      setTransferModalOpen(false);
+      setTransferContext(null);
+      setTransferHealthCenterId("");
+      setTransferQuantity("");
+      await Promise.all([fetchDistrictStocks(), fetchDistrictStats()]);
+    } catch (err) {
+      console.error("Erreur transfert centre de santé:", err);
+      setTransferError(
+        err instanceof Error ? err.message : "Impossible de transférer le stock"
+      );
+    } finally {
+      setTransferLoading(false);
+    }
+  };
+
+  const handleCreateHealthCenterStock = async () => {
+    if (!accessToken || !transferContext || !transferHealthCenterId) return;
+
+    try {
+      setTransferLoading(true);
+      setTransferError(null);
+
+      const response = await fetch(`${API_URL}/api/stock/health-center`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          vaccineId: transferContext.vaccineId,
+          healthCenterId: transferHealthCenterId,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      setTransferError(
+        "Stock centre de santé créé. Vous pouvez maintenant effectuer le transfert."
+      );
+      setPendingHealthCenterCreation(false);
+      await Promise.all([fetchDistrictStocks(), fetchDistrictStats()]);
+    } catch (err) {
+      console.error("Erreur création stock centre de santé:", err);
+      setTransferError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de créer le stock centre de santé"
+      );
+    } finally {
+      setTransferLoading(false);
+    }
+  };
+
+  return (
+    <DashboardShell active="/dashboard/stocks">
+      <div className="space-y-8">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-2xl font-semibold text-slate-900">Stocks & lots</h2>
+            <p className="text-sm text-slate-500">
+              Suivi des stocks districtaux et distribution vers les centres de santé.
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setCreateModalOpen(true)}
+              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
+              disabled={
+                availableVaccinesForCreation.length === 0 || !districtId
+              }
+            >
+              <Plus className="h-4 w-4" />
+              Nouveau lot
+            </button>
+            <button
+              type="button"
+              onClick={fetchDistrictStocks}
+              className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-blue-400 hover:text-blue-600"
+            >
+              <ArrowRightLeft className="h-4 w-4" />
+              Actualiser
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+          <StatCard
+            title="Total de doses"
+            value={
+              statsLoading ? "…" : stats.totalQuantity.toLocaleString("fr-FR")
+            }
+            icon={Syringe}
+            accent="emerald"
+            loading={statsLoading}
+          />
+          <StatCard
+            title="Stocks faibles"
+            value={statsLoading ? "…" : stats.lowStockCount}
+            icon={AlertTriangle}
+            accent="red"
+            loading={statsLoading}
+          />
+          <StatCard
+            title="Total de lots"
+            value={statsLoading ? "…" : stats.totalLots}
+            icon={PackageOpen}
+            accent="orange"
+            loading={statsLoading}
+          />
+        </div>
+
+        {statsError && (
+          <div className="rounded-3xl border border-amber-200 bg-amber-50/80 p-4 text-sm text-amber-700">
+            {statsError}
+          </div>
+        )}
+
+        {error && (
+          <div className="rounded-3xl border border-red-200 bg-red-50/80 p-4 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <table className="min-w-full divide-y divide-slate-200">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Vaccin
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Quantité (district)
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  District
+                </th>
+                <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {loading ? (
+                <tr>
+                  <td
+                    colSpan={4}
+                    className="px-6 py-8 text-center text-sm text-slate-500"
+                  >
+                    Chargement des stocks district…
+                  </td>
+                </tr>
+              ) : stocks.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={4}
+                    className="px-6 py-8 text-center text-sm text-slate-500"
+                  >
+                    Aucun stock district enregistré pour le moment.
+                  </td>
+                </tr>
+              ) : (
+                stocks.map((stock) => (
+                  <tr key={stock.id} className="hover:bg-slate-50/80">
+                    <td className="px-6 py-4">
+                      <div className="font-semibold text-slate-900">
+                        {stock.vaccine.name}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {stock.vaccine.description}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="font-semibold text-slate-800">
+                        {(stock.quantity ?? 0).toLocaleString("fr-FR")}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {stock.vaccine.dosesRequired} doses requises
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-500">
+                      {stock.district?.name ?? "Votre district"}
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openTransferModal(stock)}
+                          className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-100"
+                        >
+                          <ArrowRightLeft className="h-4 w-4" />
+                          Envoyer
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {createModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl">
+            <form onSubmit={handleCreateStock} className="space-y-4 p-6">
+              <h3 className="text-lg font-semibold text-slate-900">
+                Créer un stock district
+              </h3>
+              <p className="text-sm text-slate-500">
+                Sélectionnez un vaccin qui n'a pas encore de stock pour votre district.
+              </p>
+
+              <select
+                value={createVaccineId}
+                onChange={(event) => setCreateVaccineId(event.target.value)}
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-700 transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                required
+              >
+                <option value="">— Sélectionner un vaccin —</option>
+                {availableVaccinesForCreation.map((vaccine) => (
+                  <option key={vaccine.id} value={vaccine.id}>
+                    {vaccine.name}
+                  </option>
+                ))}
+              </select>
+
+              {availableVaccinesForCreation.length === 0 && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
+                  Tous les vaccins possèdent déjà un stock district.
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreateModalOpen(false);
+                    setCreateVaccineId("");
+                  }}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    creating ||
+                    availableVaccinesForCreation.length === 0 ||
+                    !districtId
+                  }
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                >
+                  {creating ? "Création…" : "Créer"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {transferModalOpen && transferContext && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl">
+            <form onSubmit={handleTransferSubmit} className="space-y-4 p-6">
+              <h3 className="text-lg font-semibold text-slate-900">
+                Envoyer du stock — {transferContext.vaccine.name}
+              </h3>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-600">
+                  Centre de santé
+                </label>
+                <select
+                  value={transferHealthCenterId}
+                  onChange={(event) => {
+                    setTransferHealthCenterId(event.target.value);
+                    setTransferError(null);
+                    setPendingHealthCenterCreation(false);
+                  }}
+                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-700 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  required
+                >
+                  <option value="">— Sélectionner un centre —</option>
+                  {healthCenters.map((center) => (
+                    <option key={center.id} value={center.id}>
+                      {center.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-600">
+                  Quantité à envoyer
+                </label>
+                <input
+                  value={transferQuantity}
+                  onChange={(event) => setTransferQuantity(event.target.value)}
+                  type="number"
+                  min="1"
+                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  required
+                />
+              </div>
+
+              {transferError && (
+                <div
+                  className={`rounded-xl border p-3 text-sm ${
+                    pendingHealthCenterCreation
+                      ? "border-red-200 bg-red-50 text-red-700"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  }`}
+                >
+                  {transferError}
+                </div>
+              )}
+
+              <div className="flex flex-wrap justify-end gap-3">
+                {pendingHealthCenterCreation && (
+                  <button
+                    type="button"
+                    onClick={handleCreateHealthCenterStock}
+                    className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-100"
+                  >
+                    Créer le stock centre
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTransferModalOpen(false);
+                    setTransferContext(null);
+                    setTransferHealthCenterId("");
+                    setTransferQuantity("");
+                    setTransferError(null);
+                    setPendingHealthCenterCreation(false);
+                  }}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={transferLoading}
+                  className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-60"
+                >
+                  {transferLoading ? "Transfert…" : "Envoyer"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </DashboardShell>
+  );
+}
+
+function AgentAdminStocksPage() {
+  const { accessToken } = useAuth();
+
+  const [stocks, setStocks] = useState<HealthCenterStock[]>([]);
+  const [vaccines, setVaccines] = useState<VaccineInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [stats, setStats] = useState<StockStats>(emptyStats);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [statsError, setStatsError] = useState<string | null>(null);
+
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [createVaccineId, setCreateVaccineId] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  const fetchHealthCenterStats = useCallback(async () => {
+    if (!accessToken) {
+      setStats(emptyStats);
+      setStatsLoading(false);
+      return;
+    }
+
+    try {
+      setStatsLoading(true);
+      setStatsError(null);
+
+      const response = await fetch(`${API_URL}/api/stock/stats/health-center`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      const payload = (await response.json()) as StockStats;
+      setStats(payload);
+    } catch (err) {
+      console.error("Erreur récupération stats centre:", err);
+      setStats(emptyStats);
+      setStatsError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de charger les statistiques du centre"
+      );
+    } finally {
+      setStatsLoading(false);
+    }
+  }, [accessToken]);
+
+  const fetchHealthCenterStocks = useCallback(async () => {
+    if (!accessToken) {
+      setStocks([]);
+      setVaccines([]);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const [stockRes, vaccineRes] = await Promise.all([
+        fetch(`${API_URL}/api/stock/health-center`, {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }),
+        fetch(`${API_URL}/api/vaccine`, {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }),
+      ]);
+
+      if (!stockRes.ok || !vaccineRes.ok) {
+        const payload =
+          (!stockRes.ok ? await stockRes.json().catch(() => null) : null) ??
+          (!vaccineRes.ok ? await vaccineRes.json().catch(() => null) : null);
+        throw new Error(payload?.message ?? "status non valide");
+      }
+
+      const stockPayload = await stockRes.json();
+      const stockItems = Array.isArray(stockPayload?.healthCenter)
+        ? stockPayload.healthCenter
+        : [];
+      setStocks(stockItems);
+
+      const vaccinePayload: VaccineResponse = await vaccineRes.json();
+      setVaccines(
+        Array.isArray(vaccinePayload)
+          ? vaccinePayload
+          : Array.isArray(vaccinePayload?.vaccines)
+          ? vaccinePayload.vaccines
+          : []
+      );
+    } catch (err) {
+      console.error("Erreur chargement stocks centre:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de charger les stocks du centre"
+      );
+      setStocks([]);
+      setVaccines([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [accessToken]);
+
+  useEffect(() => {
+    fetchHealthCenterStocks();
+    fetchHealthCenterStats();
+  }, [fetchHealthCenterStocks, fetchHealthCenterStats]);
+
+  const availableVaccinesForCreation = useMemo(() => {
+    const existing = new Set(stocks.map((stock) => stock.vaccineId));
+    return vaccines.filter((vaccine) => !existing.has(vaccine.id));
+  }, [stocks, vaccines]);
+
+  const handleCreateStock = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!createVaccineId || !accessToken) return;
+
+    try {
+      setCreating(true);
+      const response = await fetch(`${API_URL}/api/stock/health-center`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ vaccineId: createVaccineId }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      setCreateModalOpen(false);
+      setCreateVaccineId("");
+      await Promise.all([fetchHealthCenterStocks(), fetchHealthCenterStats()]);
+    } catch (err) {
+      console.error("Erreur création stock centre:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de créer le stock du centre"
+      );
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const healthCenterName = useMemo(() => {
+    return (
+      stocks.find((entry) => entry.healthCenter?.name)?.healthCenter?.name ??
+      "Votre centre de santé"
+    );
+  }, [stocks]);
+
+  return (
+    <DashboardShell active="/dashboard/stocks">
+      <div className="space-y-8">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-2xl font-semibold text-slate-900">Stocks & lots</h2>
+            <p className="text-sm text-slate-500">
+              Suivi des stocks de votre centre de santé.
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setCreateModalOpen(true)}
+              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
+              disabled={availableVaccinesForCreation.length === 0}
+            >
+              <Plus className="h-4 w-4" />
+              Nouveau lot
+            </button>
+            <button
+              type="button"
+              onClick={fetchHealthCenterStocks}
+              className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-blue-400 hover:text-blue-600"
+            >
+              <ArrowRightLeft className="h-4 w-4" />
+              Actualiser
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+          <StatCard
+            title="Total de doses"
+            value={
+              statsLoading ? "…" : stats.totalQuantity.toLocaleString("fr-FR")
+            }
+            icon={Syringe}
+            accent="emerald"
+            loading={statsLoading}
+          />
+          <StatCard
+            title="Stocks faibles"
+            value={statsLoading ? "…" : stats.lowStockCount}
+            icon={AlertTriangle}
+            accent="red"
+            loading={statsLoading}
+          />
+          <StatCard
+            title="Total de lots"
+            value={statsLoading ? "…" : stats.totalLots}
+            icon={PackageOpen}
+            accent="orange"
+            loading={statsLoading}
+          />
+        </div>
+
+        {statsError && (
+          <div className="rounded-3xl border border-amber-200 bg-amber-50/80 p-4 text-sm text-amber-700">
+            {statsError}
+          </div>
+        )}
+
+        {error && (
+          <div className="rounded-3xl border border-red-200 bg-red-50/80 p-4 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 px-6 py-4 text-sm text-slate-500">
+            {healthCenterName}
+          </div>
+          <table className="min-w-full divide-y divide-slate-200">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Vaccin
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Quantité (centre)
+                </th>
+                <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {loading ? (
+                <tr>
+                  <td
+                    colSpan={3}
+                    className="px-6 py-8 text-center text-sm text-slate-500"
+                  >
+                    Chargement des stocks du centre…
+                  </td>
+                </tr>
+              ) : stocks.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={3}
+                    className="px-6 py-8 text-center text-sm text-slate-500"
+                  >
+                    Aucun stock enregistré pour le moment.
+                  </td>
+                </tr>
+              ) : (
+                stocks.map((stock) => (
+                  <tr key={stock.id} className="hover:bg-slate-50/80">
+                    <td className="px-6 py-4">
+                      <div className="font-semibold text-slate-900">
+                        {stock.vaccine.name}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {stock.vaccine.description}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="font-semibold text-slate-800">
+                        {(stock.quantity ?? 0).toLocaleString("fr-FR")}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {stock.vaccine.dosesRequired} doses requises
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-right text-sm text-slate-500">
+                      —
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {createModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl">
+            <form onSubmit={handleCreateStock} className="space-y-4 p-6">
+              <h3 className="text-lg font-semibold text-slate-900">
+                Créer un stock centre
+              </h3>
+              <p className="text-sm text-slate-500">
+                Sélectionnez un vaccin qui n&apos;a pas encore de stock dans votre centre.
+              </p>
+
+              <select
+                value={createVaccineId}
+                onChange={(event) => setCreateVaccineId(event.target.value)}
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-700 transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                required
+              >
+                <option value="">— Sélectionner un vaccin —</option>
+                {availableVaccinesForCreation.map((vaccine) => (
+                  <option key={vaccine.id} value={vaccine.id}>
+                    {vaccine.name}
+                  </option>
+                ))}
+              </select>
+
+              {availableVaccinesForCreation.length === 0 && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
+                  Tous les vaccins possèdent déjà un stock dans votre centre.
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreateModalOpen(false);
+                    setCreateVaccineId("");
+                  }}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={creating || availableVaccinesForCreation.length === 0}
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                >
+                  {creating ? "Création…" : "Créer"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </DashboardShell>
+  );
+}
+
 function StocksAccessFallback() {
   return (
     <DashboardShell active="/dashboard/stocks">
@@ -1770,12 +2541,24 @@ function StocksAccessFallback() {
 export default function StocksPage() {
   const { user } = useAuth();
 
-  if (user?.role === "REGIONAL") {
+  if (!user) {
+    return <StocksAccessFallback />;
+  }
+
+  if (user.role === "NATIONAL") {
+    return <NationalStocksPage />;
+  }
+
+  if (user.role === "REGIONAL") {
     return <RegionalStocksPage />;
   }
 
-  if (!user || user.role === "NATIONAL") {
-    return <NationalStocksPage />;
+  if (user.role === "DISTRICT") {
+    return <DistrictStocksPage />;
+  }
+
+  if (user.role === "AGENT" && user.agentLevel === "ADMIN") {
+    return <AgentAdminStocksPage />;
   }
 
   return <StocksAccessFallback />;

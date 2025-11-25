@@ -24,7 +24,13 @@ const createVaccine = async (req, res, next) => {
 };
 
 const getVaccine = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL"].includes(req.user.role)) {
+  const isAgentAdmin =
+    req.user.role === "AGENT" && req.user.agentLevel === "ADMIN";
+
+  if (
+    !["NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role) &&
+    !isAgentAdmin
+  ) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -231,7 +237,13 @@ const deleteVaccineCalendar = async (req, res, next) => {
 };
 
 const listVaccines = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL"].includes(req.user.role)) {
+  const isAgentAdmin =
+    req.user.role === "AGENT" && req.user.agentLevel === "ADMIN";
+
+  if (
+    !["NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role) &&
+    !isAgentAdmin
+  ) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -280,7 +292,13 @@ const fetchCalendarsWithVaccines = async () => {
 };
 
 const listVaccineCalendars = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL"].includes(req.user.role)) {
+  const isAgentAdmin =
+    req.user.role === "AGENT" && req.user.agentLevel === "ADMIN";
+
+  if (
+    !["NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role) &&
+    !isAgentAdmin
+  ) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -293,7 +311,13 @@ const listVaccineCalendars = async (req, res, next) => {
 };
 
 const downloadVaccineCalendarPdf = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL"].includes(req.user.role)) {
+  const isAgentAdmin =
+    req.user.role === "AGENT" && req.user.agentLevel === "ADMIN";
+
+  if (
+    !["NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role) &&
+    !isAgentAdmin
+  ) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 

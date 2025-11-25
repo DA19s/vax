@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { LucideIcon } from "lucide-react";
 
 type Props = {
+  name?: string;
   type: string;
   placeholder: string;
   value: string;
@@ -16,6 +17,7 @@ type Props = {
 };
 
 export default function AuthInput({
+  name,
   type,
   placeholder,
   value,
@@ -40,6 +42,7 @@ export default function AuthInput({
       </label>
       <div className="relative">
         <input
+          name={name}
           type={type}
           placeholder={placeholder}
           value={value}
@@ -62,4 +65,5 @@ export default function AuthInput({
     </div>
   );
 }
+
 

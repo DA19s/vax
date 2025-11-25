@@ -233,3 +233,4 @@ export default function ChildDetailsModal({ child, token, apiBase, onClose, onRe
     </div>
   );
 }
+

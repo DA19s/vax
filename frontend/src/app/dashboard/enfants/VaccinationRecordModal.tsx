@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertCircle, Calendar, CheckCircle, Clock, Syringe, X } from "lucide-react";
-import { VaccinationDetail } from "./types";
+import type { VaccinationDetail } from "./types";
 
 type Props = {
   isOpen: boolean;
@@ -22,7 +22,7 @@ const formatDate = (value?: string | null): string => {
   });
 };
 
-export default function VaccinationRecordModal({ isOpen, onClose, detail }: Props) {
+function VaccinationRecordModal({ isOpen, onClose, detail }: Props) {
   if (!isOpen) return null;
 
   const { vaccinations } = detail;
@@ -137,3 +137,5 @@ export default function VaccinationRecordModal({ isOpen, onClose, detail }: Prop
     </div>
   );
 }
+
+export default VaccinationRecordModal;

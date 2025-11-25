@@ -26,16 +26,24 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (event: FormEvent) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setLoading(true);
     setError(null);
 
     try {
+      const form = event.currentTarget;
+      const formData = new FormData(form);
+      const emailValue = (formData.get("email") ?? "").toString();
+      const passwordValue = (formData.get("password") ?? "").toString();
+
+      setEmail(emailValue);
+      setPassword(passwordValue);
+
       const response = await fetch(`${API_URL}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: emailValue, password: passwordValue }),
       });
 
       const data = await response.json();
@@ -100,6 +108,7 @@ export default function LoginPage() {
     <AuthLayout title="Connexion">
       <form onSubmit={handleSubmit} className="space-y-6">
         <AuthInput
+          name="email"
           type="email"
           placeholder="nom@exemple.com"
           value={email}
@@ -110,6 +119,7 @@ export default function LoginPage() {
         />
 
         <AuthInput
+          name="password"
           type="password"
           placeholder="••••••••"
           value={password}
