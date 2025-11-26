@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   Baby,
   Calendar,
+  CalendarPlus,
   HeartPulse,
   Home,
+  Loader2,
   MapPin,
   Phone,
   Stethoscope,
@@ -38,51 +40,282 @@ const deriveStatusLabel = (child: Child): string => {
   return "Pas à jour";
 };
 
+const computeNextAppointmentFromDetail = (detail: VaccinationDetail | null) => {
+  if (!detail) return null;
+  const validDates = detail.vaccinations.scheduled
+    .map((entry) => {
+      if (!entry.scheduledFor) return null;
+      const date = new Date(entry.scheduledFor);
+      if (Number.isNaN(date.getTime())) return null;
+      return date;
+    })
+    .filter((date): date is Date => !!date)
+    .sort((a, b) => a.getTime() - b.getTime());
+
+  if (validDates.length === 0) {
+    return null;
+  }
+  return validDates[0].toISOString();
+};
+
 type Props = {
   child: Child;
   token: string;
   apiBase: string;
   onClose: () => void;
   onRefresh?: () => void;
+  canSchedule?: boolean;
 };
 
-export default function ChildDetailsModal({ child, token, apiBase, onClose, onRefresh }: Props) {
+type ScheduleOption = {
+  vaccineId: string;
+  vaccineName: string;
+  calendarId: string | null;
+  label: string;
+};
+
+export default function ChildDetailsModal({
+  child,
+  token,
+  apiBase,
+  onClose,
+  onRefresh,
+  canSchedule = false,
+}: Props) {
   const [detail, setDetail] = useState<VaccinationDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRecord, setShowRecord] = useState(false);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [scheduleOptions, setScheduleOptions] = useState<ScheduleOption[]>([]);
+  const [selectedVaccineId, setSelectedVaccineId] = useState<string | null>(null);
+  const [scheduleDate, setScheduleDate] = useState("");
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [scheduleSubmitting, setScheduleSubmitting] = useState(false);
+  const [currentNextAppointment, setCurrentNextAppointment] = useState<string | null>(
+    child.nextAppointment ?? null,
+  );
 
-  useEffect(() => {
-    const fetchDetail = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const response = await fetch(`${apiBase}/api/children/${child.id}/vaccinations`, {
+  const fetchDetail = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `${apiBase}/api/children/${child.id}/vaccinations`,
+        {
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
+        },
+      );
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `Erreur ${response.status}`);
+      }
+
+      const payload: VaccinationDetail = await response.json();
+      setDetail(payload);
+      const computedNext = computeNextAppointmentFromDetail(payload);
+      setCurrentNextAppointment(computedNext ?? null);
+    } catch (err) {
+      console.error("Erreur chargement vaccination detail:", err);
+      setError(err instanceof Error ? err.message : "Erreur de chargement");
+    } finally {
+      setLoading(false);
+    }
+  }, [apiBase, child.id, token]);
+
+  useEffect(() => {
+    fetchDetail();
+  }, [fetchDetail]);
+
+  useEffect(() => {
+    if (!detail) {
+      setScheduleOptions([]);
+      setSelectedVaccineId(null);
+      return;
+    }
+
+    const optionMap = new Map<string, ScheduleOption>();
+    const pushOption = (
+      vaccineId: string,
+      vaccineName: string,
+      calendarId: string | null,
+      contextLabel?: string | null,
+    ) => {
+      if (!vaccineId || !vaccineName) return;
+      const existing = optionMap.get(vaccineId);
+      const label =
+        contextLabel && contextLabel.trim().length > 0
+          ? `${vaccineName} • ${contextLabel}`
+          : vaccineName;
+
+      if (!existing) {
+        optionMap.set(vaccineId, {
+          vaccineId,
+          vaccineName,
+          calendarId,
+          label,
         });
-
-        if (!response.ok) {
-          const payload = await response.json().catch(() => null);
-          throw new Error(payload?.message ?? `Erreur ${response.status}`);
-        }
-
-        const payload: VaccinationDetail = await response.json();
-        setDetail(payload);
-      } catch (err) {
-        console.error("Erreur chargement vaccination detail:", err);
-        setError(err instanceof Error ? err.message : "Erreur de chargement");
-      } finally {
-        setLoading(false);
+      } else if (!existing.calendarId && calendarId) {
+        existing.calendarId = calendarId;
       }
     };
 
-    fetchDetail();
-  }, [apiBase, child.id, token]);
+    detail.vaccinations.due.forEach((entry) =>
+      pushOption(
+        entry.vaccineId,
+        entry.vaccineName,
+        entry.calendarId ?? null,
+        `dose ${entry.dose} à faire`,
+      ),
+    );
+
+    detail.vaccinations.late.forEach((entry) =>
+      pushOption(
+        entry.vaccineId,
+        entry.vaccineName,
+        entry.calendarId ?? null,
+        `dose ${entry.dose} en retard`,
+      ),
+    );
+
+    detail.vaccinations.overdue.forEach((entry) =>
+      pushOption(
+        entry.vaccineId,
+        entry.vaccineName,
+        entry.calendarId ?? null,
+        `dose ${entry.dose} manquée`,
+      ),
+    );
+
+    detail.vaccinations.scheduled.forEach((entry) =>
+      pushOption(
+        entry.vaccineId,
+        entry.vaccineName,
+        entry.calendarId ?? null,
+        `dose ${entry.dose} programmée`,
+      ),
+    );
+
+    detail.vaccinations.completed.forEach((entry) =>
+      pushOption(
+        entry.vaccineId,
+        entry.vaccineName,
+        entry.calendarId ?? null,
+        `dose ${entry.dose} administrée`,
+      ),
+    );
+
+    const options = Array.from(optionMap.values()).sort((a, b) =>
+      a.label.localeCompare(b.label, "fr", { sensitivity: "base" }),
+    );
+
+    setScheduleOptions(options);
+    if (options.length === 0) {
+      setSelectedVaccineId(null);
+      return;
+    }
+
+    setSelectedVaccineId((current) =>
+      current && options.some((option) => option.vaccineId === current)
+        ? current
+        : options[0].vaccineId,
+    );
+  }, [detail]);
 
   const statusLabel = useMemo(() => deriveStatusLabel(child), [child]);
+
+  const dueEntries = detail?.vaccinations?.due ?? [];
+  const sortedDueEntries = useMemo(
+    () => [...dueEntries].sort((a, b) => (a.dose ?? 1) - (b.dose ?? 1)),
+    [dueEntries],
+  );
+
+  const dueCount = detail ? detail.vaccinations.due.length : child.vaccinesDue.length;
+
+  const handleOpenSchedule = () => {
+    if (scheduleOptions.length === 0) {
+      return;
+    }
+    if (!selectedVaccineId) {
+      setSelectedVaccineId(scheduleOptions[0].vaccineId);
+    }
+    setScheduleDate("");
+    setScheduleError(null);
+    setShowScheduleModal(true);
+  };
+
+  const handleCloseSchedule = () => {
+    setShowScheduleModal(false);
+    setScheduleDate("");
+    setScheduleError(null);
+    setScheduleSubmitting(false);
+  };
+
+  const handleSubmitSchedule = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedVaccineId) {
+      setScheduleError("Sélectionnez un vaccin à programmer.");
+      return;
+    }
+
+    const selectedOption = scheduleOptions.find(
+      (option) => option.vaccineId === selectedVaccineId,
+    );
+    if (!selectedOption) {
+      setScheduleError("Vaccin introuvable.");
+      return;
+    }
+
+    if (!scheduleDate) {
+      setScheduleError("Choisissez une date et une heure.");
+      return;
+    }
+
+    const scheduledFor = new Date(scheduleDate);
+    if (Number.isNaN(scheduledFor.getTime())) {
+      setScheduleError("La date sélectionnée est invalide.");
+      return;
+    }
+
+    try {
+      setScheduleSubmitting(true);
+      setScheduleError(null);
+
+      const response = await fetch(`${apiBase}/api/vaccine/scheduled`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          childId: child.id,
+          vaccineId: selectedOption.vaccineId,
+          vaccineCalendarId: selectedOption.calendarId,
+          scheduledFor: scheduledFor.toISOString(),
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? "Impossible de programmer le rendez-vous.");
+      }
+
+      await fetchDetail();
+      await onRefresh?.();
+      handleCloseSchedule();
+    } catch (err) {
+      console.error("schedule vaccine error", err);
+      setScheduleError(
+        err instanceof Error ? err.message : "Impossible de programmer le rendez-vous.",
+      );
+    } finally {
+      setScheduleSubmitting(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 px-4 py-8">
@@ -181,9 +414,20 @@ export default function ChildDetailsModal({ child, token, apiBase, onClose, onRe
                     <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-100">
                       <Syringe className="h-5 w-5 text-blue-600" />
                     </div>
-                    <div className="text-sm text-slate-600">
-                      <p className="font-semibold text-slate-900">Vaccins à venir</p>
-                      <p>{child.vaccinesDue.length > 0 ? `${child.vaccinesDue.length} vaccin(s) en attente` : "Aucun vaccin prévu"}</p>
+                    <div className="flex flex-1 items-start justify-between gap-4 text-sm text-slate-600">
+                      <div>
+                        <p className="font-semibold text-slate-900">Vaccins à faire</p>
+                        <p>
+                          {dueCount > 0
+                            ? `${dueCount} vaccin(s) à administrer`
+                            : "Aucun vaccin à administrer"}
+                        </p>
+                        {sortedDueEntries.length > 0 && (
+                          <p className="mt-1 text-xs text-blue-600">
+                            Prochaine dose à prévoir : dose {sortedDueEntries[0].dose}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -194,7 +438,23 @@ export default function ChildDetailsModal({ child, token, apiBase, onClose, onRe
                     </div>
                     <div className="text-sm text-slate-600">
                       <p className="font-semibold text-slate-900">Prochain rendez-vous</p>
-                      <p>{formatDate(child.nextAppointment ?? undefined, true)}</p>
+                      {currentNextAppointment ? (
+                        <p>{formatDate(currentNextAppointment, true)}</p>
+                      ) : (
+                        <div className="space-y-2">
+                          <p className="text-sm text-slate-500">Non planifié</p>
+                          {canSchedule && scheduleOptions.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={handleOpenSchedule}
+                              className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-semibold text-amber-700 transition hover:bg-amber-100"
+                            >
+                              <CalendarPlus className="h-4 w-4" />
+                              Programmer un rendez-vous
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -229,6 +489,108 @@ export default function ChildDetailsModal({ child, token, apiBase, onClose, onRe
           onClose={() => setShowRecord(false)}
           detail={detail}
         />
+      )}
+
+      {showScheduleModal && sortedDueEntries.length > 0 && (
+        <div className="fixed inset-0 z-[55] flex items-center justify-center bg-slate-900/70 px-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-blue-500">
+                  Programmer un rendez-vous
+                </p>
+                <h3 className="text-lg font-semibold text-slate-900">{child.name}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseSchedule}
+                className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitSchedule} className="space-y-4">
+              <div>
+                <label
+                  htmlFor="vaccineSelect"
+                  className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+                >
+                  Choisissez le vaccin à programmer
+                </label>
+                <select
+                  id="vaccineSelect"
+              value={selectedVaccineId ?? ""}
+              onChange={(event) => setSelectedVaccineId(event.target.value || null)}
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                >
+              {selectedVaccineId == null && (
+                    <option value="" disabled>
+                      Sélectionnez un vaccin
+                    </option>
+                  )}
+              {scheduleOptions.map((option) => (
+                <option key={option.vaccineId} value={option.vaccineId}>
+                  {option.label}
+                </option>
+              ))}
+                </select>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="scheduleDate"
+                  className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+                >
+                  Date et heure du rendez-vous
+                </label>
+                <input
+                  id="scheduleDate"
+                  type="datetime-local"
+                  value={scheduleDate}
+                  onChange={(event) => setScheduleDate(event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                  min={new Date().toISOString().slice(0, 16)}
+                  required
+                />
+              </div>
+
+              {scheduleError && (
+                <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+                  <AlertCircle className="h-4 w-4" />
+                  {scheduleError}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={handleCloseSchedule}
+                  className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={scheduleSubmitting}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {scheduleSubmitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Programmation…
+                    </>
+                  ) : (
+                    <>
+                      <CalendarPlus className="h-4 w-4" />
+                      Confirmer
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

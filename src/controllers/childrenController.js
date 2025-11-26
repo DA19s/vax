@@ -7,11 +7,12 @@ const mapChildrenForResponse = (child) => {
     child.dueVaccines?.map((entry) => ({
       name: entry.vaccine.name,
       scheduledFor: entry.scheduledFor,
+      dose: entry.dose ?? 1,
       ageWindow: {
-        unit: entry.vaccineCalendar.ageUnit,
-        specificAge: entry.vaccineCalendar.specificAge,
-        min: entry.vaccineCalendar.minAge,
-        max: entry.vaccineCalendar.maxAge,
+        unit: entry.vaccineCalendar?.ageUnit ?? null,
+        specificAge: entry.vaccineCalendar?.specificAge ?? null,
+        min: entry.vaccineCalendar?.minAge ?? null,
+        max: entry.vaccineCalendar?.maxAge ?? null,
       },
     })) ?? [];
 
@@ -20,18 +21,24 @@ const mapChildrenForResponse = (child) => {
       name: entry.vaccine.name,
       scheduledFor: entry.scheduledFor,
       plannerId: entry.plannerId,
+      plannerName: entry.planner
+        ? `${entry.planner.firstName ?? ""} ${entry.planner.lastName ?? ""}`.trim()
+        : null,
+      dose: entry.dose ?? 1,
     })) ?? [];
 
   const lateVaccines =
     child.lateVaccines?.map((entry) => ({
       name: entry.vaccine.name,
       dueDate: entry.dueDate,
+      dose: entry.dose ?? 1,
     })) ?? [];
 
   const overdueVaccines =
     child.overdueVaccines?.map((entry) => ({
       name: entry.vaccine.name,
       dueDate: entry.dueDate,
+      dose: entry.dose ?? 1,
     })) ?? [];
 
   const completedVaccines =
@@ -39,6 +46,10 @@ const mapChildrenForResponse = (child) => {
       name: entry.vaccine.name,
       administeredAt: entry.administeredAt,
       administeredById: entry.administeredById,
+      administeredByName: entry.administeredBy
+        ? `${entry.administeredBy.firstName ?? ""} ${entry.administeredBy.lastName ?? ""}`.trim()
+        : null,
+      dose: entry.dose ?? 1,
     })) ?? [];
 
   return {
@@ -171,6 +182,7 @@ const createChildren = async (req, res, next) => {
               vaccineCalendarId: entry.id,
               vaccineId: vaccine.id,
               scheduledFor: dueDate,
+              dose: 1,
             });
           }
         } else if (isPastRange) {
@@ -180,6 +192,7 @@ const createChildren = async (req, res, next) => {
               vaccineCalendarId: entry.id,
               vaccineId: vaccine.id,
               dueDate,
+              dose: 1,
             });
             hasLate = true;
           }
@@ -227,7 +240,10 @@ const createChildren = async (req, res, next) => {
           },
         },
         completedVaccines: {
-          include: { vaccine: { select: { name: true } } },
+          include: {
+            vaccine: { select: { name: true } },
+            administeredBy: { select: { firstName: true, lastName: true } },
+          },
         },
         dueVaccines: {
           include: {
@@ -420,10 +436,6 @@ const getChildren = async (req, res, next) => {
 };
 
 const getChildVaccinations = async (req, res, next) => {
-  if (req.user.role !== "NATIONAL") {
-    return res.status(403).json({ message: "Accès refusé" });
-  }
-
   const { id } = req.params;
 
   try {
@@ -432,13 +444,17 @@ const getChildVaccinations = async (req, res, next) => {
       include: {
         healthCenter: {
           select: {
+            id: true,
             name: true,
             district: {
               select: {
+                id: true,
                 name: true,
                 commune: {
                   select: {
-                    region: { select: { name: true } },
+                    id: true,
+                    name: true,
+                    region: { select: { id: true, name: true } },
                   },
                 },
               },
@@ -495,6 +511,47 @@ const getChildVaccinations = async (req, res, next) => {
       return res.status(404).json({ message: "Enfant non trouvé" });
     }
 
+    const childRegionId =
+      child.healthCenter?.district?.commune?.region?.id ?? null;
+    const childDistrictId = child.healthCenter?.district?.id ?? null;
+    const childHealthCenterId = child.healthCenterId ?? null;
+
+    const hasAccess = (() => {
+      if (req.user.role === "NATIONAL") {
+        return true;
+      }
+
+      if (req.user.role === "REGIONAL") {
+        return (
+          req.user.regionId != null &&
+          childRegionId != null &&
+          req.user.regionId === childRegionId
+        );
+      }
+
+      if (req.user.role === "DISTRICT") {
+        return (
+          req.user.districtId != null &&
+          childDistrictId != null &&
+          req.user.districtId === childDistrictId
+        );
+      }
+
+      if (req.user.role === "AGENT") {
+        return (
+          req.user.healthCenterId != null &&
+          childHealthCenterId != null &&
+          req.user.healthCenterId === childHealthCenterId
+        );
+      }
+
+      return false;
+    })();
+
+    if (!hasAccess) {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
+
     res.json({
       child: {
         id: child.id,
@@ -518,11 +575,12 @@ const getChildVaccinations = async (req, res, next) => {
           vaccineName: entry.vaccine.name,
           scheduledFor: entry.scheduledFor,
           calendarId: entry.vaccineCalendarId,
-          calendarDescription: entry.vaccineCalendar.description,
-          ageUnit: entry.vaccineCalendar.ageUnit,
-          specificAge: entry.vaccineCalendar.specificAge,
-          minAge: entry.vaccineCalendar.minAge,
-          maxAge: entry.vaccineCalendar.maxAge,
+          calendarDescription: entry.vaccineCalendar?.description ?? null,
+          ageUnit: entry.vaccineCalendar?.ageUnit ?? null,
+          specificAge: entry.vaccineCalendar?.specificAge ?? null,
+          minAge: entry.vaccineCalendar?.minAge ?? null,
+          maxAge: entry.vaccineCalendar?.maxAge ?? null,
+          dose: entry.dose ?? 1,
         })),
         scheduled: child.scheduledVaccines.map((entry) => ({
           id: entry.id,
@@ -534,6 +592,7 @@ const getChildVaccinations = async (req, res, next) => {
             ? `${entry.planner.firstName ?? ""} ${entry.planner.lastName ?? ""}`.trim()
             : null,
           calendarId: entry.vaccineCalendarId,
+          dose: entry.dose ?? 1,
         })),
         late: child.lateVaccines.map((entry) => ({
           id: entry.id,
@@ -542,6 +601,7 @@ const getChildVaccinations = async (req, res, next) => {
           dueDate: entry.dueDate,
           calendarId: entry.vaccineCalendarId,
           calendarDescription: entry.vaccineCalendar?.description,
+          dose: entry.dose ?? 1,
         })),
         overdue: child.overdueVaccines.map((entry) => ({
           id: entry.id,
@@ -550,6 +610,7 @@ const getChildVaccinations = async (req, res, next) => {
           dueDate: entry.dueDate,
           calendarId: entry.vaccineCalendarId,
           calendarDescription: entry.vaccineCalendar?.description,
+          dose: entry.dose ?? 1,
         })),
         completed: child.completedVaccines.map((entry) => ({
           id: entry.id,
@@ -561,6 +622,7 @@ const getChildVaccinations = async (req, res, next) => {
             ? `${entry.administeredBy.firstName ?? ""} ${entry.administeredBy.lastName ?? ""}`.trim()
             : null,
           calendarId: entry.vaccineCalendarId,
+          dose: entry.dose ?? 1,
         })),
       },
     });

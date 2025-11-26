@@ -23,6 +23,31 @@ router.get(
 );
 router.get("/", requireAuth, vaccineController.getVaccine);
 router.get("/calendar", requireAuth, vaccineController.listVaccineCalendars);
+router.post(
+  "/scheduled",
+  requireAuth,
+  vaccineController.ScheduleVaccine
+);
+router.get(
+  "/scheduled",
+  requireAuth,
+  vaccineController.listScheduledVaccines
+);
+router.post(
+  "/scheduled/:id/complete",
+  requireAuth,
+  vaccineController.completeVaccine
+);
+router.patch(
+  "/scheduled/:id",
+  requireAuth,
+  vaccineController.updateScheduledVaccine
+);
+router.delete(
+  "/scheduled/:id",
+  requireAuth,
+  vaccineController.cancelScheduledVaccine
+);
 router.put("/:id", requireAuth, vaccineController.updateVaccine);
 router.delete("/:id", requireAuth, vaccineController.deleteVaccine);
 

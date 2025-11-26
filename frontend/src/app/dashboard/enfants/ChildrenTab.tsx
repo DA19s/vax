@@ -525,6 +525,7 @@ export default function ChildrenTab({
           child={selectedChild}
           onClose={() => setSelectedChild(null)}
           onRefresh={onRefresh}
+          canSchedule={normalizedRole === "AGENT"}
         />
       )}
     </div>

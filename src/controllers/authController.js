@@ -1,6 +1,8 @@
 const bcrypt = require("bcryptjs");
 const prisma = require("../config/prismaClient");
 const tokenService = require("../services/tokenService");
+const { missVaccine } = require("./vaccineController");
+const { refreshExpiredLots } = require("../services/stockLotService");
 
 const computeAgeByUnit = (birthDate, unit) => {
   const now = new Date();
@@ -60,24 +62,31 @@ const ensureNationalBuckets = async () => {
     const dueCreate = [];
     const lateCreate = [];
 
-    const completedSet = new Set(
-      child.completedVaccines.map(
-        (entry) =>
-          `${entry.childId}-${entry.vaccineId}-${entry.vaccineCalendarId}`
+    const completedDoseSet = new Set(
+      (child.completedVaccines ?? []).map(
+        (entry) => `${entry.vaccineId}::${entry.dose ?? 1}`
       )
     );
-
-    const dueSet = new Set(
-      child.dueVaccines.map(
-        (entry) =>
-          `${entry.childId}-${entry.vaccineId}-${entry.vaccineCalendarId}`
+    const scheduledDoseSet = new Set(
+      (child.scheduledVaccines ?? []).map(
+        (entry) => `${entry.vaccineId}::${entry.dose ?? 1}`
       )
     );
-
-    const lateSet = new Set(
-      child.lateVaccines.map(
+    const overdueDoseSet = new Set(
+      (child.overdueVaccines ?? []).map(
+        (entry) => `${entry.vaccineId}::${entry.dose ?? 1}`
+      )
+    );
+    const dueDoseSet = new Set(
+      (child.dueVaccines ?? []).map(
         (entry) =>
-          `${entry.childId}-${entry.vaccineId}-${entry.vaccineCalendarId}`
+          `${entry.vaccineId}::${entry.vaccineCalendarId ?? ""}::${entry.dose ?? 1}`
+      )
+    );
+    const lateDoseSet = new Set(
+      (child.lateVaccines ?? []).map(
+        (entry) =>
+          `${entry.vaccineId}::${entry.vaccineCalendarId ?? ""}::${entry.dose ?? 1}`
       )
     );
 
@@ -102,31 +111,52 @@ const ensureNationalBuckets = async () => {
       );
 
       for (const vaccine of calendar.vaccines) {
-        const key = `${child.id}-${vaccine.id}-${calendar.id}`;
+        const dosesRequired = Number.parseInt(vaccine.dosesRequired, 10);
+        const totalDoses = Number.isFinite(dosesRequired) && dosesRequired > 0 ? dosesRequired : 1;
 
-        if (completedSet.has(key)) {
-          dueSet.delete(key);
-          lateSet.delete(key);
-          continue;
+        const missingDoses = [];
+        for (let dose = 1; dose <= totalDoses; dose += 1) {
+          const doseKey = `${vaccine.id}::${dose}`;
+          const hasCompleted = completedDoseSet.has(doseKey);
+          const hasScheduled = scheduledDoseSet.has(doseKey);
+          const hasOverdue = overdueDoseSet.has(doseKey);
+
+          if (!hasCompleted && !hasScheduled && !hasOverdue) {
+            missingDoses.push(dose);
+          }
         }
 
-        if (withinRange && !dueSet.has(key)) {
-          dueCreate.push({
-            childId: child.id,
-            vaccineId: vaccine.id,
-            vaccineCalendarId: calendar.id,
-            scheduledFor: scheduledDate,
-          });
-          continue;
+        if (withinRange && missingDoses.length > 0) {
+          const nextDose = missingDoses[0];
+          const dueKey = `${vaccine.id}::${calendar.id}::${nextDose}`;
+          if (!dueDoseSet.has(dueKey)) {
+            dueCreate.push({
+              childId: child.id,
+              vaccineId: vaccine.id,
+              vaccineCalendarId: calendar.id,
+              scheduledFor: scheduledDate,
+              dose: nextDose,
+            });
+            dueDoseSet.add(dueKey);
+          }
         }
 
-        if (pastRange && scheduledDate < today && !lateSet.has(key)) {
-          lateCreate.push({
-            childId: child.id,
-            vaccineId: vaccine.id,
-            vaccineCalendarId: calendar.id,
-            dueDate: scheduledDate,
-          });
+        if (pastRange && scheduledDate < today && missingDoses.length > 0) {
+          for (const dose of missingDoses) {
+            const lateKey = `${vaccine.id}::${calendar.id}::${dose}`;
+            if (lateDoseSet.has(lateKey)) {
+              continue;
+            }
+
+            lateCreate.push({
+              childId: child.id,
+              vaccineId: vaccine.id,
+              vaccineCalendarId: calendar.id,
+              dueDate: scheduledDate,
+              dose,
+            });
+            lateDoseSet.add(lateKey);
+          }
         }
       }
     }
@@ -175,8 +205,25 @@ const login = async (req, res, next) => {
       return res.status(401).json({ message: "Identifiants invalides." });
     }
 
+    let expiredLotsSummary = [];
+
     if (user.role === "NATIONAL") {
       await ensureNationalBuckets();
+      const expiredLots = await refreshExpiredLots();
+      expiredLotsSummary = expiredLots.map((lot) => ({
+        id: lot.id,
+        vaccineId: lot.vaccineId,
+        expiration: lot.expiration,
+        remainingQuantity: lot.remainingQuantity,
+      }));
+    }
+
+    if (user.role === "AGENT" && typeof missVaccine.forPlanner === "function") {
+      missVaccine
+        .forPlanner(user.id)
+        .catch((error) =>
+          console.error("[login] missVaccine.forPlanner failed", error)
+        );
     }
 
     const payload = {
@@ -188,7 +235,7 @@ const login = async (req, res, next) => {
     const accessToken = tokenService.signAccessToken(payload);
     const refreshToken = tokenService.signRefreshToken(payload);
 
-    res.json({ accessToken, refreshToken });
+    res.json({ accessToken, refreshToken, expiredLots: expiredLotsSummary });
   } catch (error) {
     next(error);
   }

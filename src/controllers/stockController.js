@@ -1,4 +1,13 @@
 const prisma = require("../config/prismaClient");
+const {
+  OWNER_TYPES,
+  LOT_STATUS,
+  createLot,
+  consumeLots,
+  recordTransfer,
+  deleteLotCascade,
+  updateNearestExpiration,
+} = require("../services/stockLotService");
 
 const resolveRegionIdForUser = async (user) => {
   if (user.regionId) {
@@ -67,6 +76,38 @@ const fetchDistrictIdsForRegion = async (regionId) => {
   return districts.map((entry) => entry.id);
 };
 
+const buildExpiredLotKey = (ownerType, ownerId, vaccineId) =>
+  `${ownerType}::${ownerId ?? "root"}::${vaccineId}`;
+
+const fetchExpiredLotsSet = async ({
+  ownerType,
+  ownerIds,
+}) => {
+  const where = {
+    ownerType,
+    status: LOT_STATUS.EXPIRED,
+    remainingQuantity: { gt: 0 },
+  };
+
+  if (Array.isArray(ownerIds)) {
+    const filtered = ownerIds.filter((value) => value != null);
+    if (filtered.length > 0) {
+      where.ownerId = { in: filtered };
+    }
+  } else if (ownerIds != null) {
+    where.ownerId = ownerIds;
+  }
+
+  const lots = await prisma.stockLot.findMany({
+    where,
+    select: { ownerId: true, vaccineId: true },
+  });
+
+  return new Set(
+    lots.map((lot) => buildExpiredLotKey(ownerType, lot.ownerId, lot.vaccineId)),
+  );
+};
+
 const getStockNATIONAL = async (req, res, next) => {
   if (req.user.role !== "NATIONAL") {
     return res.status(403).json({ message: "Accès refusé" });
@@ -78,7 +119,79 @@ const getStockNATIONAL = async (req, res, next) => {
       orderBy: { vaccine: { name: "asc" } },
     });
 
-    res.json({ national });
+    const expiredSet = await fetchExpiredLotsSet({
+      ownerType: OWNER_TYPES.NATIONAL,
+    });
+
+    const nationalWithFlag = national.map((stock) => ({
+      ...stock,
+      hasExpiredLot: expiredSet.has(
+        buildExpiredLotKey(OWNER_TYPES.NATIONAL, null, stock.vaccineId),
+      ),
+    }));
+
+    res.json({ national: nationalWithFlag });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const listNationalLots = async (req, res, next) => {
+  if (req.user.role !== "NATIONAL") {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  const { vaccineId } = req.params;
+
+  if (!vaccineId) {
+    return res.status(400).json({
+      message: "vaccineId est requis pour consulter les lots",
+    });
+  }
+
+  try {
+    const lots = await prisma.stockLot.findMany({
+      where: {
+        vaccineId,
+        ownerType: OWNER_TYPES.NATIONAL,
+        ownerId: null,
+      },
+      orderBy: [
+        { status: "asc" },
+        { expiration: "asc" },
+      ],
+      include: {
+        _count: {
+          select: {
+            derivedLots: true,
+          },
+        },
+      },
+    });
+
+    const formatted = lots.map((lot) => ({
+      id: lot.id,
+      vaccineId: lot.vaccineId,
+      quantity: lot.quantity,
+      remainingQuantity: lot.remainingQuantity,
+      distributedQuantity: lot.quantity - lot.remainingQuantity,
+      expiration: lot.expiration,
+      status: lot.status,
+      sourceLotId: lot.sourceLotId,
+      createdAt: lot.createdAt,
+      updatedAt: lot.updatedAt,
+      derivedCount: lot._count.derivedLots,
+    }));
+
+    const totalRemaining = formatted.reduce(
+      (sum, lot) => sum + lot.remainingQuantity,
+      0,
+    );
+
+    res.json({
+      lots: formatted,
+      totalRemaining,
+    });
   } catch (error) {
     next(error);
   }
@@ -110,7 +223,27 @@ const getStockREGIONAL = async (req, res, next) => {
       ],
     });
 
-    res.json({ regional });
+  const regionIds = regional
+      .map((stock) => stock.regionId ?? null)
+      .filter((id) => id != null);
+
+    const expiredSet = await fetchExpiredLotsSet({
+      ownerType: OWNER_TYPES.REGIONAL,
+      ownerIds: regionIds.length > 0 ? regionIds : undefined,
+    });
+
+    const regionalWithFlag = regional.map((stock) => ({
+      ...stock,
+      hasExpiredLot: expiredSet.has(
+        buildExpiredLotKey(
+          OWNER_TYPES.REGIONAL,
+          stock.regionId ?? null,
+          stock.vaccineId,
+        ),
+      ),
+    }));
+
+    res.json({ regional: regionalWithFlag });
   } catch (error) {
     next(error);
   }
@@ -154,7 +287,27 @@ const getStockDISTRICT = async (req, res, next) => {
       ],
     });
 
-    res.json({ districtId: resolvedDistrictId, district });
+  const districtIds = district.map((stock) => stock.districtId ?? null).filter(Boolean);
+    const expiredSet = await fetchExpiredLotsSet({
+      ownerType: OWNER_TYPES.DISTRICT,
+    ownerIds: districtIds.length > 0 ? districtIds : undefined,
+    });
+
+    const districtWithFlag = district.map((stock) => ({
+      ...stock,
+      hasExpiredLot: expiredSet.has(
+        buildExpiredLotKey(
+          OWNER_TYPES.DISTRICT,
+          stock.districtId ?? null,
+          stock.vaccineId,
+        ),
+      ),
+    }));
+
+    res.json({
+      districtId: resolvedDistrictId,
+      district: districtWithFlag,
+    });
   } catch (error) {
     next(error);
   }
@@ -216,7 +369,27 @@ const getStockHEALTHCENTER = async (req, res, next) => {
       ],
     });
 
-    res.json({ healthCenter });
+  const centerIds = healthCenter
+      .map((stock) => stock.healthCenterId ?? null)
+      .filter(Boolean);
+
+    const expiredSet = await fetchExpiredLotsSet({
+      ownerType: OWNER_TYPES.HEALTHCENTER,
+      ownerIds: centerIds.length > 0 ? centerIds : undefined,
+    });
+
+    const healthCenterWithFlag = healthCenter.map((stock) => ({
+      ...stock,
+      hasExpiredLot: expiredSet.has(
+        buildExpiredLotKey(
+          OWNER_TYPES.HEALTHCENTER,
+          stock.healthCenterId ?? null,
+          stock.vaccineId,
+        ),
+      ),
+    }));
+
+    res.json({ healthCenter: healthCenterWithFlag });
   } catch (error) {
     next(error);
   }
@@ -406,32 +579,66 @@ const createStockHEALTHCENTER = async (req, res, next) => {
 };
 
 const addStockNATIONAL = async (req, res, next) => {
-    
-    if (req.user.role !== "NATIONAL") {
+  if (req.user.role !== "NATIONAL") {
     return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  try {
+    const { vaccineId, quantity, expiration } = req.body ?? {};
+    const qty = Number(quantity);
+
+    if (!vaccineId || !Number.isFinite(qty) || qty <= 0) {
+      return res
+        .status(400)
+        .json({ message: "vaccineId et quantity (> 0) sont requis" });
     }
 
-    try {
-        const { vaccineId, quantity } = req.body;
-
-        if (!vaccineId || !quantity) {
-            return res.status(400).json({ message: "vaccineId et quantity sont requis" });
-        }
-
-        const stock = await prisma.stockNATIONAL.findUnique({
-            where: { vaccineId },
-        });
-        if (!stock) {
-            return res.status(404).json({ message: "Stock introuvable" });
-        }
-        const updatedStock = await prisma.stockNATIONAL.update({
-            where: { vaccineId },
-            data: { quantity: stock.quantity + quantity },
-        });
-        res.json(updatedStock);
-    } catch (error) {
-        next(error);
+    if (!expiration) {
+      return res.status(400).json({
+        message: "La date d'expiration est requise pour créer un nouveau lot",
+      });
     }
+
+    let updatedStock = null;
+    let createdLot = null;
+
+    await prisma.$transaction(async (tx) => {
+      const stock = await tx.stockNATIONAL.findUnique({
+        where: { vaccineId },
+      });
+
+      if (!stock) {
+        throw Object.assign(new Error("Stock national introuvable"), {
+          status: 404,
+        });
+      }
+
+      await tx.stockNATIONAL.update({
+        where: { vaccineId },
+        data: { quantity: (stock.quantity ?? 0) + qty },
+      });
+
+      createdLot = await createLot(tx, {
+        vaccineId,
+        ownerType: OWNER_TYPES.NATIONAL,
+        ownerId: null,
+        quantity: qty,
+        expiration,
+      });
+
+      updatedStock = await tx.stockNATIONAL.findUnique({
+        where: { vaccineId },
+        include: { vaccine: true },
+      });
+    });
+
+    return res.json({ stock: updatedStock, lot: createdLot });
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    next(error);
+  }
 };
 
 const addStockREGIONAL = async (req, res, next) => {
@@ -440,7 +647,7 @@ const addStockREGIONAL = async (req, res, next) => {
   }
 
   try {
-    const { vaccineId, regionId, quantity } = req.body;
+    const { vaccineId, regionId, quantity } = req.body ?? {};
     const qty = Number(quantity);
 
     if (!vaccineId || !regionId || !Number.isFinite(qty) || qty <= 0) {
@@ -449,36 +656,85 @@ const addStockREGIONAL = async (req, res, next) => {
         .json({ message: "vaccineId, regionId et quantity (> 0) sont requis" });
     }
 
-    const regionalStock = await prisma.stockREGIONAL.findUnique({
-      where: { vaccineId_regionId: { vaccineId, regionId } },
-    });
+    let updatedNational = null;
+    let updatedRegional = null;
 
-    if (!regionalStock) {
-      return res.status(404).json({ message: "Stock régional introuvable" });
-    }
+    await prisma.$transaction(async (tx) => {
+      const regionalStock = await tx.stockREGIONAL.findUnique({
+        where: { vaccineId_regionId: { vaccineId, regionId } },
+      });
 
-    const nationalStock = await prisma.stockNATIONAL.findUnique({
-      where: { vaccineId },
-    });
+      if (!regionalStock) {
+        throw Object.assign(new Error("Stock régional introuvable"), {
+          status: 404,
+        });
+      }
 
-    if (!nationalStock || (nationalStock.quantity ?? 0) < qty) {
-      return res
-        .status(400)
-        .json({ message: "Quantité insuffisante dans le stock national" });
-    }
+      const nationalStock = await tx.stockNATIONAL.findUnique({
+        where: { vaccineId },
+      });
 
-    const updatedNational = await prisma.stockNATIONAL.update({
-      where: { vaccineId },
-      data: { quantity: (nationalStock.quantity ?? 0) - qty },
-    });
+      if (!nationalStock || (nationalStock.quantity ?? 0) < qty) {
+        throw Object.assign(
+          new Error("Quantité insuffisante dans le stock national"),
+          { status: 400 },
+        );
+      }
 
-    const updatedRegional = await prisma.stockREGIONAL.update({
-      where: { vaccineId_regionId: { vaccineId, regionId } },
-      data: { quantity: (regionalStock.quantity ?? 0) + qty },
+      const allocations = await consumeLots(tx, {
+        vaccineId,
+        ownerType: OWNER_TYPES.NATIONAL,
+        ownerId: null,
+        quantity: qty,
+      });
+
+      await tx.stockNATIONAL.update({
+        where: { vaccineId },
+        data: { quantity: (nationalStock.quantity ?? 0) - qty },
+      });
+
+      await tx.stockREGIONAL.update({
+        where: { vaccineId_regionId: { vaccineId, regionId } },
+        data: { quantity: (regionalStock.quantity ?? 0) + qty },
+      });
+
+      for (const allocation of allocations) {
+        await createLot(tx, {
+          vaccineId,
+          ownerType: OWNER_TYPES.REGIONAL,
+          ownerId: regionId,
+          quantity: allocation.quantity,
+          expiration: allocation.expiration,
+          sourceLotId: allocation.lotId,
+          status: allocation.status ?? LOT_STATUS.VALID,
+        });
+      }
+
+      await recordTransfer(tx, {
+        vaccineId,
+        fromType: OWNER_TYPES.NATIONAL,
+        fromId: null,
+        toType: OWNER_TYPES.REGIONAL,
+        toId: regionId,
+        allocations,
+      });
+
+      updatedNational = await tx.stockNATIONAL.findUnique({
+        where: { vaccineId },
+        include: { vaccine: true },
+      });
+
+      updatedRegional = await tx.stockREGIONAL.findUnique({
+        where: { vaccineId_regionId: { vaccineId, regionId } },
+        include: { vaccine: true, region: true },
+      });
     });
 
     res.json({ national: updatedNational, regional: updatedRegional });
   } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
     next(error);
   }
 };
@@ -489,7 +745,7 @@ const addStockDISTRICT = async (req, res, next) => {
   }
 
   try {
-    const { vaccineId, districtId, quantity } = req.body;
+    const { vaccineId, districtId, quantity } = req.body ?? {};
     const qty = Number(quantity);
 
     if (!vaccineId || !districtId || !Number.isFinite(qty) || qty <= 0) {
@@ -521,36 +777,98 @@ const addStockDISTRICT = async (req, res, next) => {
       });
     }
 
-    const districtStock = await prisma.stockDISTRICT.findUnique({
-      where: { vaccineId_districtId: { vaccineId, districtId } },
-    });
-
-    if (!districtStock) {
-      return res.status(404).json({ message: "Stock district introuvable" });
+    if (req.user.role === "NATIONAL") {
+      try {
+        await ensureDistrictBelongsToRegion(districtId, regionIdPayload);
+      } catch (validationError) {
+        if (validationError.status) {
+          return res
+            .status(validationError.status)
+            .json({ message: validationError.message });
+        }
+        throw validationError;
+      }
     }
 
-    const regionalStock = await prisma.stockREGIONAL.findUnique({
-      where: { vaccineId_regionId: { vaccineId, regionId: regionIdPayload } },
-    });
+    let updatedRegional = null;
+    let updatedDistrict = null;
 
-    if (!regionalStock || (regionalStock.quantity ?? 0) < qty) {
-      return res
-        .status(400)
-        .json({ message: "Quantité insuffisante dans le stock régional" });
-    }
+    await prisma.$transaction(async (tx) => {
+      const districtStock = await tx.stockDISTRICT.findUnique({
+        where: { vaccineId_districtId: { vaccineId, districtId } },
+      });
 
-    const updatedRegional = await prisma.stockREGIONAL.update({
-      where: { vaccineId_regionId: { vaccineId, regionId: regionIdPayload } },
-      data: { quantity: (regionalStock.quantity ?? 0) - qty },
-    });
+      if (!districtStock) {
+        throw Object.assign(new Error("Stock district introuvable"), {
+          status: 404,
+        });
+      }
 
-    const updatedDistrict = await prisma.stockDISTRICT.update({
-      where: { vaccineId_districtId: { vaccineId, districtId } },
-      data: { quantity: (districtStock.quantity ?? 0) + qty },
+      const regionalStock = await tx.stockREGIONAL.findUnique({
+        where: { vaccineId_regionId: { vaccineId, regionId: regionIdPayload } },
+      });
+
+      if (!regionalStock || (regionalStock.quantity ?? 0) < qty) {
+        throw Object.assign(
+          new Error("Quantité insuffisante dans le stock régional"),
+          { status: 400 },
+        );
+      }
+
+      const allocations = await consumeLots(tx, {
+        vaccineId,
+        ownerType: OWNER_TYPES.REGIONAL,
+        ownerId: regionIdPayload,
+        quantity: qty,
+      });
+
+      await tx.stockREGIONAL.update({
+        where: { vaccineId_regionId: { vaccineId, regionId: regionIdPayload } },
+        data: { quantity: (regionalStock.quantity ?? 0) - qty },
+      });
+
+      await tx.stockDISTRICT.update({
+        where: { vaccineId_districtId: { vaccineId, districtId } },
+        data: { quantity: (districtStock.quantity ?? 0) + qty },
+      });
+
+      for (const allocation of allocations) {
+        await createLot(tx, {
+          vaccineId,
+          ownerType: OWNER_TYPES.DISTRICT,
+          ownerId: districtId,
+          quantity: allocation.quantity,
+          expiration: allocation.expiration,
+          sourceLotId: allocation.lotId,
+          status: allocation.status ?? LOT_STATUS.VALID,
+        });
+      }
+
+      await recordTransfer(tx, {
+        vaccineId,
+        fromType: OWNER_TYPES.REGIONAL,
+        fromId: regionIdPayload,
+        toType: OWNER_TYPES.DISTRICT,
+        toId: districtId,
+        allocations,
+      });
+
+      updatedRegional = await tx.stockREGIONAL.findUnique({
+        where: { vaccineId_regionId: { vaccineId, regionId: regionIdPayload } },
+        include: { vaccine: true, region: true },
+      });
+
+      updatedDistrict = await tx.stockDISTRICT.findUnique({
+        where: { vaccineId_districtId: { vaccineId, districtId } },
+        include: { vaccine: true, district: { include: { commune: true } } },
+      });
     });
 
     res.json({ regional: updatedRegional, district: updatedDistrict });
   } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
     next(error);
   }
 };
@@ -561,7 +879,7 @@ const addStockHEALTHCENTER = async (req, res, next) => {
   }
 
   try {
-    const { vaccineId, healthCenterId, quantity } = req.body;
+    const { vaccineId, healthCenterId, quantity } = req.body ?? {};
     const qty = Number(quantity);
 
     if (
@@ -598,38 +916,86 @@ const addStockHEALTHCENTER = async (req, res, next) => {
         .json({ message: "Ce centre de santé n'appartient pas à votre district" });
     }
 
-    const healthCenterStock = await prisma.stockHEALTHCENTER.findUnique({
-      where: { vaccineId_healthCenterId: { vaccineId, healthCenterId } },
-    });
+    let updatedDistrict = null;
+    let updatedHealthCenter = null;
 
-    if (!healthCenterStock) {
-      return res
-        .status(404)
-        .json({ message: "Stock centre de santé introuvable" });
-    }
+    await prisma.$transaction(async (tx) => {
+      const healthCenterStock = await tx.stockHEALTHCENTER.findUnique({
+        where: { vaccineId_healthCenterId: { vaccineId, healthCenterId } },
+      });
 
-    const districtStock = await prisma.stockDISTRICT.findUnique({
-      where: { vaccineId_districtId: { vaccineId, districtId } },
-    });
+      if (!healthCenterStock) {
+        throw Object.assign(
+          new Error("Stock centre de santé introuvable"),
+          { status: 404 },
+        );
+      }
 
-    if (!districtStock || (districtStock.quantity ?? 0) < qty) {
-      return res
-        .status(400)
-        .json({ message: "Quantité insuffisante dans le stock district" });
-    }
+      const districtStock = await tx.stockDISTRICT.findUnique({
+        where: { vaccineId_districtId: { vaccineId, districtId } },
+      });
 
-    const updatedDistrict = await prisma.stockDISTRICT.update({
-      where: { vaccineId_districtId: { vaccineId, districtId } },
-      data: { quantity: (districtStock.quantity ?? 0) - qty },
-    });
+      if (!districtStock || (districtStock.quantity ?? 0) < qty) {
+        throw Object.assign(
+          new Error("Quantité insuffisante dans le stock district"),
+          { status: 400 },
+        );
+      }
 
-    const updatedHealthCenter = await prisma.stockHEALTHCENTER.update({
-      where: { vaccineId_healthCenterId: { vaccineId, healthCenterId } },
-      data: { quantity: (healthCenterStock.quantity ?? 0) + qty },
+      const allocations = await consumeLots(tx, {
+        vaccineId,
+        ownerType: OWNER_TYPES.DISTRICT,
+        ownerId: districtId,
+        quantity: qty,
+      });
+
+      await tx.stockDISTRICT.update({
+        where: { vaccineId_districtId: { vaccineId, districtId } },
+        data: { quantity: (districtStock.quantity ?? 0) - qty },
+      });
+
+      await tx.stockHEALTHCENTER.update({
+        where: { vaccineId_healthCenterId: { vaccineId, healthCenterId } },
+        data: { quantity: (healthCenterStock.quantity ?? 0) + qty },
+      });
+
+      for (const allocation of allocations) {
+        await createLot(tx, {
+          vaccineId,
+          ownerType: OWNER_TYPES.HEALTHCENTER,
+          ownerId: healthCenterId,
+          quantity: allocation.quantity,
+          expiration: allocation.expiration,
+          sourceLotId: allocation.lotId,
+          status: allocation.status ?? LOT_STATUS.VALID,
+        });
+      }
+
+      await recordTransfer(tx, {
+        vaccineId,
+        fromType: OWNER_TYPES.DISTRICT,
+        fromId: districtId,
+        toType: OWNER_TYPES.HEALTHCENTER,
+        toId: healthCenterId,
+        allocations,
+      });
+
+      updatedDistrict = await tx.stockDISTRICT.findUnique({
+        where: { vaccineId_districtId: { vaccineId, districtId } },
+        include: { vaccine: true, district: { include: { commune: true } } },
+      });
+
+      updatedHealthCenter = await tx.stockHEALTHCENTER.findUnique({
+        where: { vaccineId_healthCenterId: { vaccineId, healthCenterId } },
+        include: { vaccine: true, healthCenter: true },
+      });
     });
 
     res.json({ district: updatedDistrict, healthCenter: updatedHealthCenter });
   } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
     next(error);
   }
 };
@@ -641,7 +1007,7 @@ const updateStockNATIONAL = async (req, res, next) => {
   }
 
   try {
-    const { vaccineId, quantity } = req.body;
+    const { vaccineId, quantity, expiration } = req.body ?? {};
     const qty = Number(quantity);
 
     if (!vaccineId || !Number.isFinite(qty) || qty < 0) {
@@ -650,18 +1016,60 @@ const updateStockNATIONAL = async (req, res, next) => {
         .json({ message: "vaccineId et quantity (>= 0) sont requis" });
     }
 
-    const stock = await prisma.stockNATIONAL.findUnique({ where: { vaccineId } });
-    if (!stock) {
-      return res.status(404).json({ message: "Stock national introuvable" });
-    }
+    let updatedStock = null;
 
-    const updated = await prisma.stockNATIONAL.update({
-      where: { vaccineId },
-      data: { quantity: qty },
+    await prisma.$transaction(async (tx) => {
+      const stock = await tx.stockNATIONAL.findUnique({ where: { vaccineId } });
+      if (!stock) {
+        throw Object.assign(new Error("Stock national introuvable"), {
+          status: 404,
+        });
+      }
+
+      const previousQuantity = stock.quantity ?? 0;
+      const delta = qty - previousQuantity;
+
+      await tx.stockNATIONAL.update({
+        where: { vaccineId },
+        data: { quantity: qty },
+      });
+
+      if (delta > 0) {
+        if (!expiration) {
+          throw Object.assign(
+            new Error(
+              "La date d'expiration est requise pour l'ajout de nouveaux lots",
+            ),
+            { status: 400 },
+          );
+        }
+
+        await createLot(tx, {
+          vaccineId,
+          ownerType: OWNER_TYPES.NATIONAL,
+          ownerId: null,
+          quantity: delta,
+          expiration,
+        });
+      }
+
+      await updateNearestExpiration(tx, {
+        vaccineId,
+        ownerType: OWNER_TYPES.NATIONAL,
+        ownerId: null,
+      });
+
+      updatedStock = await tx.stockNATIONAL.findUnique({
+        where: { vaccineId },
+        include: { vaccine: true },
+      });
     });
 
-    res.json(updated);
+    res.json(updatedStock);
   } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
     next(error);
   }
 };
@@ -672,7 +1080,7 @@ const updateStockREGIONAL = async (req, res, next) => {
   }
 
   try {
-    const { vaccineId, quantity } = req.body;
+    const { vaccineId, quantity, expiration } = req.body ?? {};
     const qty = Number(quantity);
 
     let regionId = req.body.regionId;
@@ -696,17 +1104,63 @@ const updateStockREGIONAL = async (req, res, next) => {
       where: { vaccineId_regionId: { vaccineId, regionId } },
     });
 
-    if (!stock) {
-      return res.status(404).json({ message: "Stock régional introuvable" });
-    }
+    let updated = null;
 
-    const updated = await prisma.stockREGIONAL.update({
-      where: { vaccineId_regionId: { vaccineId, regionId } },
-      data: { quantity: qty },
+    await prisma.$transaction(async (tx) => {
+      const current = await tx.stockREGIONAL.findUnique({
+        where: { vaccineId_regionId: { vaccineId, regionId } },
+      });
+
+      if (!current) {
+        throw Object.assign(new Error("Stock régional introuvable"), {
+          status: 404,
+        });
+      }
+
+      const previousQuantity = current.quantity ?? 0;
+      const delta = qty - previousQuantity;
+
+      await tx.stockREGIONAL.update({
+        where: { vaccineId_regionId: { vaccineId, regionId } },
+        data: { quantity: qty },
+      });
+
+      if (delta > 0) {
+        if (!expiration) {
+          throw Object.assign(
+            new Error(
+              "La date d'expiration est requise pour l'ajout de nouveaux lots",
+            ),
+            { status: 400 },
+          );
+        }
+
+        await createLot(tx, {
+          vaccineId,
+          ownerType: OWNER_TYPES.REGIONAL,
+          ownerId: regionId,
+          quantity: delta,
+          expiration,
+        });
+      }
+
+      await updateNearestExpiration(tx, {
+        vaccineId,
+        ownerType: OWNER_TYPES.REGIONAL,
+        ownerId: regionId,
+      });
+
+      updated = await tx.stockREGIONAL.findUnique({
+        where: { vaccineId_regionId: { vaccineId, regionId } },
+        include: { vaccine: true, region: true },
+      });
     });
 
     res.json(updated);
   } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
     next(error);
   }
 };
@@ -717,7 +1171,7 @@ const updateStockDISTRICT = async (req, res, next) => {
   }
 
   try {
-    const { vaccineId, districtId, quantity } = req.body;
+    const { vaccineId, districtId, quantity, expiration } = req.body ?? {};
     const qty = Number(quantity);
 
     if (!vaccineId || !districtId || !Number.isFinite(qty) || qty < 0) {
@@ -752,17 +1206,63 @@ const updateStockDISTRICT = async (req, res, next) => {
       where: { vaccineId_districtId: { vaccineId, districtId } },
     });
 
-    if (!stock) {
-      return res.status(404).json({ message: "Stock district introuvable" });
-    }
+    let updated = null;
 
-    const updated = await prisma.stockDISTRICT.update({
-      where: { vaccineId_districtId: { vaccineId, districtId } },
-      data: { quantity: qty },
+    await prisma.$transaction(async (tx) => {
+      const current = await tx.stockDISTRICT.findUnique({
+        where: { vaccineId_districtId: { vaccineId, districtId } },
+      });
+
+      if (!current) {
+        throw Object.assign(new Error("Stock district introuvable"), {
+          status: 404,
+        });
+      }
+
+      const previousQuantity = current.quantity ?? 0;
+      const delta = qty - previousQuantity;
+
+      await tx.stockDISTRICT.update({
+        where: { vaccineId_districtId: { vaccineId, districtId } },
+        data: { quantity: qty },
+      });
+
+      if (delta > 0) {
+        if (!expiration) {
+          throw Object.assign(
+            new Error(
+              "La date d'expiration est requise pour l'ajout de nouveaux lots",
+            ),
+            { status: 400 },
+          );
+        }
+
+        await createLot(tx, {
+          vaccineId,
+          ownerType: OWNER_TYPES.DISTRICT,
+          ownerId: districtId,
+          quantity: delta,
+          expiration,
+        });
+      }
+
+      await updateNearestExpiration(tx, {
+        vaccineId,
+        ownerType: OWNER_TYPES.DISTRICT,
+        ownerId: districtId,
+      });
+
+      updated = await tx.stockDISTRICT.findUnique({
+        where: { vaccineId_districtId: { vaccineId, districtId } },
+        include: { vaccine: true, district: { include: { commune: true } } },
+      });
     });
 
     res.json(updated);
   } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
     next(error);
   }
 };
@@ -773,7 +1273,7 @@ const updateStockHEALTHCENTER = async (req, res, next) => {
   }
 
   try {
-    const { vaccineId, healthCenterId, quantity } = req.body;
+    const { vaccineId, healthCenterId, quantity, expiration } = req.body ?? {};
     const qty = Number(quantity);
 
     if (!vaccineId || !healthCenterId || !Number.isFinite(qty) || qty < 0) {
@@ -786,19 +1286,96 @@ const updateStockHEALTHCENTER = async (req, res, next) => {
       where: { vaccineId_healthCenterId: { vaccineId, healthCenterId } },
     });
 
-    if (!stock) {
-      return res
-        .status(404)
-        .json({ message: "Stock centre de santé introuvable" });
-    }
+    let updated = null;
 
-    const updated = await prisma.stockHEALTHCENTER.update({
-      where: { vaccineId_healthCenterId: { vaccineId, healthCenterId } },
-      data: { quantity: qty },
+    await prisma.$transaction(async (tx) => {
+      const current = await tx.stockHEALTHCENTER.findUnique({
+        where: { vaccineId_healthCenterId: { vaccineId, healthCenterId } },
+      });
+
+      if (!current) {
+        throw Object.assign(
+          new Error("Stock centre de santé introuvable"),
+          { status: 404 },
+        );
+      }
+
+      const previousQuantity = current.quantity ?? 0;
+      const delta = qty - previousQuantity;
+
+      await tx.stockHEALTHCENTER.update({
+        where: { vaccineId_healthCenterId: { vaccineId, healthCenterId } },
+        data: { quantity: qty },
+      });
+
+      if (delta > 0) {
+        if (!expiration) {
+          throw Object.assign(
+            new Error(
+              "La date d'expiration est requise pour l'ajout de nouveaux lots",
+            ),
+            { status: 400 },
+          );
+        }
+
+        await createLot(tx, {
+          vaccineId,
+          ownerType: OWNER_TYPES.HEALTHCENTER,
+          ownerId: healthCenterId,
+          quantity: delta,
+          expiration,
+        });
+      }
+
+      await updateNearestExpiration(tx, {
+        vaccineId,
+        ownerType: OWNER_TYPES.HEALTHCENTER,
+        ownerId: healthCenterId,
+      });
+
+      updated = await tx.stockHEALTHCENTER.findUnique({
+        where: { vaccineId_healthCenterId: { vaccineId, healthCenterId } },
+        include: { vaccine: true, healthCenter: true },
+      });
     });
 
     res.json(updated);
   } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    next(error);
+  }
+};
+
+const deleteLot = async (req, res, next) => {
+  if (req.user.role !== "NATIONAL") {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  const { id } = req.params;
+
+  if (!id) {
+    return res.status(400).json({ message: "lotId est requis" });
+  }
+
+  try {
+    let deletedIds = [];
+
+    await prisma.$transaction(async (tx) => {
+      const existing = await tx.stockLot.findUnique({ where: { id } });
+      if (!existing) {
+        throw Object.assign(new Error("Lot introuvable"), { status: 404 });
+      }
+
+      deletedIds = await deleteLotCascade(tx, id);
+    });
+
+    res.json({ deletedIds });
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
     next(error);
   }
 };
@@ -991,10 +1568,18 @@ const getNationalStockStats = async (req, res, next) => {
       },
     });
 
+    const expiredLots = await prisma.stockLot.count({
+      where: {
+        ownerType: OWNER_TYPES.NATIONAL,
+        status: LOT_STATUS.EXPIRED,
+      },
+    });
+
     res.json({
       totalLots: aggregates._count._all,
       totalQuantity: aggregates._sum.quantity ?? 0,
       lowStockCount,
+      expiredLots,
       threshold: LOW_STOCK_THRESHOLD,
     });
   } catch (error) {
@@ -1039,10 +1624,22 @@ const getRegionalStockStats = async (req, res, next) => {
       },
     });
 
+    const expiredLots = await prisma.stockLot.count({
+      where: {
+        ownerType: OWNER_TYPES.REGIONAL,
+        status: LOT_STATUS.EXPIRED,
+        ownerId:
+          req.user.role === "REGIONAL"
+            ? await resolveRegionIdForUser(req.user)
+            : undefined,
+      },
+    });
+
     res.json({
       totalLots: aggregates._count._all,
       totalQuantity: aggregates._sum.quantity ?? 0,
       lowStockCount,
+      expiredLots,
       threshold: LOW_STOCK_THRESHOLD,
     });
   } catch (error) {
@@ -1107,10 +1704,31 @@ const getDistrictStockStats = async (req, res, next) => {
       },
     });
 
+    const expiredLots = await prisma.stockLot.count({
+      where: {
+        ownerType: OWNER_TYPES.DISTRICT,
+        status: LOT_STATUS.EXPIRED,
+        ownerId:
+          req.user.role === "DISTRICT"
+            ? await resolveDistrictIdForUser(req.user)
+            : undefined,
+        ...(req.user.role === "REGIONAL"
+          ? {
+              ownerId: {
+                in: await fetchDistrictIdsForRegion(
+                  await resolveRegionIdForUser(req.user),
+                ),
+              },
+            }
+          : {}),
+      },
+    });
+
     res.json({
       totalLots: aggregates._count._all,
       totalQuantity: aggregates._sum.quantity ?? 0,
       lowStockCount,
+      expiredLots,
       threshold: LOW_STOCK_THRESHOLD,
     });
   } catch (error) {
@@ -1196,10 +1814,22 @@ const getHealthCenterStockStats = async (req, res, next) => {
       },
     });
 
+    const expiredLots = await prisma.stockLot.count({
+      where: {
+        ownerType: OWNER_TYPES.HEALTHCENTER,
+        status: LOT_STATUS.EXPIRED,
+        ownerId:
+          req.user.role === "AGENT"
+            ? await resolveHealthCenterIdForUser(req.user)
+            : undefined,
+      },
+    });
+
     res.json({
       totalLots: aggregates._count._all,
       totalQuantity: aggregates._sum.quantity ?? 0,
       lowStockCount,
+      expiredLots,
       threshold: LOW_STOCK_THRESHOLD,
     });
   } catch (error) {
@@ -1225,6 +1855,7 @@ module.exports = {
     updateStockNATIONAL,
     updateStockREGIONAL,
     getStockNATIONAL,
+    listNationalLots,
     getStockREGIONAL,
     getStockDISTRICT,
     getStockHEALTHCENTER,
@@ -1232,4 +1863,5 @@ module.exports = {
     getRegionalStockStats,
     getDistrictStockStats,
     getHealthCenterStockStats,
+    deleteLot,
 };

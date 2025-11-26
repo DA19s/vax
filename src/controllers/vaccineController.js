@@ -439,6 +439,626 @@ const deleteVaccine = async (req, res, next) => {
 };
 
 
+const ScheduleVaccine = async (req, res, next) => {
+
+  if (req.user.role !== "AGENT") {
+        return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  try {
+    const {
+      childId,
+      vaccineId,
+      vaccineCalendarId = null,
+      scheduledFor,
+    } = req.body ?? {};
+
+    if (!childId || !vaccineId || !scheduledFor) {
+      return res
+        .status(400)
+        .json({ message: "childId, vaccineId et scheduledFor sont requis." });
+    }
+
+    const scheduleDate = new Date(scheduledFor);
+    if (Number.isNaN(scheduleDate.getTime())) {
+      return res
+        .status(400)
+        .json({ message: "La date de rendez-vous est invalide." });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const vaccine = await tx.vaccine.findUnique({
+        where: { id: vaccineId },
+        select: { dosesRequired: true },
+      });
+
+      if (!vaccine) {
+        throw Object.assign(new Error("Vaccin introuvable"), { status: 404 });
+      }
+
+      const dosesRequired = Number.parseInt(vaccine.dosesRequired, 10);
+      const totalDoses =
+        Number.isFinite(dosesRequired) && dosesRequired > 0 ? dosesRequired : 1;
+
+      const completedCount = await tx.childVaccineCompleted.count({
+        where: { childId, vaccineId },
+      });
+
+      const dose = completedCount + 1;
+      if (dose > totalDoses) {
+        throw Object.assign(
+          new Error("Toutes les doses de ce vaccin ont déjà été administrées."),
+          { status: 400 },
+        );
+      }
+
+      const existingScheduled = await tx.childVaccineScheduled.findFirst({
+        where: { childId, vaccineId, dose },
+      });
+      if (existingScheduled) {
+        throw Object.assign(
+          new Error("Un rendez-vous existe déjà pour cette dose."),
+          { status: 409 },
+        );
+      }
+
+      const created = await tx.childVaccineScheduled.create({
+        data: {
+          childId,
+          vaccineId,
+          vaccineCalendarId,
+          scheduledFor: scheduleDate,
+          plannerId: req.user.id,
+          dose,
+        },
+        include: {
+          vaccine: { select: { id: true, name: true, dosesRequired: true } },
+        },
+      });
+
+      await tx.childVaccineDue.deleteMany({
+        where: {
+          childId,
+          vaccineId,
+          dose,
+          ...(vaccineCalendarId
+            ? { vaccineCalendarId }
+            : { vaccineCalendarId: null }),
+        },
+      });
+
+      await tx.childVaccineOverdue.deleteMany({
+        where: {
+          childId,
+          vaccineId,
+          dose,
+        },
+      });
+
+      await tx.childVaccineLate.deleteMany({
+        where: {
+          childId,
+          vaccineId,
+          dose,
+          ...(vaccineCalendarId
+            ? { vaccineCalendarId }
+            : { vaccineCalendarId: null }),
+        },
+      });
+
+      await tx.children.update({
+        where: { id: childId },
+        data: { nextAppointment: scheduleDate },
+      });
+
+      return created;
+    });
+
+    res.status(201).json(result);
+
+  } catch (error) {
+    next(error);
+  }
+};
+
+const listScheduledVaccines = async (req, res, next) => {
+  try {
+    let whereClause = {};
+
+    if (req.user.role === "AGENT") {
+      if (!req.user.healthCenterId) {
+        return res.json({ items: [] });
+      }
+      whereClause = {
+        child: {
+          healthCenterId: req.user.healthCenterId,
+        },
+      };
+    } else if (req.user.role === "DISTRICT") {
+      if (!req.user.districtId) {
+        return res.json({ items: [] });
+      }
+      whereClause = {
+        child: {
+          healthCenter: {
+            districtId: req.user.districtId,
+          },
+        },
+      };
+    } else if (req.user.role === "REGIONAL") {
+      if (!req.user.regionId) {
+        return res.json({ items: [] });
+      }
+      whereClause = {
+        child: {
+          healthCenter: {
+            district: {
+              commune: {
+                regionId: req.user.regionId,
+              },
+            },
+          },
+        },
+      };
+    }
+
+    const scheduledList = await prisma.childVaccineScheduled.findMany({
+      where: whereClause,
+      include: {
+        child: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            gender: true,
+            birthDate: true,
+            healthCenterId: true,
+            healthCenter: {
+              select: {
+                id: true,
+                name: true,
+                district: {
+                  select: {
+                    id: true,
+                    name: true,
+                    commune: {
+                      select: {
+                        id: true,
+                        name: true,
+                        region: {
+                          select: {
+                            id: true,
+                            name: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        vaccine: {
+          select: {
+            id: true,
+            name: true,
+            dosesRequired: true,
+          },
+        },
+        vaccineCalendar: {
+          select: {
+            id: true,
+            description: true,
+            ageUnit: true,
+            minAge: true,
+            maxAge: true,
+            specificAge: true,
+          },
+        },
+      },
+      orderBy: [
+        { scheduledFor: "asc" },
+        { dose: "asc" },
+      ],
+    });
+
+    let regionsList = [];
+    if (req.user.role === "NATIONAL") {
+      regionsList = await prisma.region.findMany({
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+      });
+    }
+
+    const items = scheduledList.map((entry) => {
+      const regionName =
+        entry.child.healthCenter?.district?.commune?.region?.name ?? null;
+      const districtName = entry.child.healthCenter?.district?.name ?? null;
+      const healthCenterName = entry.child.healthCenter?.name ?? null;
+
+      return {
+        id: entry.id,
+        scheduledFor: entry.scheduledFor,
+        dose: entry.dose ?? 1,
+        region: regionName,
+        district: districtName,
+        healthCenter: healthCenterName,
+        child: {
+          id: entry.child.id,
+          firstName: entry.child.firstName,
+          lastName: entry.child.lastName,
+          gender: entry.child.gender,
+          birthDate: entry.child.birthDate,
+          healthCenter: entry.child.healthCenter
+            ? {
+                id: entry.child.healthCenter.id,
+                name: entry.child.healthCenter.name,
+              }
+            : null,
+        },
+        vaccine: entry.vaccine
+          ? {
+              id: entry.vaccine.id,
+              name: entry.vaccine.name,
+              dosesRequired: entry.vaccine.dosesRequired,
+            }
+          : null,
+        vaccineCalendar: entry.vaccineCalendar
+          ? {
+              id: entry.vaccineCalendar.id,
+              description: entry.vaccineCalendar.description,
+              ageUnit: entry.vaccineCalendar.ageUnit,
+              minAge: entry.vaccineCalendar.minAge,
+              maxAge: entry.vaccineCalendar.maxAge,
+              specificAge: entry.vaccineCalendar.specificAge,
+            }
+          : null,
+      };
+    });
+
+    res.json({
+      items,
+      regions: regionsList,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const completeVaccine = async (req, res, next) => {
+  if (req.user.role !== "AGENT" || !req.user.healthCenterId) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  try {
+    const scheduled = await prisma.childVaccineScheduled.findUnique({
+      where: { id: req.params.id },
+      select: {
+        childId: true,
+        vaccineCalendarId: true,
+        vaccineId: true,
+        plannerId: true,
+        dose: true,
+        child: { select: { healthCenterId: true } },
+      },
+    });
+
+    if (!scheduled) {
+      return res.status(404).json({ message: "Rendez-vous introuvable" });
+    }
+
+    if (scheduled.child?.healthCenterId !== req.user.healthCenterId) {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
+
+    const newVaccineCompleted = await prisma.childVaccineCompleted.create({
+      data: {
+        childId: scheduled.childId,
+        vaccineCalendarId: scheduled.vaccineCalendarId,
+        vaccineId: scheduled.vaccineId,
+        notes: req.body.notes,
+        administeredById: scheduled.plannerId,
+        dose: scheduled.dose ?? 1,
+      },
+    });
+
+    await prisma.childVaccineScheduled.delete({ where: { id: req.params.id } });
+
+    return res.status(201).json(newVaccineCompleted);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const moveScheduledToOverdue = async (tx, scheduled) => {
+  const dose = scheduled.dose ?? 1;
+
+  const overdue = await tx.childVaccineOverdue.upsert({
+    where: {
+      childId_vaccineId_dose: {
+        childId: scheduled.childId,
+        vaccineId: scheduled.vaccineId,
+        dose,
+      },
+    },
+    update: {
+      vaccineCalendarId: scheduled.vaccineCalendarId,
+      escalatedToId: scheduled.plannerId,
+      dueDate: scheduled.scheduledFor,
+    },
+    create: {
+      childId: scheduled.childId,
+      vaccineCalendarId: scheduled.vaccineCalendarId,
+      vaccineId: scheduled.vaccineId,
+      escalatedToId: scheduled.plannerId,
+      dueDate: scheduled.scheduledFor,
+      dose,
+    },
+  });
+
+  await tx.childVaccineScheduled.delete({
+    where: { id: scheduled.id },
+  });
+
+  return overdue;
+};
+
+const markScheduledAsMissed = async (scheduledId) => {
+  return prisma.$transaction(async (tx) => {
+    const scheduled = await tx.childVaccineScheduled.findUnique({
+      where: { id: scheduledId },
+    });
+
+    if (!scheduled) {
+      const error = new Error("Rendez-vous introuvable");
+      error.status = 404;
+      throw error;
+    }
+
+    return moveScheduledToOverdue(tx, scheduled);
+  });
+};
+
+const missVaccineForPlanner = async (plannerId) => {
+  if (!plannerId) return [];
+
+  return prisma.$transaction(async (tx) => {
+    const now = new Date();
+    const scheduledList = await tx.childVaccineScheduled.findMany({
+      where: {
+        plannerId,
+        scheduledFor: { lt: now },
+      },
+    });
+
+    if (!scheduledList.length) {
+      return [];
+    }
+
+    const results = [];
+    for (const scheduled of scheduledList) {
+      results.push(await moveScheduledToOverdue(tx, scheduled));
+    }
+    return results;
+  });
+};
+
+const missVaccine = async (req, res, next) => {
+  if (req.user.role !== "AGENT") {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  try {
+    const overdue = await markScheduledAsMissed(req.params.id);
+    return res.status(201).json(overdue);
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    next(error);
+  }
+};
+
+missVaccine.forPlanner = missVaccineForPlanner;
+
+const updateScheduledVaccine = async (req, res, next) => {
+  if (req.user.role !== "AGENT" || !req.user.healthCenterId) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  try {
+    const { id } = req.params;
+    const { scheduledFor, vaccineId, vaccineCalendarId } = req.body ?? {};
+    if (!scheduledFor || !vaccineId) {
+      return res.status(400).json({
+        message: "scheduledFor et vaccineId sont requis",
+      });
+    }
+
+    const scheduleDate = new Date(scheduledFor);
+    if (Number.isNaN(scheduleDate.getTime())) {
+      return res.status(400).json({ message: "Date invalide" });
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const scheduled = await tx.childVaccineScheduled.findUnique({
+        where: { id },
+        select: {
+          childId: true,
+          vaccineId: true,
+          vaccineCalendarId: true,
+          dose: true,
+          child: {
+            select: {
+              healthCenterId: true,
+            },
+          },
+        },
+      });
+
+      if (!scheduled) {
+        throw Object.assign(new Error("Rendez-vous introuvable"), {
+          code: "NOT_FOUND",
+        });
+      }
+
+      if (scheduled.child?.healthCenterId !== req.user.healthCenterId) {
+        throw Object.assign(new Error("Accès refusé"), {
+          code: "FORBIDDEN",
+        });
+      }
+
+      if (scheduled.vaccineId !== vaccineId) {
+        await tx.childVaccineScheduled.delete({ where: { id } });
+
+        const vaccine = await tx.vaccine.findUnique({
+          where: { id: vaccineId },
+          select: { dosesRequired: true },
+        });
+        if (!vaccine) {
+          throw Object.assign(new Error("Vaccin introuvable"), {
+            code: "NOT_FOUND",
+          });
+        }
+        const dosesRequired = Number.parseInt(vaccine.dosesRequired, 10);
+        const totalDoses =
+          Number.isFinite(dosesRequired) && dosesRequired > 0
+            ? dosesRequired
+            : 1;
+
+        const completedCount = await tx.childVaccineCompleted.count({
+          where: {
+            childId: scheduled.childId,
+            vaccineId,
+          },
+        });
+        const dose = completedCount + 1;
+        if (dose > totalDoses) {
+          throw Object.assign(
+            new Error(
+              "Toutes les doses de ce vaccin ont déjà été administrées.",
+            ),
+            { code: "DOSE_LIMIT" },
+          );
+        }
+
+        const targetCalendarId =
+          vaccineCalendarId !== undefined
+            ? vaccineCalendarId
+            : scheduled.vaccineCalendarId;
+
+        const recreated = await tx.childVaccineScheduled.create({
+          data: {
+            childId: scheduled.childId,
+            vaccineId,
+            vaccineCalendarId: targetCalendarId,
+            scheduledFor: scheduleDate,
+            plannerId: req.user.id,
+            dose,
+          },
+          include: {
+            vaccine: { select: { id: true, name: true, dosesRequired: true } },
+          },
+        });
+
+        await tx.childVaccineDue.deleteMany({
+          where: {
+            childId: scheduled.childId,
+            vaccineId,
+            dose,
+          },
+        });
+        await tx.childVaccineLate.deleteMany({
+          where: {
+            childId: scheduled.childId,
+            vaccineId,
+            dose,
+          },
+        });
+        await tx.childVaccineOverdue.deleteMany({
+          where: {
+            childId: scheduled.childId,
+            vaccineId,
+            dose,
+          },
+        });
+
+        await tx.children.update({
+          where: { id: scheduled.childId },
+          data: { nextAppointment: scheduleDate },
+        });
+
+        return recreated;
+      }
+
+      const updatedSchedule = await tx.childVaccineScheduled.update({
+        where: { id },
+        data: {
+          scheduledFor: scheduleDate,
+          ...(vaccineCalendarId !== undefined
+            ? { vaccineCalendarId }
+            : {}),
+        },
+        include: {
+          vaccine: { select: { id: true, name: true, dosesRequired: true } },
+        },
+      });
+
+      await tx.children.update({
+        where: { id: scheduled.childId },
+        data: { nextAppointment: scheduleDate },
+      });
+
+      return updatedSchedule;
+    });
+
+    res.json(updated);
+  } catch (error) {
+    if (error.code === "P2025" || error.code === "NOT_FOUND") {
+      return res.status(404).json({ message: "Rendez-vous introuvable" });
+    }
+    if (error.code === "DOSE_LIMIT") {
+      return res.status(400).json({ message: error.message });
+    }
+    if (error.code === "FORBIDDEN") {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
+    next(error);
+  }
+};
+
+const cancelScheduledVaccine = async (req, res, next) => {
+  if (req.user.role !== "AGENT" || !req.user.healthCenterId) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  try {
+    const { id } = req.params;
+    const scheduled = await prisma.childVaccineScheduled.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        child: { select: { healthCenterId: true } },
+      },
+    });
+
+    if (!scheduled) {
+      return res.status(404).json({ message: "Rendez-vous introuvable" });
+    }
+
+    if (scheduled.child?.healthCenterId !== req.user.healthCenterId) {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
+
+    await prisma.childVaccineScheduled.delete({ where: { id } });
+
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
     createVaccine,
     createVaccineCalendar,
@@ -448,6 +1068,12 @@ module.exports = {
     getVaccine,
     listVaccineCalendars,
     listVaccines,
+    ScheduleVaccine,
+    listScheduledVaccines,
+    updateScheduledVaccine,
+    cancelScheduledVaccine,
     updateVaccine,
     deleteVaccine,
+    completeVaccine,
+    missVaccine,
 };

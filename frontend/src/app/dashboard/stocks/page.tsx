@@ -23,6 +23,7 @@ type StockStats = {
   totalQuantity: number;
   lowStockCount: number;
   threshold: number;
+  expiredLots: number;
 };
 
 const emptyStats: StockStats = {
@@ -30,6 +31,7 @@ const emptyStats: StockStats = {
   totalQuantity: 0,
   lowStockCount: 0,
   threshold: LOW_STOCK_THRESHOLD,
+  expiredLots: 0,
 };
 
 type VaccineInfo = {
@@ -50,10 +52,48 @@ type NationalStock = {
   vaccineId: string;
   quantity: number | null;
   vaccine: VaccineInfo;
+  hasExpiredLot?: boolean;
+  nearestExpiration?: string | null;
 };
 
 type NationalStockResponse = {
   national?: NationalStock[];
+};
+
+type LotItem = {
+  id: string;
+  vaccineId: string;
+  quantity: number;
+  remainingQuantity: number;
+  distributedQuantity: number;
+  expiration: string;
+  status: "VALID" | "EXPIRED";
+  sourceLotId: string | null;
+  derivedCount: number;
+};
+
+type LotResponse = {
+  lots: LotItem[];
+  totalRemaining: number;
+};
+
+const formatExpirationDate = (value: string) => {
+  try {
+    return new Intl.DateTimeFormat("fr-FR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
+};
+
+const isDateExpired = (value: string) => {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const target = new Date(value);
+  return target < now;
 };
 
 type Region = {
@@ -88,6 +128,8 @@ function NationalStocksPage() {
   const [updateMode, setUpdateMode] = useState<"set" | "add">("set");
   const [addQuantity, setAddQuantity] = useState<string>("");
   const [addQuantityError, setAddQuantityError] = useState<string | null>(null);
+  const [addExpiration, setAddExpiration] = useState<string>("");
+  const [updateExpiration, setUpdateExpiration] = useState<string>("");
   const [updating, setUpdating] = useState(false);
 
   const [transferModalOpen, setTransferModalOpen] = useState(false);
@@ -98,9 +140,25 @@ function NationalStocksPage() {
   const [transferLoading, setTransferLoading] = useState(false);
   const [pendingRegionalCreation, setPendingRegionalCreation] = useState(false);
 
-const [stats, setStats] = useState<StockStats>(emptyStats);
+  const [lotModalOpen, setLotModalOpen] = useState(false);
+  const [lotContext, setLotContext] = useState<{ vaccineId: string; vaccineName: string } | null>(null);
+  const [lotItems, setLotItems] = useState<LotItem[]>([]);
+  const [lotTotalRemaining, setLotTotalRemaining] = useState(0);
+  const [lotLoading, setLotLoading] = useState(false);
+  const [lotError, setLotError] = useState<string | null>(null);
+  const [lotDeletingId, setLotDeletingId] = useState<string | null>(null);
+
+  const [stats, setStats] = useState<StockStats>(emptyStats);
   const [statsLoading, setStatsLoading] = useState(true);
   const [statsError, setStatsError] = useState<string | null>(null);
+
+  const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const currentQuantityValue = updateContext?.currentQuantity ?? 0;
+  const parsedUpdateQuantity = Number(updateQuantity);
+  const requiresExpirationForSet =
+    updateMode === "set" &&
+    Number.isFinite(parsedUpdateQuantity) &&
+    parsedUpdateQuantity > currentQuantityValue;
 
   const fetchNationalStats = useCallback(async () => {
     if (!accessToken) {
@@ -218,6 +276,8 @@ const [stats, setStats] = useState<StockStats>(emptyStats);
     setUpdateContext(null);
     setUpdateQuantity("");
     setAddQuantity("");
+    setAddExpiration("");
+    setUpdateExpiration("");
     setAddQuantityError(null);
     setUpdating(false);
   };
@@ -267,6 +327,8 @@ const [stats, setStats] = useState<StockStats>(emptyStats);
     setUpdateQuantity(String(stock.quantity ?? 0));
     setUpdateMode("set");
     setAddQuantity("");
+    setAddExpiration("");
+    setUpdateExpiration("");
     setAddQuantityError(null);
     setUpdateModalOpen(true);
   };
@@ -281,19 +343,37 @@ const [stats, setStats] = useState<StockStats>(emptyStats);
       return;
     }
 
+    const currentQuantity = updateContext.currentQuantity ?? 0;
+    const requiresExpiration = quantityValue > currentQuantity;
+
+    if (requiresExpiration && !updateExpiration) {
+      setAddQuantityError("Veuillez indiquer la date d'expiration du stock ajouté.");
+      return;
+    }
+
     try {
       setAddQuantityError(null);
       setUpdating(true);
+      const payload: {
+        vaccineId: string;
+        quantity: number;
+        expiration?: string;
+      } = {
+        vaccineId: updateContext.vaccineId,
+        quantity: quantityValue,
+      };
+
+      if (requiresExpiration && updateExpiration) {
+        payload.expiration = `${updateExpiration}T00:00:00.000Z`;
+      }
+
       const response = await fetch(`${API_URL}/api/stock/national`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${accessToken}`,
         },
-        body: JSON.stringify({
-          vaccineId: updateContext.vaccineId,
-          quantity: quantityValue,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
@@ -325,6 +405,11 @@ const [stats, setStats] = useState<StockStats>(emptyStats);
       return;
     }
 
+    if (!addExpiration) {
+      setAddQuantityError("Veuillez indiquer la date d'expiration du lot ajouté.");
+      return;
+    }
+
     try {
       setAddQuantityError(null);
       setUpdating(true);
@@ -337,6 +422,7 @@ const [stats, setStats] = useState<StockStats>(emptyStats);
         body: JSON.stringify({
           vaccineId: updateContext.vaccineId,
           quantity: quantityValue,
+          expiration: `${addExpiration}T00:00:00.000Z`,
         }),
       });
 
@@ -472,6 +558,110 @@ const [stats, setStats] = useState<StockStats>(emptyStats);
     );
   };
 
+  const fetchLotsForVaccine = useCallback(
+    async (vaccineId: string) => {
+      if (!accessToken) return;
+      try {
+        setLotLoading(true);
+        setLotError(null);
+        const response = await fetch(
+          `${API_URL}/api/stock/national/${vaccineId}/lots`,
+          {
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        const payload = (await response.json()) as LotResponse;
+        setLotItems(Array.isArray(payload?.lots) ? payload.lots : []);
+        setLotTotalRemaining(payload?.totalRemaining ?? 0);
+      } catch (err) {
+        console.error("Erreur chargement lots:", err);
+        setLotItems([]);
+        setLotTotalRemaining(0);
+        setLotError(
+          err instanceof Error
+            ? err.message
+            : "Impossible de charger les lots du vaccin.",
+        );
+      } finally {
+        setLotLoading(false);
+      }
+    },
+    [accessToken],
+  );
+
+  const handleOpenLotModal = useCallback(
+    (stock: NationalStock) => {
+      setLotContext({
+        vaccineId: stock.vaccineId,
+        vaccineName: stock.vaccine.name,
+      });
+      setLotItems([]);
+      setLotTotalRemaining(0);
+      setLotError(null);
+      setLotModalOpen(true);
+      void fetchLotsForVaccine(stock.vaccineId);
+    },
+    [fetchLotsForVaccine],
+  );
+
+  const closeLotModal = useCallback(() => {
+    setLotModalOpen(false);
+    setLotContext(null);
+    setLotItems([]);
+    setLotTotalRemaining(0);
+    setLotError(null);
+    setLotDeletingId(null);
+  }, []);
+
+  const handleDeleteLot = useCallback(
+    async (lotId: string) => {
+      if (!accessToken || !lotContext) return;
+      try {
+        setLotDeletingId(lotId);
+        const response = await fetch(`${API_URL}/api/stock/lots/${lotId}`, {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        await fetchLotsForVaccine(lotContext.vaccineId);
+        await Promise.all([fetchNationalStocks(), fetchNationalStats()]);
+      } catch (err) {
+        console.error("Erreur suppression lot:", err);
+        setLotError(
+          err instanceof Error
+            ? err.message
+            : "Impossible de supprimer le lot sélectionné.",
+        );
+      } finally {
+        setLotDeletingId(null);
+      }
+    },
+    [
+      accessToken,
+      fetchLotsForVaccine,
+      fetchNationalStats,
+      fetchNationalStocks,
+      lotContext,
+    ],
+  );
+
   return (
     <DashboardShell active="/dashboard/stocks">
       <div className="space-y-8">
@@ -509,10 +699,14 @@ const [stats, setStats] = useState<StockStats>(emptyStats);
             loading={statsLoading}
           />
           <StatCard
-            title="Total de lots"
-            value={stats.totalLots}
-            icon={PackageOpen}
-            accent="orange"
+            title="Lots expirés"
+            value={
+              statsLoading
+                ? "…"
+                : stats.expiredLots.toLocaleString("fr-FR")
+            }
+            icon={AlertTriangle}
+            accent="red"
             loading={statsLoading}
           />
         </div>
@@ -561,27 +755,84 @@ const [stats, setStats] = useState<StockStats>(emptyStats);
                   </td>
                 </tr>
               ) : (
-                stocks.map((stock) => (
-                  <tr key={stock.id} className="hover:bg-slate-50/80">
+                stocks.map((stock) => {
+                  const expired =
+                    stock.hasExpiredLot ||
+                    (stock.nearestExpiration
+                      ? isDateExpired(stock.nearestExpiration)
+                      : false);
+                  return (
+                    <tr
+                      key={stock.id}
+                      className={
+                        expired
+                          ? "bg-red-50/70 text-red-700 hover:bg-red-50"
+                          : "hover:bg-slate-50/80"
+                      }
+                    >
                     <td className="px-6 py-4">
-                      <div className="font-semibold text-slate-900">
+                      <div
+                        className={`font-semibold ${
+                          expired ? "text-red-700" : "text-slate-900"
+                        }`}
+                      >
                         {stock.vaccine.name}
                       </div>
-                      <div className="text-xs text-slate-500">
+                      <div
+                        className={`text-xs ${
+                          expired ? "text-red-600" : "text-slate-500"
+                        }`}
+                      >
                         {stock.vaccine.description}
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="font-semibold text-slate-800">
+                      <div
+                        className={`font-semibold ${
+                          expired ? "text-red-700" : "text-slate-800"
+                        }`}
+                      >
                         {(stock.quantity ?? 0).toLocaleString("fr-FR")}
                       </div>
-                      <div className="text-xs text-slate-500">
+                      <div
+                        className={`text-xs ${
+                          expired ? "text-red-600" : "text-slate-500"
+                        }`}
+                      >
                         {stock.vaccine.dosesRequired} doses requises
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-sm text-slate-500">—</td>
+                    <td className="px-6 py-4 text-sm">
+                      {stock.nearestExpiration ? (
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`font-medium ${
+                              expired ? "text-red-700" : "text-slate-700"
+                            }`}
+                          >
+                            {formatExpirationDate(stock.nearestExpiration)}
+                          </span>
+                          {isDateExpired(stock.nearestExpiration) && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600">
+                              <AlertTriangle className="h-3 w-3" />
+                              Expiré
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-slate-400">Non définie</span>
+                      )}
+                    </td>
                     <td className="px-6 py-4">
                       <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenLotModal(stock)}
+                          className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                        >
+                          <PackageOpen className="h-4 w-4" />
+                          Lots
+                        </button>
                         <button
                           type="button"
                           onClick={() => openTransferModal(stock)}
@@ -592,6 +843,13 @@ const [stats, setStats] = useState<StockStats>(emptyStats);
                         </button>
                         <button
                           type="button"
+                          onClick={() => openUpdateModal(stock)}
+                          className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100"
+                        >
+                          Ajuster
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => handleDeleteStock(stock)}
                           className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100"
                         >
@@ -599,8 +857,9 @@ const [stats, setStats] = useState<StockStats>(emptyStats);
                         </button>
                       </div>
                     </td>
-                  </tr>
-                ))
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -711,6 +970,25 @@ const [stats, setStats] = useState<StockStats>(emptyStats);
                       Quantité actuelle : {(updateContext.currentQuantity ?? 0).toLocaleString("fr-FR")}
                     </p>
                   </div>
+                  {requiresExpirationForSet && (
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium text-slate-600">
+                        Date d&apos;expiration du stock ajouté
+                      </label>
+                      <input
+                        type="date"
+                        value={updateExpiration}
+                        onChange={(event) => setUpdateExpiration(event.target.value)}
+                        className="w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                        required
+                      />
+                      <p className="text-xs text-slate-500">
+                        Ajout de{" "}
+                        {(parsedUpdateQuantity - currentQuantityValue).toLocaleString("fr-FR")}{" "}
+                        doses supplémentaires.
+                      </p>
+                    </div>
+                  )}
                   <div className="flex justify-end gap-3">
                     <button
                       type="button"
@@ -754,6 +1032,19 @@ const [stats, setStats] = useState<StockStats>(emptyStats);
                         required
                       />
                     </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium text-slate-600">
+                      Date d&apos;expiration du lot ajouté
+                    </label>
+                    <input
+                      type="date"
+                      value={addExpiration}
+                      onChange={(event) => setAddExpiration(event.target.value)}
+                      className="w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      required
+                    />
                   </div>
 
                   {addQuantityError && (
@@ -877,6 +1168,169 @@ const [stats, setStats] = useState<StockStats>(emptyStats);
           </div>
         </div>
       )}
+
+      {lotModalOpen && lotContext && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
+          <div className="w-full max-w-4xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">
+                  Lots du vaccin {lotContext.vaccineName}
+                </h3>
+                <p className="text-sm text-slate-500">
+                  Historique des lots ajoutés et envoyés. Les lots expirés peuvent être retirés pour mettre à jour les stocks.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeLotModal}
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+              >
+                Fermer
+              </button>
+            </div>
+
+            {lotError && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                {lotError}
+              </div>
+            )}
+
+            <div className="mt-4 max-h-[420px] overflow-y-auto rounded-2xl border border-slate-200">
+              {lotLoading ? (
+                <div className="flex items-center justify-center px-6 py-10 text-sm text-slate-500">
+                  Chargement des lots…
+                </div>
+              ) : lotItems.length === 0 ? (
+                <div className="px-6 py-10 text-center text-sm text-slate-500">
+                  Aucun lot enregistré pour ce vaccin.
+                </div>
+              ) : (
+                <table className="min-w-full divide-y divide-slate-200 text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Lot
+                      </th>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Expiration
+                      </th>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Quantité
+                      </th>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Restant
+                      </th>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Distribué
+                      </th>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Statut
+                      </th>
+                      <th className="px-4 py-3 text-right font-semibold uppercase tracking-wide text-slate-500">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {lotItems.map((lot) => {
+                      const expired = lot.status === "EXPIRED" || isDateExpired(lot.expiration);
+                      return (
+                        <tr key={lot.id} className="hover:bg-slate-50/80">
+                          <td className="px-4 py-3">
+                            <div className="font-medium text-slate-800">{lot.id}</div>
+                            {lot.sourceLotId && (
+                              <div className="text-xs text-slate-500">
+                                Issu du lot {lot.sourceLotId}
+                              </div>
+                            )}
+                            {lot.derivedCount > 0 && (
+                              <div className="text-xs text-slate-400">
+                                {lot.derivedCount} lot(s) dérivé(s)
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={
+                                expired ? "font-medium text-red-600" : "font-medium text-slate-700"
+                              }
+                            >
+                              {formatExpirationDate(lot.expiration)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {lot.quantity.toLocaleString("fr-FR")}
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {lot.remainingQuantity.toLocaleString("fr-FR")}
+                          </td>
+                          <td className="px-4 py-3 text-slate-500">
+                            {lot.distributedQuantity.toLocaleString("fr-FR")}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+                                expired
+                                  ? "bg-red-100 text-red-700"
+                                  : "bg-emerald-100 text-emerald-700"
+                              }`}
+                            >
+                              {expired ? "Expiré" : "Valide"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteLot(lot.id)}
+                                disabled={!expired || lotDeletingId === lot.id}
+                                className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                                  expired
+                                    ? "border-red-200 bg-red-50 text-red-600 hover:bg-red-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                                    : "border-slate-200 bg-slate-100 text-slate-400"
+                                }`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                {lotDeletingId === lot.id ? "Suppression…" : "Supprimer"}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="mt-4 flex flex-col gap-3 text-sm text-slate-600 md:flex-row md:items-center md:justify-between">
+              <div>
+                Total restant dans le stock national :{" "}
+                <span className="font-semibold text-slate-800">
+                  {lotTotalRemaining.toLocaleString("fr-FR")} dose(s)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => lotContext && fetchLotsForVaccine(lotContext.vaccineId)}
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                >
+                  Rafraîchir
+                </button>
+                <button
+                  type="button"
+                  onClick={closeLotModal}
+                  className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+                >
+                  Fermer
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardShell>
   );
 }
@@ -891,6 +1345,8 @@ type RegionalStock = {
     id: string;
     name: string;
   } | null;
+  hasExpiredLot?: boolean;
+  nearestExpiration?: string | null;
 };
 
 type DistrictStock = {
@@ -903,6 +1359,8 @@ type DistrictStock = {
     id: string;
     name: string;
   } | null;
+  hasExpiredLot?: boolean;
+  nearestExpiration?: string | null;
 };
 
 type DistrictOption = {
@@ -926,6 +1384,8 @@ type HealthCenterStock = {
     id: string;
     name: string;
   } | null;
+  hasExpiredLot?: boolean;
+  nearestExpiration?: string | null;
 };
 
 function RegionalStocksPage() {
@@ -1271,10 +1731,10 @@ function RegionalStocksPage() {
             loading={statsLoading}
           />
           <StatCard
-            title="Total de lots"
-            value={statsLoading ? "…" : stats.totalLots}
-            icon={PackageOpen}
-            accent="orange"
+            title="Lots expirés"
+            value={stats.expiredLots}
+            icon={AlertTriangle}
+            accent="red"
             loading={statsLoading}
           />
         </div>
@@ -1323,25 +1783,74 @@ function RegionalStocksPage() {
                   </td>
                 </tr>
               ) : (
-                stocks.map((stock) => (
-                  <tr key={stock.id} className="hover:bg-slate-50/80">
+                stocks.map((stock) => {
+                  const expired =
+                    stock.hasExpiredLot ||
+                    (stock.nearestExpiration
+                      ? isDateExpired(stock.nearestExpiration)
+                      : false);
+                  return (
+                    <tr
+                      key={stock.id}
+                      className={
+                        expired
+                          ? "bg-red-50/70 text-red-700 hover:bg-red-50"
+                          : "hover:bg-slate-50/80"
+                      }
+                    >
                     <td className="px-6 py-4">
-                      <div className="font-semibold text-slate-900">
+                      <div
+                        className={`font-semibold ${
+                          expired ? "text-red-700" : "text-slate-900"
+                        }`}
+                      >
                         {stock.vaccine.name}
                       </div>
-                      <div className="text-xs text-slate-500">
+                      <div
+                        className={`text-xs ${
+                          expired ? "text-red-600" : "text-slate-500"
+                        }`}
+                      >
                         {stock.vaccine.description}
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="font-semibold text-slate-800">
+                      <div
+                        className={`font-semibold ${
+                          expired ? "text-red-700" : "text-slate-800"
+                        }`}
+                      >
                         {(stock.quantity ?? 0).toLocaleString("fr-FR")}
                       </div>
-                      <div className="text-xs text-slate-500">
+                      <div
+                        className={`text-xs ${
+                          expired ? "text-red-600" : "text-slate-500"
+                        }`}
+                      >
                         {stock.region?.name ?? "Votre région"}
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-sm text-slate-500">—</td>
+                    <td className="px-6 py-4 text-sm">
+                      {stock.nearestExpiration ? (
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`font-medium ${
+                              expired ? "text-red-700" : "text-slate-700"
+                            }`}
+                          >
+                            {formatExpirationDate(stock.nearestExpiration)}
+                          </span>
+                          {isDateExpired(stock.nearestExpiration) && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600">
+                              <AlertTriangle className="h-3 w-3" />
+                              Expiré
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-slate-400">Non définie</span>
+                      )}
+                    </td>
                     <td className="px-6 py-4">
                       <div className="flex justify-end gap-2">
                         <button
@@ -1354,8 +1863,9 @@ function RegionalStocksPage() {
                         </button>
                       </div>
                     </td>
-                  </tr>
-                ))
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -1905,10 +2415,10 @@ function DistrictStocksPage() {
             loading={statsLoading}
           />
           <StatCard
-            title="Total de lots"
-            value={statsLoading ? "…" : stats.totalLots}
-            icon={PackageOpen}
-            accent="orange"
+            title="Lots expirés"
+            value={statsLoading ? "…" : stats.expiredLots}
+            icon={AlertTriangle}
+            accent="red"
             loading={statsLoading}
           />
         </div>
@@ -1936,6 +2446,9 @@ function DistrictStocksPage() {
                   Quantité (district)
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Expiration
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                   District
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -1947,7 +2460,7 @@ function DistrictStocksPage() {
               {loading ? (
                 <tr>
                   <td
-                    colSpan={4}
+                    colSpan={5}
                     className="px-6 py-8 text-center text-sm text-slate-500"
                   >
                     Chargement des stocks district…
@@ -1956,30 +2469,80 @@ function DistrictStocksPage() {
               ) : stocks.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={4}
+                    colSpan={5}
                     className="px-6 py-8 text-center text-sm text-slate-500"
                   >
                     Aucun stock district enregistré pour le moment.
                   </td>
                 </tr>
               ) : (
-                stocks.map((stock) => (
-                  <tr key={stock.id} className="hover:bg-slate-50/80">
+                stocks.map((stock) => {
+                  const expired =
+                    stock.hasExpiredLot ||
+                    (stock.nearestExpiration
+                      ? isDateExpired(stock.nearestExpiration)
+                      : false);
+                  return (
+                    <tr
+                      key={stock.id}
+                      className={
+                        expired
+                          ? "bg-red-50/70 text-red-700 hover:bg-red-50"
+                          : "hover:bg-slate-50/80"
+                      }
+                    >
                     <td className="px-6 py-4">
-                      <div className="font-semibold text-slate-900">
+                      <div
+                        className={`font-semibold ${
+                          expired ? "text-red-700" : "text-slate-900"
+                        }`}
+                      >
                         {stock.vaccine.name}
                       </div>
-                      <div className="text-xs text-slate-500">
+                      <div
+                        className={`text-xs ${
+                          expired ? "text-red-600" : "text-slate-500"
+                        }`}
+                      >
                         {stock.vaccine.description}
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="font-semibold text-slate-800">
+                      <div
+                        className={`font-semibold ${
+                          expired ? "text-red-700" : "text-slate-800"
+                        }`}
+                      >
                         {(stock.quantity ?? 0).toLocaleString("fr-FR")}
                       </div>
-                      <div className="text-xs text-slate-500">
+                      <div
+                        className={`text-xs ${
+                          expired ? "text-red-600" : "text-slate-500"
+                        }`}
+                      >
                         {stock.vaccine.dosesRequired} doses requises
                       </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm">
+                      {stock.nearestExpiration ? (
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`font-medium ${
+                              expired ? "text-red-700" : "text-slate-700"
+                            }`}
+                          >
+                            {formatExpirationDate(stock.nearestExpiration)}
+                          </span>
+                          {isDateExpired(stock.nearestExpiration) && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600">
+                              <AlertTriangle className="h-3 w-3" />
+                              Expiré
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-slate-400">Non définie</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 text-sm text-slate-500">
                       {stock.district?.name ?? "Votre district"}
@@ -1996,8 +2559,9 @@ function DistrictStocksPage() {
                         </button>
                       </div>
                     </td>
-                  </tr>
-                ))
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -2378,10 +2942,10 @@ function AgentAdminStocksPage() {
             loading={statsLoading}
           />
           <StatCard
-            title="Total de lots"
-            value={statsLoading ? "…" : stats.totalLots}
-            icon={PackageOpen}
-            accent="orange"
+            title="Lots expirés"
+            value={statsLoading ? "…" : stats.expiredLots}
+            icon={AlertTriangle}
+            accent="red"
             loading={statsLoading}
           />
         </div>
@@ -2411,6 +2975,9 @@ function AgentAdminStocksPage() {
                 <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                   Quantité (centre)
                 </th>
+                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Expiration
+                </th>
                 <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
                   Actions
                 </th>
@@ -2420,7 +2987,7 @@ function AgentAdminStocksPage() {
               {loading ? (
                 <tr>
                   <td
-                    colSpan={3}
+                    colSpan={4}
                     className="px-6 py-8 text-center text-sm text-slate-500"
                   >
                     Chargement des stocks du centre…
@@ -2429,36 +2996,91 @@ function AgentAdminStocksPage() {
               ) : stocks.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={3}
+                    colSpan={4}
                     className="px-6 py-8 text-center text-sm text-slate-500"
                   >
                     Aucun stock enregistré pour le moment.
                   </td>
                 </tr>
               ) : (
-                stocks.map((stock) => (
-                  <tr key={stock.id} className="hover:bg-slate-50/80">
-                    <td className="px-6 py-4">
-                      <div className="font-semibold text-slate-900">
-                        {stock.vaccine.name}
-                      </div>
-                      <div className="text-xs text-slate-500">
-                        {stock.vaccine.description}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="font-semibold text-slate-800">
-                        {(stock.quantity ?? 0).toLocaleString("fr-FR")}
-                      </div>
-                      <div className="text-xs text-slate-500">
-                        {stock.vaccine.dosesRequired} doses requises
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-right text-sm text-slate-500">
-                      —
-                    </td>
-                  </tr>
-                ))
+                stocks.map((stock) => {
+                  const expired =
+                    stock.hasExpiredLot ||
+                    (stock.nearestExpiration
+                      ? isDateExpired(stock.nearestExpiration)
+                      : false);
+                  return (
+                    <tr
+                      key={stock.id}
+                      className={
+                        expired
+                          ? "bg-red-50/70 text-red-700 hover:bg-red-50"
+                          : "hover:bg-slate-50/80"
+                      }
+                    >
+                      <td className="px-6 py-4">
+                        <div
+                          className={`font-semibold ${
+                            expired ? "text-red-700" : "text-slate-900"
+                          }`}
+                        >
+                          {stock.vaccine.name}
+                        </div>
+                        <div
+                          className={`text-xs ${
+                            expired ? "text-red-600" : "text-slate-500"
+                          }`}
+                        >
+                          {stock.vaccine.description}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div
+                          className={`font-semibold ${
+                            expired ? "text-red-700" : "text-slate-800"
+                          }`}
+                        >
+                          {(stock.quantity ?? 0).toLocaleString("fr-FR")}
+                        </div>
+                        <div
+                          className={`text-xs ${
+                            expired ? "text-red-600" : "text-slate-500"
+                          }`}
+                        >
+                          {stock.vaccine.dosesRequired} doses requises
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-sm">
+                        {stock.nearestExpiration ? (
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`font-medium ${
+                                expired ? "text-red-700" : "text-slate-700"
+                              }`}
+                            >
+                              {formatExpirationDate(stock.nearestExpiration)}
+                            </span>
+                            {expired && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600">
+                                <AlertTriangle className="h-3 w-3" />
+                                Expiré
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-slate-400">Non définie</span>
+                        )}
+                      </td>
+                      <td
+                        className={`px-6 py-4 text-right text-sm ${
+                          expired ? "text-red-700" : "text-slate-500"
+                        }`}
+                      >
+                        —
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

@@ -120,6 +120,8 @@ model Vaccine {
   scheduledForChildren ChildVaccineScheduled[]
   overdueForChildren   ChildVaccineOverdue[]
   lateForChildren      ChildVaccineLate[]
+  stockLots            StockLot[]
+  stockTransfers       StockTransfer[]
 }
 
 model Commune {
@@ -148,6 +150,7 @@ model StockNATIONAL {
   vaccineId         String          @unique
   vaccine           Vaccine         @relation(fields: [vaccineId], references: [id])
   quantity          Int?
+  nearestExpiration DateTime?
 }
 
 model StockREGIONAL {
@@ -157,6 +160,7 @@ model StockREGIONAL {
   regionId          String          
   region            Region          @relation(fields: [regionId], references: [id])
   quantity          Int?            @default(0)
+  nearestExpiration DateTime?
 
     @@unique([vaccineId, regionId])
 }
@@ -168,6 +172,7 @@ model StockDISTRICT {
   districtId        String          
   district          District        @relation(fields: [districtId], references: [id])
   quantity          Int?
+  nearestExpiration DateTime?
 
   @@unique([vaccineId, districtId])
 
@@ -180,8 +185,63 @@ model StockHEALTHCENTER {
   healthCenterId    String          
   healthCenter      HealthCenter    @relation(fields: [healthCenterId], references: [id])
   quantity          Int?
+  nearestExpiration DateTime?
 
   @@unique([vaccineId, healthCenterId])
+}
+
+enum StockLotOwnerType {
+  NATIONAL
+  REGIONAL
+  DISTRICT
+  HEALTHCENTER
+}
+
+enum StockLotStatus {
+  VALID
+  EXPIRED
+}
+
+model StockLot {
+  id                 String             @id @default(uuid())
+  vaccineId          String
+  vaccine            Vaccine            @relation(fields: [vaccineId], references: [id])
+  ownerType          StockLotOwnerType
+  ownerId            String?
+  quantity           Int
+  remainingQuantity  Int
+  expiration         DateTime
+  status             StockLotStatus     @default(VALID)
+  sourceLotId        String?
+  sourceLot          StockLot?          @relation("StockLotSource", fields: [sourceLotId], references: [id])
+  derivedLots        StockLot[]         @relation("StockLotSource")
+  transfers          StockTransferLot[]
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([ownerType, ownerId, vaccineId])
+}
+
+model StockTransfer {
+  id          String             @id @default(uuid())
+  vaccineId   String
+  vaccine     Vaccine            @relation(fields: [vaccineId], references: [id])
+  fromType    StockLotOwnerType
+  fromId      String?
+  toType      StockLotOwnerType
+  toId        String?
+  quantity    Int
+  createdAt   DateTime           @default(now())
+  lots        StockTransferLot[]
+}
+
+model StockTransferLot {
+  id          String         @id @default(uuid())
+  transferId  String
+  transfer    StockTransfer  @relation(fields: [transferId], references: [id])
+  lotId       String
+  lot         StockLot       @relation(fields: [lotId], references: [id])
+  quantity    Int
 }
 
 model Children {
@@ -239,21 +299,22 @@ model Record {
 
 
 model ChildVaccineCompleted {
-  id                 String           @id @default(uuid())
+  id                 String            @id @default(uuid())
   childId            String
-  child              Children         @relation(fields: [childId], references: [id])
-  vaccineCalendarId  String
-  vaccineCalendar    VaccineCalendar  @relation(fields: [vaccineCalendarId], references: [id])
+  child              Children          @relation(fields: [childId], references: [id])
+  vaccineCalendarId  String?
+  vaccineCalendar    VaccineCalendar?  @relation(fields: [vaccineCalendarId], references: [id])
   vaccineId          String
-  vaccine            Vaccine          @relation(fields: [vaccineId], references: [id])
-  administeredAt     DateTime         @default(now())
+  vaccine            Vaccine           @relation(fields: [vaccineId], references: [id])
+  dose               Int               @default(1)
+  administeredAt     DateTime          @default(now())
   administeredById   String?
-  administeredBy     User?            @relation("UserAsAdministered", fields: [administeredById], references: [id])
+  administeredBy     User?             @relation("UserAsAdministered", fields: [administeredById], references: [id])
   notes              String?
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
 
-  @@unique([childId, vaccineCalendarId])
+  @@unique([childId, vaccineId, dose])
 }
 
 model ChildVaccineDue {
@@ -265,38 +326,44 @@ model ChildVaccineDue {
   vaccineId          String
   vaccine            Vaccine          @relation(fields: [vaccineId], references: [id])
   scheduledFor       DateTime
+  dose               Int              @default(1)
 
-  @@unique([childId, vaccineCalendarId, vaccineId])
+  @@unique([childId, vaccineCalendarId, vaccineId, dose])
 }
 
 model ChildVaccineScheduled {
-  id                 String           @id @default(uuid())
+  id                 String            @id @default(uuid())
   childId            String
-  child              Children         @relation(fields: [childId], references: [id])
-  vaccineCalendarId  String
-  vaccineCalendar    VaccineCalendar  @relation(fields: [vaccineCalendarId], references: [id])
+  child              Children          @relation(fields: [childId], references: [id])
+  vaccineCalendarId  String?
+  vaccineCalendar    VaccineCalendar?  @relation(fields: [vaccineCalendarId], references: [id])
   vaccineId          String
-  vaccine            Vaccine          @relation(fields: [vaccineId], references: [id])
+  vaccine            Vaccine           @relation(fields: [vaccineId], references: [id])
   scheduledFor       DateTime
   plannerId          String?
-  planner            User?            @relation("UserAsScheduler", fields: [plannerId], references: [id])
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  planner            User?             @relation("UserAsScheduler", fields: [plannerId], references: [id])
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  dose               Int               @default(1)
 
-  @@unique([childId, vaccineCalendarId, vaccineId])
+  @@unique([childId, vaccineId, dose])
 }
 
 model ChildVaccineOverdue {
-  id                 String           @id @default(uuid())
+  id                 String            @id @default(uuid())
   childId            String
-  child              Children         @relation(fields: [childId], references: [id])
-  vaccineCalendarId  String
-  vaccineCalendar    VaccineCalendar  @relation(fields: [vaccineCalendarId], references: [id])
+  child              Children          @relation(fields: [childId], references: [id])
+  vaccineCalendarId  String?
+  vaccineCalendar    VaccineCalendar?  @relation(fields: [vaccineCalendarId], references: [id])
   vaccineId          String
-  vaccine            Vaccine          @relation(fields: [vaccineId], references: [id])
+  vaccine            Vaccine           @relation(fields: [vaccineId], references: [id])
   dueDate            DateTime
   escalatedToId      String?
-  escalatedTo        User?            @relation("UserAsEscalated", fields: [escalatedToId], references: [id])
+  escalatedTo        User?             @relation("UserAsEscalated", fields: [escalatedToId], references: [id])
+
+  dose               Int               @default(1)
+
+  @@unique([childId, vaccineId, dose])
 }
 
 model ChildVaccineLate {
@@ -309,6 +376,10 @@ model ChildVaccineLate {
   vaccine            Vaccine          @relation(fields: [vaccineId], references: [id])
   dueDate            DateTime         
   detectedAt         DateTime         @default(now()) // moment où le retard est détecté
+
+  dose               Int              @default(1)
+
+  @@unique([childId, vaccineCalendarId, vaccineId, dose])
 }
 
 

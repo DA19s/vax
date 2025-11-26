@@ -1,7 +1,7 @@
 export type AgeUnit = "WEEKS" | "MONTHS" | "YEARS";
 
 export type VaccineWindow = {
-  unit: AgeUnit;
+  unit: AgeUnit | null;
   specificAge: number | null;
   min: number | null;
   max: number | null;
@@ -11,6 +11,7 @@ export type VaccineDue = {
   name: string;
   scheduledFor: string | null;
   ageWindow: VaccineWindow;
+  dose: number;
 };
 
 export type VaccineScheduled = {
@@ -18,11 +19,13 @@ export type VaccineScheduled = {
   scheduledFor: string | null;
   plannerId?: string | null;
   plannerName?: string | null;
+  dose: number;
 };
 
 export type VaccineLate = {
   name: string;
   dueDate: string | null;
+  dose: number;
 };
 
 export type VaccineCompleted = {
@@ -30,6 +33,7 @@ export type VaccineCompleted = {
   administeredAt: string | null;
   administeredById?: string | null;
   administeredByName?: string | null;
+  dose: number;
 };
 
 export type Child = {
@@ -78,12 +82,13 @@ export type VaccinationDetail = {
       vaccineId: string;
       vaccineName: string;
       scheduledFor: string | null;
-      calendarId: string;
+      calendarId: string | null;
       calendarDescription?: string | null;
-      ageUnit: AgeUnit;
+      ageUnit: AgeUnit | null;
       specificAge: number | null;
       minAge: number | null;
       maxAge: number | null;
+      dose: number;
     }>;
     scheduled: Array<{
       id: string;
@@ -92,23 +97,26 @@ export type VaccinationDetail = {
       scheduledFor: string | null;
       plannerId?: string | null;
       plannerName?: string | null;
-      calendarId: string;
+      calendarId: string | null;
+      dose: number;
     }>;
     late: Array<{
       id: string;
       vaccineId: string;
       vaccineName: string;
       dueDate: string | null;
-      calendarId: string;
+      calendarId: string | null;
       calendarDescription?: string | null;
+      dose: number;
     }>;
     overdue: Array<{
       id: string;
       vaccineId: string;
       vaccineName: string;
       dueDate: string | null;
-      calendarId: string;
+      calendarId: string | null;
       calendarDescription?: string | null;
+      dose: number;
     }>;
     completed: Array<{
       id: string;
@@ -117,7 +125,8 @@ export type VaccinationDetail = {
       administeredAt: string | null;
       administeredById?: string | null;
       administeredByName?: string | null;
-      calendarId: string;
+      calendarId: string | null;
+      dose: number;
     }>;
   };
 };

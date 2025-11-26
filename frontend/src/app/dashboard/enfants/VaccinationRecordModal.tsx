@@ -45,26 +45,52 @@ function VaccinationRecordModal({ isOpen, onClose, detail }: Props) {
           </button>
         </div>
 
-        <div className="h-full overflow-y-auto px-6 py-6">
+        <div className="h-full overflow-y-auto px-6 py-6 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300/70">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <section className={sectionClasses}>
               <div className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
                 <Syringe className="h-4 w-4 text-blue-500" />
-                Vaccins à venir
+                Vaccins à faire
               </div>
               <div className="space-y-3 text-sm">
                 {vaccinations.due.length === 0 ? (
                   <p className="text-slate-500">Aucun vaccin en attente.</p>
                 ) : (
-                  vaccinations.due.map((item) => (
-                    <div key={item.id} className="rounded-xl border border-blue-100 bg-blue-50 p-3">
-                      <p className="font-semibold text-blue-900">{item.vaccineName}</p>
-                      <p className="text-xs text-blue-700">Prévu le {formatDate(item.scheduledFor)}</p>
-                      <p className="text-xs text-blue-600">
-                        Tranche : {item.minAge ?? item.specificAge ?? "?"} - {item.maxAge ?? item.specificAge ?? "?"} {item.ageUnit.toLowerCase()}
-                      </p>
-                    </div>
-                  ))
+                  Object.entries(
+                    vaccinations.due.reduce<Record<string, { entry: typeof vaccinations.due[number]; doses: number[] }>>(
+                      (acc, item) => {
+                        if (!acc[item.vaccineId]) {
+                          acc[item.vaccineId] = { entry: item, doses: [] };
+                        }
+                        acc[item.vaccineId].doses.push(item.dose);
+                        return acc;
+                      },
+                      {},
+                    ),
+                  ).map(([vaccineId, group]) => {
+                    const { entry, doses } = group;
+                    const doseLabel =
+                      doses.length === 1
+                        ? `Dose ${doses[0]}`
+                        : `Doses ${doses.sort((a, b) => a - b).join(", ")}`;
+                    return (
+                      <div key={vaccineId} className="rounded-xl border border-blue-100 bg-blue-50 p-3">
+                        <p className="font-semibold text-blue-900">{entry.vaccineName}</p>
+                        <p className="text-xs text-blue-700">{doseLabel}</p>
+                        {entry.specificAge != null ||
+                        (entry.minAge != null && entry.maxAge != null) ? (
+                          <p className="text-xs text-blue-600">
+                            Tranche d&apos;âge recommandée :{" "}
+                            {entry.specificAge != null
+                              ? `${entry.specificAge} ${entry.ageUnit?.toLowerCase() ?? ""}`
+                              : `${entry.minAge ?? "?"} - ${entry.maxAge ?? "?"} ${
+                                  entry.ageUnit?.toLowerCase() ?? ""
+                                }`}
+                          </p>
+                        ) : null}
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </section>
@@ -78,15 +104,33 @@ function VaccinationRecordModal({ isOpen, onClose, detail }: Props) {
                 {vaccinations.scheduled.length === 0 ? (
                   <p className="text-slate-500">Aucun rendez-vous programmé.</p>
                 ) : (
-                  vaccinations.scheduled.map((item) => (
-                    <div key={item.id} className="rounded-xl border border-amber-100 bg-amber-50 p-3">
-                      <p className="font-semibold text-amber-900">{item.vaccineName}</p>
-                      <p className="text-xs text-amber-700">Prévu le {formatDate(item.scheduledFor)}</p>
-                      {item.plannerName && (
-                        <p className="text-xs text-amber-600">Planifié par {item.plannerName}</p>
-                      )}
-                    </div>
-                  ))
+                  Object.entries(
+                    vaccinations.scheduled.reduce<
+                      Record<string, { entry: typeof vaccinations.scheduled[number]; doses: number[] }>
+                    >((acc, item) => {
+                      if (!acc[item.vaccineId]) {
+                        acc[item.vaccineId] = { entry: item, doses: [] };
+                      }
+                      acc[item.vaccineId].doses.push(item.dose);
+                      return acc;
+                    }, {}),
+                  ).map(([vaccineId, group]) => {
+                    const { entry, doses } = group;
+                    const doseLabel =
+                      doses.length === 1
+                        ? `Dose ${doses[0]}`
+                        : `Doses ${doses.sort((a, b) => a - b).join(", ")}`;
+                    return (
+                      <div key={vaccineId} className="rounded-xl border border-amber-100 bg-amber-50 p-3">
+                        <p className="font-semibold text-amber-900">{entry.vaccineName}</p>
+                        <p className="text-xs text-amber-700">{doseLabel}</p>
+                        <p className="text-xs text-amber-700">Prévu le {formatDate(entry.scheduledFor)}</p>
+                        {entry.plannerName && (
+                          <p className="text-xs text-amber-600">Planifié par {entry.plannerName}</p>
+                        )}
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </section>
@@ -100,12 +144,31 @@ function VaccinationRecordModal({ isOpen, onClose, detail }: Props) {
                 {vaccinations.late.length === 0 && vaccinations.overdue.length === 0 ? (
                   <p className="text-slate-500">Aucun retard signalé.</p>
                 ) : (
-                  [...vaccinations.late, ...vaccinations.overdue].map((item) => (
-                    <div key={item.id} className="rounded-xl border border-red-100 bg-red-50 p-3">
-                      <p className="font-semibold text-red-900">{item.vaccineName}</p>
-                      <p className="text-xs text-red-700">Date limite dépassée : {formatDate(item.dueDate)}</p>
-                    </div>
-                  ))
+                  Object.entries(
+                    [...vaccinations.late, ...vaccinations.overdue].reduce<
+                      Record<string, { entry: typeof vaccinations.late[number]; doses: number[] }>
+                    >((acc, item) => {
+                      const key = `${item.vaccineId}-${item.calendarId ?? "none"}`;
+                      if (!acc[key]) {
+                        acc[key] = { entry: item, doses: [] };
+                      }
+                      acc[key].doses.push(item.dose);
+                      return acc;
+                    }, {}),
+                  ).map(([key, group]) => {
+                    const { entry, doses } = group;
+                    const doseLabel =
+                      doses.length === 1
+                        ? `Dose ${doses[0]}`
+                        : `Doses ${doses.sort((a, b) => a - b).join(", ")}`;
+                    return (
+                      <div key={key} className="rounded-xl border border-red-100 bg-red-50 p-3">
+                        <p className="font-semibold text-red-900">{entry.vaccineName}</p>
+                        <p className="text-xs text-red-700">{doseLabel}</p>
+                        <p className="text-xs text-red-700">Date limite dépassée : {formatDate(entry.dueDate)}</p>
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </section>
@@ -119,15 +182,33 @@ function VaccinationRecordModal({ isOpen, onClose, detail }: Props) {
                 {vaccinations.completed.length === 0 ? (
                   <p className="text-slate-500">Aucun vaccin enregistré.</p>
                 ) : (
-                  vaccinations.completed.map((item) => (
-                    <div key={item.id} className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
-                      <p className="font-semibold text-emerald-900">{item.vaccineName}</p>
-                      <p className="text-xs text-emerald-700">Administré le {formatDate(item.administeredAt)}</p>
-                      {item.administeredByName && (
-                        <p className="text-xs text-emerald-600">Par {item.administeredByName}</p>
-                      )}
-                    </div>
-                  ))
+                  Object.entries(
+                    vaccinations.completed.reduce<
+                      Record<string, { entry: typeof vaccinations.completed[number]; doses: number[] }>
+                    >((acc, item) => {
+                      if (!acc[item.vaccineId]) {
+                        acc[item.vaccineId] = { entry: item, doses: [] };
+                      }
+                      acc[item.vaccineId].doses.push(item.dose);
+                      return acc;
+                    }, {}),
+                  ).map(([vaccineId, group]) => {
+                    const { entry, doses } = group;
+                    const doseLabel =
+                      doses.length === 1
+                        ? `Dose ${doses[0]}`
+                        : `Doses ${doses.sort((a, b) => a - b).join(", ")}`;
+                    return (
+                      <div key={vaccineId} className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
+                        <p className="font-semibold text-emerald-900">{entry.vaccineName}</p>
+                        <p className="text-xs text-emerald-700">{doseLabel}</p>
+                        <p className="text-xs text-emerald-700">Administré le {formatDate(entry.administeredAt)}</p>
+                        {entry.administeredByName && (
+                          <p className="text-xs text-emerald-600">Par {entry.administeredByName}</p>
+                        )}
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </section>

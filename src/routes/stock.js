@@ -4,6 +4,11 @@ const { requireAuth } = require("../middleware/auth");
 
 const router = Router();
 
+router.get(
+  "/national/:vaccineId/lots",
+  requireAuth,
+  stockController.listNationalLots,
+);
 router.get("/national", requireAuth, stockController.getStockNATIONAL);
 router.get("/regional", requireAuth, stockController.getStockREGIONAL);
 router.get("/district", requireAuth, stockController.getStockDISTRICT);
@@ -28,6 +33,8 @@ router.put("/reduce-national", requireAuth, stockController.reduceStockNATIONAL)
 router.put("/reduce-regional", requireAuth, stockController.reduceStockREGIONAL);
 router.put("/reduce-district", requireAuth, stockController.reduceStockDISTRICT);
 router.put("/reduce-health-center", requireAuth, stockController.reduceStockHEALTHCENTER);
+
+router.delete("/lots/:id", requireAuth, stockController.deleteLot);
 
 router.get("/stats/national", requireAuth, stockController.getNationalStockStats);
 router.get("/stats/regional", requireAuth, stockController.getRegionalStockStats);
