@@ -77,6 +77,13 @@ type LotResponse = {
   totalRemaining: number;
 };
 
+type LotModalContext = {
+  vaccineId: string;
+  vaccineName: string;
+  ownerLabel?: string | null;
+  ownerId?: string | null;
+};
+
 const formatExpirationDate = (value: string) => {
   try {
     return new Intl.DateTimeFormat("fr-FR", {
@@ -147,6 +154,7 @@ function NationalStocksPage() {
   const [lotLoading, setLotLoading] = useState(false);
   const [lotError, setLotError] = useState<string | null>(null);
   const [lotDeletingId, setLotDeletingId] = useState<string | null>(null);
+  const [nationalDeletingId, setNationalDeletingId] = useState<string | null>(null);
 
   const [stats, setStats] = useState<StockStats>(emptyStats);
   const [statsLoading, setStatsLoading] = useState(true);
@@ -315,6 +323,143 @@ function NationalStocksPage() {
       );
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleDeleteHealthCenterStock = async (stock: HealthCenterStock) => {
+    if (!accessToken) return;
+
+    const confirmed = window.confirm(
+      `Supprimer le stock pour le vaccin ${stock.vaccine.name} ?`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setHealthDeletingId(stock.id);
+      setError(null);
+
+      const payload: Record<string, string> = { vaccineId: stock.vaccineId };
+      if (stock.healthCenterId) {
+        payload.healthCenterId = stock.healthCenterId;
+      }
+
+      const response = await fetch(`${API_URL}/api/stock/health-center`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.message ?? `status ${response.status}`);
+      }
+
+      await Promise.all([fetchHealthCenterStocks(), fetchHealthCenterStats()]);
+    } catch (err) {
+      console.error("Erreur suppression stock centre:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de supprimer ce stock de centre.",
+      );
+    } finally {
+      setHealthDeletingId(null);
+    }
+  };
+
+  const handleDeleteDistrictStock = async (stock: DistrictStock) => {
+    if (!accessToken) return;
+
+    const confirmed = window.confirm(
+      `Supprimer le stock du district ${stock.district?.name ?? ""} pour le vaccin ${stock.vaccine.name} ?`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setDistrictDeletingId(stock.id);
+      setError(null);
+
+      const payload: Record<string, string> = { vaccineId: stock.vaccineId };
+      if (stock.districtId) {
+        payload.districtId = stock.districtId;
+      }
+
+      const response = await fetch(`${API_URL}/api/stock/district`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.message ?? `status ${response.status}`);
+      }
+
+      await Promise.all([fetchDistrictStocks(), fetchDistrictStats()]);
+    } catch (err) {
+      console.error("Erreur suppression stock district:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de supprimer ce stock district.",
+      );
+    } finally {
+      setDistrictDeletingId(null);
+    }
+  };
+
+  const handleDeleteRegionalStock = async (stock: RegionalStock) => {
+    if (!accessToken) return;
+    const confirmed = window.confirm(
+      `Supprimer le stock régional pour le vaccin ${stock.vaccine.name} ?`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setRegionalDeletingId(stock.id);
+      setError(null);
+
+      const payload: Record<string, string> = { vaccineId: stock.vaccineId };
+      if (stock.regionId) {
+        payload.regionId = stock.regionId;
+      }
+
+      const response = await fetch(`${API_URL}/api/stock/regional`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const result = await response.json().catch(() => null);
+        throw new Error(result?.message ?? `status ${response.status}`);
+      }
+
+      await Promise.all([fetchRegionalStocks(), fetchRegionalStats()]);
+    } catch (err) {
+      console.error("Erreur suppression stock régional:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de supprimer ce stock régional.",
+      );
+    } finally {
+      setRegionalDeletingId(null);
     }
   };
 
@@ -551,11 +696,45 @@ function NationalStocksPage() {
     }
   };
 
-  const handleDeleteStock = (stock: NationalStock) => {
-    console.warn("Suppression de stock non implémentée côté API", stock.vaccineId);
-    setError(
-      "La suppression d'un stock national nécessite un endpoint backend (ex: DELETE /api/stock/national)."
+  const handleDeleteStock = async (stock: NationalStock) => {
+    if (!accessToken) return;
+
+    const confirmed = window.confirm(
+      `Supprimer le stock national pour le vaccin ${stock.vaccine.name} ?`
     );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setNationalDeletingId(stock.id);
+      setError(null);
+
+      const response = await fetch(`${API_URL}/api/stock/national`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ vaccineId: stock.vaccineId }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      await Promise.all([fetchNationalStocks(), fetchNationalStats()]);
+    } catch (err) {
+      console.error("Erreur suppression stock national:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de supprimer ce stock national."
+      );
+    } finally {
+      setNationalDeletingId(null);
+    }
   };
 
   const fetchLotsForVaccine = useCallback(
@@ -598,11 +777,12 @@ function NationalStocksPage() {
     [accessToken],
   );
 
-  const handleOpenLotModal = useCallback(
+  const handleOpenNationalLotModal = useCallback(
     (stock: NationalStock) => {
       setLotContext({
         vaccineId: stock.vaccineId,
         vaccineName: stock.vaccine.name,
+        ownerId: null,
       });
       setLotItems([]);
       setLotTotalRemaining(0);
@@ -613,7 +793,7 @@ function NationalStocksPage() {
     [fetchLotsForVaccine],
   );
 
-  const closeLotModal = useCallback(() => {
+  const closeNationalLotModal = useCallback(() => {
     setLotModalOpen(false);
     setLotContext(null);
     setLotItems([]);
@@ -827,7 +1007,7 @@ function NationalStocksPage() {
                       <div className="flex justify-end gap-2">
                         <button
                           type="button"
-                          onClick={() => handleOpenLotModal(stock)}
+                          onClick={() => handleOpenNationalLotModal(stock)}
                           className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
                         >
                           <PackageOpen className="h-4 w-4" />
@@ -851,9 +1031,11 @@ function NationalStocksPage() {
                         <button
                           type="button"
                           onClick={() => handleDeleteStock(stock)}
-                          className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100"
+                          disabled={nationalDeletingId === stock.id}
+                          className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
                         >
                           <Trash2 className="h-4 w-4" />
+                          {nationalDeletingId === stock.id ? "Suppression…" : "Supprimer"}
                         </button>
                       </div>
                     </td>
@@ -1183,7 +1365,7 @@ function NationalStocksPage() {
               </div>
               <button
                 type="button"
-                onClick={closeLotModal}
+                onClick={closeNationalLotModal}
                 className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
               >
                 Fermer
@@ -1321,7 +1503,7 @@ function NationalStocksPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={closeLotModal}
+                  onClick={closeNationalLotModal}
                   className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
                 >
                   Fermer
@@ -1412,6 +1594,13 @@ function RegionalStocksPage() {
   const [transferError, setTransferError] = useState<string | null>(null);
   const [transferLoading, setTransferLoading] = useState(false);
   const [pendingDistrictCreation, setPendingDistrictCreation] = useState(false);
+  const [lotModalOpen, setLotModalOpen] = useState(false);
+  const [lotContext, setLotContext] = useState<LotModalContext | null>(null);
+  const [lotItems, setLotItems] = useState<LotItem[]>([]);
+  const [lotTotalRemaining, setLotTotalRemaining] = useState(0);
+  const [lotLoading, setLotLoading] = useState(false);
+  const [lotError, setLotError] = useState<string | null>(null);
+  const [regionalDeletingId, setRegionalDeletingId] = useState<string | null>(null);
 
   const fetchRegionalStats = useCallback(async () => {
     if (!accessToken) {
@@ -1532,6 +1721,54 @@ function RegionalStocksPage() {
     }
   }, [accessToken]);
 
+  const fetchRegionalLots = useCallback(
+    async (vaccineId: string, regionId?: string | null) => {
+      if (!accessToken) return;
+      try {
+        setLotLoading(true);
+        setLotError(null);
+
+        const params = new URLSearchParams();
+        if (regionId) {
+          params.set("regionId", regionId);
+        }
+
+        const response = await fetch(
+          `${API_URL}/api/stock/regional/${vaccineId}/lots${
+            params.toString() ? `?${params.toString()}` : ""
+          }`,
+          {
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        const payload = (await response.json()) as LotResponse;
+        setLotItems(Array.isArray(payload?.lots) ? payload.lots : []);
+        setLotTotalRemaining(payload?.totalRemaining ?? 0);
+      } catch (err) {
+        console.error("Erreur chargement lots régionaux:", err);
+        setLotItems([]);
+        setLotTotalRemaining(0);
+        setLotError(
+          err instanceof Error
+            ? err.message
+            : "Impossible de charger les lots pour ce vaccin.",
+        );
+      } finally {
+        setLotLoading(false);
+      }
+    },
+    [accessToken],
+  );
+
   useEffect(() => {
     fetchRegionalStocks();
     fetchRegionalStats();
@@ -1541,6 +1778,38 @@ function RegionalStocksPage() {
     const existing = new Set(stocks.map((stock) => stock.vaccineId));
     return vaccines.filter((vaccine) => !existing.has(vaccine.id));
   }, [stocks, vaccines]);
+
+  const handleOpenRegionalLotModal = useCallback(
+    (stock: RegionalStock) => {
+      const regionLabel = stock.region?.name ?? "votre région";
+      setLotContext({
+        vaccineId: stock.vaccineId,
+        vaccineName: stock.vaccine.name,
+        ownerLabel: regionLabel,
+        ownerId: stock.regionId ?? null,
+      });
+      setLotItems([]);
+      setLotTotalRemaining(0);
+      setLotError(null);
+      setLotModalOpen(true);
+      void fetchRegionalLots(stock.vaccineId, stock.regionId ?? null);
+    },
+    [fetchRegionalLots],
+  );
+
+  const closeRegionalLotModal = useCallback(() => {
+    setLotModalOpen(false);
+    setLotContext(null);
+    setLotItems([]);
+    setLotTotalRemaining(0);
+    setLotError(null);
+  }, []);
+
+  const refreshRegionalLots = useCallback(() => {
+    if (lotContext) {
+      void fetchRegionalLots(lotContext.vaccineId, lotContext.ownerId ?? null);
+    }
+  }, [fetchRegionalLots, lotContext]);
 
   const handleCreateStock = async (event: FormEvent) => {
     event.preventDefault();
@@ -1853,6 +2122,14 @@ function RegionalStocksPage() {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleOpenRegionalLotModal(stock)}
+                          className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                        >
+                          <PackageOpen className="h-4 w-4" />
+                          Lots
+                        </button>
                         <button
                           type="button"
                           onClick={() => openTransferModal(stock)}
@@ -1860,6 +2137,15 @@ function RegionalStocksPage() {
                         >
                           <ArrowRightLeft className="h-4 w-4" />
                           Envoyer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRegionalStock(stock)}
+                          disabled={regionalDeletingId === stock.id}
+                          className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          {regionalDeletingId === stock.id ? "Suppression…" : "Supprimer"}
                         </button>
                       </div>
                     </td>
@@ -2021,6 +2307,125 @@ function RegionalStocksPage() {
           </div>
         </div>
       )}
+
+      {lotModalOpen && lotContext && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
+          <div className="w-full max-w-3xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">
+                  Lots du vaccin {lotContext.vaccineName}
+                </h3>
+                <p className="text-sm text-slate-500">
+                  Historique des lots reçus pour {lotContext.ownerLabel ?? "votre région"}.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeRegionalLotModal}
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+              >
+                Fermer
+              </button>
+            </div>
+
+            {lotError && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                {lotError}
+              </div>
+            )}
+
+            <div className="mt-4 max-h-[420px] overflow-y-auto rounded-2xl border border-slate-200">
+              {lotLoading ? (
+                <div className="flex items-center justify-center px-6 py-10 text-sm text-slate-500">
+                  Chargement des lots…
+                </div>
+              ) : lotItems.length === 0 ? (
+                <div className="px-6 py-10 text-center text-sm text-slate-500">
+                  Aucun lot enregistré pour ce vaccin.
+                </div>
+              ) : (
+                <table className="min-w-full divide-y divide-slate-200 text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Lot
+                      </th>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Expiration
+                      </th>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Quantité
+                      </th>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Restant
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {lotItems.map((lot) => {
+                      const expired =
+                        lot.status === "EXPIRED" || isDateExpired(lot.expiration);
+                      return (
+                        <tr key={lot.id} className="hover:bg-slate-50/80">
+                          <td className="px-4 py-3">
+                            <div className="font-medium text-slate-800">{lot.id}</div>
+                            {lot.sourceLotId && (
+                              <div className="text-xs text-slate-500">
+                                Issu du lot {lot.sourceLotId}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={
+                                expired ? "font-medium text-red-600" : "font-medium text-slate-700"
+                              }
+                            >
+                              {formatExpirationDate(lot.expiration)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {lot.quantity.toLocaleString("fr-FR")}
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {lot.remainingQuantity.toLocaleString("fr-FR")}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="mt-4 flex flex-col gap-3 text-sm text-slate-600 md:flex-row md:items-center md:justify-between">
+              <div>
+                Total restant pour {lotContext.ownerLabel ?? "votre région"} :{" "}
+                <span className="font-semibold text-slate-800">
+                  {lotTotalRemaining.toLocaleString("fr-FR")} dose(s)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={refreshRegionalLots}
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                >
+                  Rafraîchir
+                </button>
+                <button
+                  type="button"
+                  onClick={closeRegionalLotModal}
+                  className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+                >
+                  Fermer
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardShell>
   );
 }
@@ -2051,6 +2456,13 @@ function DistrictStocksPage() {
   const [transferError, setTransferError] = useState<string | null>(null);
   const [transferLoading, setTransferLoading] = useState(false);
   const [pendingHealthCenterCreation, setPendingHealthCenterCreation] = useState(false);
+  const [lotModalOpen, setLotModalOpen] = useState(false);
+  const [lotContext, setLotContext] = useState<LotModalContext | null>(null);
+  const [lotItems, setLotItems] = useState<LotItem[]>([]);
+  const [lotTotalRemaining, setLotTotalRemaining] = useState(0);
+  const [lotLoading, setLotLoading] = useState(false);
+  const [lotError, setLotError] = useState<string | null>(null);
+  const [districtDeletingId, setDistrictDeletingId] = useState<string | null>(null);
 
   const fetchDistrictStats = useCallback(async () => {
     if (!accessToken) {
@@ -2202,6 +2614,86 @@ function DistrictStocksPage() {
     const existing = new Set(stocks.map((stock) => stock.vaccineId));
     return vaccines.filter((vaccine) => !existing.has(vaccine.id));
   }, [stocks, vaccines]);
+
+  const fetchDistrictLots = useCallback(
+    async (vaccineId: string, districtId?: string | null) => {
+      if (!accessToken) return;
+      try {
+        setLotLoading(true);
+        setLotError(null);
+
+        const params = new URLSearchParams();
+        if (districtId) {
+          params.set("districtId", districtId);
+        }
+
+        const response = await fetch(
+          `${API_URL}/api/stock/district/${vaccineId}/lots${
+            params.toString() ? `?${params.toString()}` : ""
+          }`,
+          {
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        const payload = (await response.json()) as LotResponse;
+        setLotItems(Array.isArray(payload?.lots) ? payload.lots : []);
+        setLotTotalRemaining(payload?.totalRemaining ?? 0);
+      } catch (err) {
+        console.error("Erreur chargement lots district:", err);
+        setLotItems([]);
+        setLotTotalRemaining(0);
+        setLotError(
+          err instanceof Error
+            ? err.message
+            : "Impossible de charger les lots pour ce vaccin.",
+        );
+      } finally {
+        setLotLoading(false);
+      }
+    },
+    [accessToken],
+  );
+
+  const handleOpenDistrictLotModal = useCallback(
+    (stock: DistrictStock) => {
+      const districtLabel = stock.district?.name ?? "votre district";
+      setLotContext({
+        vaccineId: stock.vaccineId,
+        vaccineName: stock.vaccine.name,
+        ownerLabel: districtLabel,
+        ownerId: stock.districtId ?? null,
+      });
+      setLotItems([]);
+      setLotTotalRemaining(0);
+      setLotError(null);
+      setLotModalOpen(true);
+      void fetchDistrictLots(stock.vaccineId, stock.districtId ?? null);
+    },
+    [fetchDistrictLots],
+  );
+
+  const closeDistrictLotModal = useCallback(() => {
+    setLotModalOpen(false);
+    setLotContext(null);
+    setLotItems([]);
+    setLotTotalRemaining(0);
+    setLotError(null);
+  }, []);
+
+  const refreshDistrictLots = useCallback(() => {
+    if (lotContext) {
+      void fetchDistrictLots(lotContext.vaccineId, lotContext.ownerId ?? null);
+    }
+  }, [fetchDistrictLots, lotContext]);
 
   const handleCreateStock = async (event: FormEvent) => {
     event.preventDefault();
@@ -2551,11 +3043,28 @@ function DistrictStocksPage() {
                       <div className="flex justify-end gap-2">
                         <button
                           type="button"
+                          onClick={() => handleOpenDistrictLotModal(stock)}
+                          className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                        >
+                          <PackageOpen className="h-4 w-4" />
+                          Lots
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => openTransferModal(stock)}
                           className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-100"
                         >
                           <ArrowRightLeft className="h-4 w-4" />
                           Envoyer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteDistrictStock(stock)}
+                          disabled={districtDeletingId === stock.id}
+                          className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          {districtDeletingId === stock.id ? "Suppression…" : "Supprimer"}
                         </button>
                       </div>
                     </td>
@@ -2721,6 +3230,125 @@ function DistrictStocksPage() {
           </div>
         </div>
       )}
+
+      {lotModalOpen && lotContext && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
+          <div className="w-full max-w-3xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">
+                  Lots du vaccin {lotContext.vaccineName}
+                </h3>
+                <p className="text-sm text-slate-500">
+                  Historique des lots reçus pour {lotContext.ownerLabel ?? "votre district"}.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeDistrictLotModal}
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+              >
+                Fermer
+              </button>
+            </div>
+
+            {lotError && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                {lotError}
+              </div>
+            )}
+
+            <div className="mt-4 max-h-[420px] overflow-y-auto rounded-2xl border border-slate-200">
+              {lotLoading ? (
+                <div className="flex items-center justify-center px-6 py-10 text-sm text-slate-500">
+                  Chargement des lots…
+                </div>
+              ) : lotItems.length === 0 ? (
+                <div className="px-6 py-10 text-center text-sm text-slate-500">
+                  Aucun lot enregistré pour ce vaccin.
+                </div>
+              ) : (
+                <table className="min-w-full divide-y divide-slate-200 text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Lot
+                      </th>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Expiration
+                      </th>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Quantité
+                      </th>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Restant
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {lotItems.map((lot) => {
+                      const expired =
+                        lot.status === "EXPIRED" || isDateExpired(lot.expiration);
+                      return (
+                        <tr key={lot.id} className="hover:bg-slate-50/80">
+                          <td className="px-4 py-3">
+                            <div className="font-medium text-slate-800">{lot.id}</div>
+                            {lot.sourceLotId && (
+                              <div className="text-xs text-slate-500">
+                                Issu du lot {lot.sourceLotId}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={
+                                expired ? "font-medium text-red-600" : "font-medium text-slate-700"
+                              }
+                            >
+                              {formatExpirationDate(lot.expiration)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {lot.quantity.toLocaleString("fr-FR")}
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {lot.remainingQuantity.toLocaleString("fr-FR")}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="mt-4 flex flex-col gap-3 text-sm text-slate-600 md:flex-row md:items-center md:justify-between">
+              <div>
+                Total restant pour {lotContext.ownerLabel ?? "votre district"} :{" "}
+                <span className="font-semibold text-slate-800">
+                  {lotTotalRemaining.toLocaleString("fr-FR")} dose(s)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={refreshDistrictLots}
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                >
+                  Rafraîchir
+                </button>
+                <button
+                  type="button"
+                  onClick={closeDistrictLotModal}
+                  className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+                >
+                  Fermer
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardShell>
   );
 }
@@ -2740,6 +3368,13 @@ function AgentAdminStocksPage() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createVaccineId, setCreateVaccineId] = useState("");
   const [creating, setCreating] = useState(false);
+  const [lotModalOpen, setLotModalOpen] = useState(false);
+  const [lotContext, setLotContext] = useState<LotModalContext | null>(null);
+  const [lotItems, setLotItems] = useState<LotItem[]>([]);
+  const [lotTotalRemaining, setLotTotalRemaining] = useState(0);
+  const [lotLoading, setLotLoading] = useState(false);
+  const [lotError, setLotError] = useState<string | null>(null);
+  const [healthDeletingId, setHealthDeletingId] = useState<string | null>(null);
 
   const fetchHealthCenterStats = useCallback(async () => {
     if (!accessToken) {
@@ -2851,6 +3486,54 @@ function AgentAdminStocksPage() {
     return vaccines.filter((vaccine) => !existing.has(vaccine.id));
   }, [stocks, vaccines]);
 
+  const fetchHealthCenterLots = useCallback(
+    async (vaccineId: string, healthCenterId?: string | null) => {
+      if (!accessToken) return;
+      try {
+        setLotLoading(true);
+        setLotError(null);
+
+        const params = new URLSearchParams();
+        if (healthCenterId) {
+          params.set("healthCenterId", healthCenterId);
+        }
+
+        const response = await fetch(
+          `${API_URL}/api/stock/health-center/${vaccineId}/lots${
+            params.toString() ? `?${params.toString()}` : ""
+          }`,
+          {
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        const payload = (await response.json()) as LotResponse;
+        setLotItems(Array.isArray(payload?.lots) ? payload.lots : []);
+        setLotTotalRemaining(payload?.totalRemaining ?? 0);
+      } catch (err) {
+        console.error("Erreur chargement lots centre:", err);
+        setLotItems([]);
+        setLotTotalRemaining(0);
+        setLotError(
+          err instanceof Error
+            ? err.message
+            : "Impossible de charger les lots pour ce vaccin.",
+        );
+      } finally {
+        setLotLoading(false);
+      }
+    },
+    [accessToken],
+  );
+
   const handleCreateStock = async (event: FormEvent) => {
     event.preventDefault();
     if (!createVaccineId || !accessToken) return;
@@ -2892,6 +3575,38 @@ function AgentAdminStocksPage() {
       "Votre centre de santé"
     );
   }, [stocks]);
+
+  const handleOpenHealthLotModal = useCallback(
+    (stock: HealthCenterStock) => {
+      const centerLabel = stock.healthCenter?.name ?? healthCenterName;
+      setLotContext({
+        vaccineId: stock.vaccineId,
+        vaccineName: stock.vaccine.name,
+        ownerLabel: centerLabel,
+        ownerId: stock.healthCenterId ?? null,
+      });
+      setLotItems([]);
+      setLotTotalRemaining(0);
+      setLotError(null);
+      setLotModalOpen(true);
+      void fetchHealthCenterLots(stock.vaccineId, stock.healthCenterId ?? null);
+    },
+    [fetchHealthCenterLots, healthCenterName],
+  );
+
+  const closeHealthLotModal = useCallback(() => {
+    setLotModalOpen(false);
+    setLotContext(null);
+    setLotItems([]);
+    setLotTotalRemaining(0);
+    setLotError(null);
+  }, []);
+
+  const refreshHealthCenterLots = useCallback(() => {
+    if (lotContext) {
+      void fetchHealthCenterLots(lotContext.vaccineId, lotContext.ownerId ?? null);
+    }
+  }, [fetchHealthCenterLots, lotContext]);
 
   return (
     <DashboardShell active="/dashboard/stocks">
@@ -3071,12 +3786,26 @@ function AgentAdminStocksPage() {
                           <span className="text-slate-400">Non définie</span>
                         )}
                       </td>
-                      <td
-                        className={`px-6 py-4 text-right text-sm ${
-                          expired ? "text-red-700" : "text-slate-500"
-                        }`}
-                      >
-                        —
+                      <td className="px-6 py-4">
+                        <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenHealthLotModal(stock)}
+                            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                          >
+                            <PackageOpen className="h-4 w-4" />
+                            Lots
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteHealthCenterStock(stock)}
+                            disabled={healthDeletingId === stock.id}
+                            className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            {healthDeletingId === stock.id ? "Suppression…" : "Supprimer"}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -3138,6 +3867,125 @@ function AgentAdminStocksPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {lotModalOpen && lotContext && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
+          <div className="w-full max-w-3xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">
+                  Lots du vaccin {lotContext.vaccineName}
+                </h3>
+                <p className="text-sm text-slate-500">
+                  Historique des lots enregistrés pour {lotContext.ownerLabel ?? "votre centre"}.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeHealthLotModal}
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+              >
+                Fermer
+              </button>
+            </div>
+
+            {lotError && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                {lotError}
+              </div>
+            )}
+
+            <div className="mt-4 max-h-[420px] overflow-y-auto rounded-2xl border border-slate-200">
+              {lotLoading ? (
+                <div className="flex items-center justify-center px-6 py-10 text-sm text-slate-500">
+                  Chargement des lots…
+                </div>
+              ) : lotItems.length === 0 ? (
+                <div className="px-6 py-10 text-center text-sm text-slate-500">
+                  Aucun lot enregistré pour ce vaccin.
+                </div>
+              ) : (
+                <table className="min-w-full divide-y divide-slate-200 text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Lot
+                      </th>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Expiration
+                      </th>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Quantité
+                      </th>
+                      <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
+                        Restant
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {lotItems.map((lot) => {
+                      const expired =
+                        lot.status === "EXPIRED" || isDateExpired(lot.expiration);
+                      return (
+                        <tr key={lot.id} className="hover:bg-slate-50/80">
+                          <td className="px-4 py-3">
+                            <div className="font-medium text-slate-800">{lot.id}</div>
+                            {lot.sourceLotId && (
+                              <div className="text-xs text-slate-500">
+                                Issu du lot {lot.sourceLotId}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={
+                                expired ? "font-medium text-red-600" : "font-medium text-slate-700"
+                              }
+                            >
+                              {formatExpirationDate(lot.expiration)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {lot.quantity.toLocaleString("fr-FR")}
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {lot.remainingQuantity.toLocaleString("fr-FR")}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="mt-4 flex flex-col gap-3 text-sm text-slate-600 md:flex-row md:items-center md:justify-between">
+              <div>
+                Total restant pour {lotContext.ownerLabel ?? "votre centre"} :{" "}
+                <span className="font-semibold text-slate-800">
+                  {lotTotalRemaining.toLocaleString("fr-FR")} dose(s)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={refreshHealthCenterLots}
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                >
+                  Rafraîchir
+                </button>
+                <button
+                  type="button"
+                  onClick={closeHealthLotModal}
+                  className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+                >
+                  Fermer
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

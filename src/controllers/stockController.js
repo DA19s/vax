@@ -76,6 +76,215 @@ const fetchDistrictIdsForRegion = async (regionId) => {
   return districts.map((entry) => entry.id);
 };
 
+const createHttpError = (status, message) => {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+};
+
+const normalizeOwnerIdValue = (ownerType, ownerId) =>
+  ownerType === OWNER_TYPES.NATIONAL ? null : ownerId ?? null;
+
+const formatLotRecords = (records) =>
+  records.map((lot) => ({
+    id: lot.id,
+    vaccineId: lot.vaccineId,
+    quantity: lot.quantity,
+    remainingQuantity: lot.remainingQuantity,
+    distributedQuantity: lot.quantity - lot.remainingQuantity,
+    expiration: lot.expiration,
+    status: lot.status,
+    sourceLotId: lot.sourceLotId,
+    createdAt: lot.createdAt,
+    updatedAt: lot.updatedAt,
+    derivedCount: lot._count?.derivedLots ?? 0,
+  }));
+
+const buildLotsResponse = (records) => {
+  const formatted = formatLotRecords(records);
+  const totalRemaining = formatted.reduce(
+    (sum, lot) => sum + lot.remainingQuantity,
+    0,
+  );
+
+  return {
+    lots: formatted,
+    totalRemaining,
+  };
+};
+
+const fetchLotsForOwner = async ({ vaccineId, ownerType, ownerId }) => {
+  const normalizedOwnerId = normalizeOwnerIdValue(ownerType, ownerId);
+
+  return prisma.stockLot.findMany({
+    where: {
+      vaccineId,
+      ownerType,
+      ownerId: normalizedOwnerId,
+    },
+    orderBy: [
+      { status: "asc" },
+      { expiration: "asc" },
+    ],
+    include: {
+      _count: {
+        select: {
+          derivedLots: true,
+        },
+      },
+    },
+  });
+};
+
+const ensureHealthCenterAccessible = async (user, healthCenterId) => {
+  const healthCenter = await prisma.healthCenter.findUnique({
+    where: { id: healthCenterId },
+    include: {
+      district: {
+        include: {
+          commune: {
+            select: { regionId: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (!healthCenter) {
+    throw createHttpError(404, "Centre de santé introuvable");
+  }
+
+  if (user.role === "DISTRICT") {
+    const districtId = await resolveDistrictIdForUser(user);
+    if (!districtId || healthCenter.districtId !== districtId) {
+      throw createHttpError(403, "Centre hors de votre district");
+    }
+  } else if (user.role === "REGIONAL") {
+    const regionId = await resolveRegionIdForUser(user);
+    const centerRegionId = healthCenter.district?.commune?.regionId ?? null;
+    if (!regionId || centerRegionId !== regionId) {
+      throw createHttpError(403, "Centre hors de votre région");
+    }
+  }
+
+  return healthCenter;
+};
+
+const deleteStockForOwner = async ({ ownerType, ownerId, vaccineId }) => {
+  await prisma.$transaction(async (tx) => {
+    let stock = null;
+    switch (ownerType) {
+      case OWNER_TYPES.NATIONAL:
+        stock = await tx.stockNATIONAL.findUnique({
+          where: { vaccineId },
+        });
+        if (!stock) {
+          throw createHttpError(404, "Stock national introuvable");
+        }
+        break;
+      case OWNER_TYPES.REGIONAL: {
+        const regionId = ownerId;
+        stock = await tx.stockREGIONAL.findUnique({
+          where: {
+            vaccineId_regionId: {
+              vaccineId,
+              regionId,
+            },
+          },
+        });
+        if (!stock) {
+          throw createHttpError(404, "Stock régional introuvable");
+        }
+        break;
+      }
+      case OWNER_TYPES.DISTRICT: {
+        const districtId = ownerId;
+        stock = await tx.stockDISTRICT.findUnique({
+          where: {
+            vaccineId_districtId: {
+              vaccineId,
+              districtId,
+            },
+          },
+        });
+        if (!stock) {
+          throw createHttpError(404, "Stock district introuvable");
+        }
+        break;
+      }
+      case OWNER_TYPES.HEALTHCENTER: {
+        const healthCenterId = ownerId;
+        stock = await tx.stockHEALTHCENTER.findUnique({
+          where: {
+            vaccineId_healthCenterId: {
+              vaccineId,
+              healthCenterId,
+            },
+          },
+        });
+        if (!stock) {
+          throw createHttpError(404, "Stock du centre introuvable");
+        }
+        break;
+      }
+      default:
+        throw createHttpError(400, "Type de stock inconnu");
+    }
+
+    const normalizedOwnerId = normalizeOwnerIdValue(ownerType, ownerId);
+    const lots = await tx.stockLot.findMany({
+      where: {
+        vaccineId,
+        ownerType,
+        ownerId: normalizedOwnerId,
+      },
+      select: { id: true },
+    });
+
+    for (const lot of lots) {
+      await deleteLotCascade(tx, lot.id);
+    }
+
+    switch (ownerType) {
+      case OWNER_TYPES.NATIONAL:
+        await tx.stockNATIONAL.delete({ where: { vaccineId } });
+        break;
+      case OWNER_TYPES.REGIONAL:
+        await tx.stockREGIONAL.delete({
+          where: {
+            vaccineId_regionId: {
+              vaccineId,
+              regionId: ownerId,
+            },
+          },
+        });
+        break;
+      case OWNER_TYPES.DISTRICT:
+        await tx.stockDISTRICT.delete({
+          where: {
+            vaccineId_districtId: {
+              vaccineId,
+              districtId: ownerId,
+            },
+          },
+        });
+        break;
+      case OWNER_TYPES.HEALTHCENTER:
+        await tx.stockHEALTHCENTER.delete({
+          where: {
+            vaccineId_healthCenterId: {
+              vaccineId,
+              healthCenterId: ownerId,
+            },
+          },
+        });
+        break;
+      default:
+        break;
+    }
+  });
+};
+
 const buildExpiredLotKey = (ownerType, ownerId, vaccineId) =>
   `${ownerType}::${ownerId ?? "root"}::${vaccineId}`;
 
@@ -150,48 +359,144 @@ const listNationalLots = async (req, res, next) => {
   }
 
   try {
-    const lots = await prisma.stockLot.findMany({
-      where: {
-        vaccineId,
-        ownerType: OWNER_TYPES.NATIONAL,
-        ownerId: null,
-      },
-      orderBy: [
-        { status: "asc" },
-        { expiration: "asc" },
-      ],
-      include: {
-        _count: {
-          select: {
-            derivedLots: true,
-          },
-        },
-      },
+    const lots = await fetchLotsForOwner({
+      vaccineId,
+      ownerType: OWNER_TYPES.NATIONAL,
+      ownerId: null,
     });
 
-    const formatted = lots.map((lot) => ({
-      id: lot.id,
-      vaccineId: lot.vaccineId,
-      quantity: lot.quantity,
-      remainingQuantity: lot.remainingQuantity,
-      distributedQuantity: lot.quantity - lot.remainingQuantity,
-      expiration: lot.expiration,
-      status: lot.status,
-      sourceLotId: lot.sourceLotId,
-      createdAt: lot.createdAt,
-      updatedAt: lot.updatedAt,
-      derivedCount: lot._count.derivedLots,
-    }));
+    res.json(buildLotsResponse(lots));
+  } catch (error) {
+    next(error);
+  }
+};
 
-    const totalRemaining = formatted.reduce(
-      (sum, lot) => sum + lot.remainingQuantity,
-      0,
-    );
+const listRegionalLots = async (req, res, next) => {
+  if (!["NATIONAL", "REGIONAL"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
 
-    res.json({
-      lots: formatted,
-      totalRemaining,
+  const { vaccineId } = req.params;
+  let regionId =
+    typeof req.query.regionId === "string" ? req.query.regionId : null;
+
+  if (!vaccineId) {
+    return res
+      .status(400)
+      .json({ message: "vaccineId est requis pour consulter les lots" });
+  }
+
+  try {
+    if (req.user.role === "REGIONAL") {
+      regionId = await resolveRegionIdForUser(req.user);
+      if (!regionId) {
+        throw createHttpError(400, "Impossible d'identifier votre région");
+      }
+    } else if (!regionId) {
+      throw createHttpError(400, "regionId est requis");
+    }
+
+    const lots = await fetchLotsForOwner({
+      vaccineId,
+      ownerType: OWNER_TYPES.REGIONAL,
+      ownerId: regionId,
     });
+
+    res.json(buildLotsResponse(lots));
+  } catch (error) {
+    next(error);
+  }
+};
+
+const listDistrictLots = async (req, res, next) => {
+  if (!["NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  const { vaccineId } = req.params;
+  let districtId =
+    typeof req.query.districtId === "string" ? req.query.districtId : null;
+
+  if (!vaccineId) {
+    return res
+      .status(400)
+      .json({ message: "vaccineId est requis pour consulter les lots" });
+  }
+
+  try {
+    if (req.user.role === "DISTRICT") {
+      districtId = await resolveDistrictIdForUser(req.user);
+      if (!districtId) {
+        throw createHttpError(400, "Impossible d'identifier votre district");
+      }
+    } else if (!districtId) {
+      throw createHttpError(400, "districtId est requis");
+    }
+
+    if (req.user.role === "REGIONAL") {
+      const regionId = await resolveRegionIdForUser(req.user);
+      if (!regionId) {
+        throw createHttpError(400, "Impossible d'identifier votre région");
+      }
+      await ensureDistrictBelongsToRegion(districtId, regionId);
+    }
+
+    const lots = await fetchLotsForOwner({
+      vaccineId,
+      ownerType: OWNER_TYPES.DISTRICT,
+      ownerId: districtId,
+    });
+
+    res.json(buildLotsResponse(lots));
+  } catch (error) {
+    next(error);
+  }
+};
+
+const listHealthCenterLots = async (req, res, next) => {
+  if (
+    !["NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)
+  ) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  const { vaccineId } = req.params;
+  let healthCenterId =
+    typeof req.query.healthCenterId === "string"
+      ? req.query.healthCenterId
+      : null;
+
+  if (!vaccineId) {
+    return res
+      .status(400)
+      .json({ message: "vaccineId est requis pour consulter les lots" });
+  }
+
+  try {
+    if (req.user.role === "AGENT") {
+      if (req.user.agentLevel !== "ADMIN") {
+        return res.status(403).json({ message: "Accès refusé" });
+      }
+      healthCenterId = await resolveHealthCenterIdForUser(req.user);
+      if (!healthCenterId) {
+        throw createHttpError(
+          400,
+          "Impossible d'identifier votre centre de santé",
+        );
+      }
+    } else if (!healthCenterId) {
+      throw createHttpError(400, "healthCenterId est requis");
+    } else if (req.user.role === "DISTRICT" || req.user.role === "REGIONAL") {
+      await ensureHealthCenterAccessible(req.user, healthCenterId);
+    }
+
+    const lots = await fetchLotsForOwner({
+      vaccineId,
+      ownerType: OWNER_TYPES.HEALTHCENTER,
+      ownerId: healthCenterId,
+    });
+
+    res.json(buildLotsResponse(lots));
   } catch (error) {
     next(error);
   }
@@ -1546,6 +1851,149 @@ const reduceStockHEALTHCENTER = async (req, res, next) => {
   }
 };
 
+const deleteStockNATIONAL = async (req, res, next) => {
+  if (req.user.role !== "NATIONAL") {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  const { vaccineId } = req.body ?? {};
+
+  if (!vaccineId) {
+    return res.status(400).json({ message: "vaccineId est requis" });
+  }
+
+  try {
+    await deleteStockForOwner({
+      ownerType: OWNER_TYPES.NATIONAL,
+      ownerId: null,
+      vaccineId,
+    });
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const deleteStockREGIONAL = async (req, res, next) => {
+  if (!["NATIONAL", "REGIONAL"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  const { vaccineId, regionId: bodyRegionId } = req.body ?? {};
+  let regionId = bodyRegionId ?? null;
+
+  if (!vaccineId) {
+    return res.status(400).json({ message: "vaccineId est requis" });
+  }
+
+  try {
+    if (req.user.role === "REGIONAL") {
+      regionId = await resolveRegionIdForUser(req.user);
+      if (!regionId) {
+        throw createHttpError(400, "Impossible d'identifier votre région");
+      }
+    } else if (!regionId) {
+      throw createHttpError(400, "regionId est requis");
+    }
+
+    await deleteStockForOwner({
+      ownerType: OWNER_TYPES.REGIONAL,
+      ownerId: regionId,
+      vaccineId,
+    });
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const deleteStockDISTRICT = async (req, res, next) => {
+  if (!["NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  const { vaccineId, districtId: bodyDistrictId } = req.body ?? {};
+  let districtId = bodyDistrictId ?? null;
+
+  if (!vaccineId) {
+    return res.status(400).json({ message: "vaccineId est requis" });
+  }
+
+  try {
+    if (req.user.role === "DISTRICT") {
+      districtId = await resolveDistrictIdForUser(req.user);
+      if (!districtId) {
+        throw createHttpError(400, "Impossible d'identifier votre district");
+      }
+    } else if (!districtId) {
+      throw createHttpError(400, "districtId est requis");
+    }
+
+    if (req.user.role === "REGIONAL") {
+      const regionId = await resolveRegionIdForUser(req.user);
+      if (!regionId) {
+        throw createHttpError(400, "Impossible d'identifier votre région");
+      }
+      await ensureDistrictBelongsToRegion(districtId, regionId);
+    }
+
+    await deleteStockForOwner({
+      ownerType: OWNER_TYPES.DISTRICT,
+      ownerId: districtId,
+      vaccineId,
+    });
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const deleteStockHEALTHCENTER = async (req, res, next) => {
+  if (
+    !["NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)
+  ) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  const { vaccineId, healthCenterId: bodyHealthCenterId } = req.body ?? {};
+  let healthCenterId = bodyHealthCenterId ?? null;
+
+  if (!vaccineId) {
+    return res.status(400).json({ message: "vaccineId est requis" });
+  }
+
+  try {
+    if (req.user.role === "AGENT") {
+      if (req.user.agentLevel !== "ADMIN") {
+        return res.status(403).json({ message: "Accès refusé" });
+      }
+      healthCenterId = await resolveHealthCenterIdForUser(req.user);
+      if (!healthCenterId) {
+        throw createHttpError(
+          400,
+          "Impossible d'identifier votre centre de santé",
+        );
+      }
+    } else if (!healthCenterId) {
+      throw createHttpError(400, "healthCenterId est requis");
+    } else if (
+      req.user.role === "DISTRICT" ||
+      req.user.role === "REGIONAL"
+    ) {
+      await ensureHealthCenterAccessible(req.user, healthCenterId);
+    }
+
+    await deleteStockForOwner({
+      ownerType: OWNER_TYPES.HEALTHCENTER,
+      ownerId: healthCenterId,
+      vaccineId,
+    });
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const LOW_STOCK_THRESHOLD = 50;
 
 const getNationalStockStats = async (req, res, next) => {
@@ -1838,30 +2286,37 @@ const getHealthCenterStockStats = async (req, res, next) => {
 };
 
 module.exports = {
-    createStockNATIONAL,
-    createStockREGIONAL,
-    createStockDISTRICT,
-    createStockHEALTHCENTER,
-    addStockDISTRICT,
-    addStockHEALTHCENTER,
-    addStockNATIONAL,
-    addStockREGIONAL,
-    reduceStockDISTRICT,
-    reduceStockHEALTHCENTER,
-    reduceStockNATIONAL,
-    reduceStockREGIONAL,
-    updateStockDISTRICT,
-    updateStockHEALTHCENTER,
-    updateStockNATIONAL,
-    updateStockREGIONAL,
-    getStockNATIONAL,
-    listNationalLots,
-    getStockREGIONAL,
-    getStockDISTRICT,
-    getStockHEALTHCENTER,
-    getNationalStockStats,
-    getRegionalStockStats,
-    getDistrictStockStats,
-    getHealthCenterStockStats,
-    deleteLot,
+  createStockNATIONAL,
+  createStockREGIONAL,
+  createStockDISTRICT,
+  createStockHEALTHCENTER,
+  addStockDISTRICT,
+  addStockHEALTHCENTER,
+  addStockNATIONAL,
+  addStockREGIONAL,
+  reduceStockDISTRICT,
+  reduceStockHEALTHCENTER,
+  reduceStockNATIONAL,
+  reduceStockREGIONAL,
+  updateStockDISTRICT,
+  updateStockHEALTHCENTER,
+  updateStockNATIONAL,
+  updateStockREGIONAL,
+  getStockNATIONAL,
+  listNationalLots,
+  listRegionalLots,
+  listDistrictLots,
+  listHealthCenterLots,
+  getStockREGIONAL,
+  getStockDISTRICT,
+  getStockHEALTHCENTER,
+  deleteStockNATIONAL,
+  deleteStockREGIONAL,
+  deleteStockDISTRICT,
+  deleteStockHEALTHCENTER,
+  getNationalStockStats,
+  getRegionalStockStats,
+  getDistrictStockStats,
+  getHealthCenterStockStats,
+  deleteLot,
 };

@@ -9,6 +9,21 @@ router.get(
   requireAuth,
   stockController.listNationalLots,
 );
+router.get(
+  "/regional/:vaccineId/lots",
+  requireAuth,
+  stockController.listRegionalLots,
+);
+router.get(
+  "/district/:vaccineId/lots",
+  requireAuth,
+  stockController.listDistrictLots,
+);
+router.get(
+  "/health-center/:vaccineId/lots",
+  requireAuth,
+  stockController.listHealthCenterLots,
+);
 router.get("/national", requireAuth, stockController.getStockNATIONAL);
 router.get("/regional", requireAuth, stockController.getStockREGIONAL);
 router.get("/district", requireAuth, stockController.getStockDISTRICT);
@@ -35,6 +50,10 @@ router.put("/reduce-district", requireAuth, stockController.reduceStockDISTRICT)
 router.put("/reduce-health-center", requireAuth, stockController.reduceStockHEALTHCENTER);
 
 router.delete("/lots/:id", requireAuth, stockController.deleteLot);
+router.delete("/national", requireAuth, stockController.deleteStockNATIONAL);
+router.delete("/regional", requireAuth, stockController.deleteStockREGIONAL);
+router.delete("/district", requireAuth, stockController.deleteStockDISTRICT);
+router.delete("/health-center", requireAuth, stockController.deleteStockHEALTHCENTER);
 
 router.get("/stats/national", requireAuth, stockController.getNationalStockStats);
 router.get("/stats/regional", requireAuth, stockController.getRegionalStockStats);
