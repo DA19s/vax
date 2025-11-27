@@ -28,9 +28,10 @@ function VaccinationRecordModal({ isOpen, onClose, detail }: Props) {
   const { vaccinations } = detail;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/70 px-4 py-8">
-      <div className="h-[90vh] w-full max-w-4xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-        <div className="flex items-center justify-between bg-gradient-to-r from-purple-600 to-purple-700 px-6 py-4 text-white">
+    <div className="fixed inset-0 z-[60] flex overflow-y-auto bg-slate-900/70 px-4 py-8">
+      <div className="mx-auto flex min-h-full w-full max-w-4xl items-center justify-center">
+        <div className="flex max-h-[90vh] w-full flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+          <div className="flex items-center justify-between bg-gradient-to-r from-purple-600 to-purple-700 px-6 py-4 text-white">
           <div>
             <p className="text-xs uppercase tracking-wide text-purple-100">Carnet de vaccination</p>
             <h2 className="text-xl font-semibold">{detail.child.name}</h2>
@@ -45,7 +46,7 @@ function VaccinationRecordModal({ isOpen, onClose, detail }: Props) {
           </button>
         </div>
 
-        <div className="h-full overflow-y-auto px-6 py-6 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300/70">
+          <div className="flex-1 overflow-y-auto px-6 py-6 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300/70">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <section className={sectionClasses}>
               <div className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
@@ -212,6 +213,7 @@ function VaccinationRecordModal({ isOpen, onClose, detail }: Props) {
                 )}
               </div>
             </section>
+          </div>
           </div>
         </div>
       </div>

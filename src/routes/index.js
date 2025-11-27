@@ -16,8 +16,10 @@ router.use("/district", require("./district"));
 router.use("/stock", require("./stock"));
 router.use("/children", require("./children"));
 router.use("/systemSettings", require("./systemSettings"));
+router.use("/dashboard", require("./dashboard"));
 
 module.exports = router;
+
 
 
 

@@ -765,6 +765,30 @@ const completeVaccine = async (req, res, next) => {
 
     await prisma.childVaccineScheduled.delete({ where: { id: req.params.id } });
 
+    await prisma.childVaccineDue.deleteMany({
+      where: {
+        childId: scheduled.childId,
+        vaccineId: scheduled.vaccineId,
+        dose: scheduled.dose ?? 1,
+      },
+    });
+
+    await prisma.childVaccineOverdue.deleteMany({
+      where: {
+        childId: scheduled.childId,
+        vaccineId: scheduled.vaccineId,
+        dose: scheduled.dose ?? 1,
+      },
+    });
+
+    await prisma.childVaccineLate.deleteMany({
+      where: {
+        childId: scheduled.childId,
+        vaccineId: scheduled.vaccineId,
+        dose: scheduled.dose ?? 1,
+      },
+    });
+
     return res.status(201).json(newVaccineCompleted);
   } catch (error) {
     next(error);
