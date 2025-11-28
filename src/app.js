@@ -22,6 +22,10 @@ app.use(
 app.use(express.json());
 app.use(prismaMiddleware);
 
+// Servir les fichiers statiques depuis le dossier uploads
+const path = require("path");
+app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
+
 app.get("/", (_req, res) => {
   res.json({ status: "ok" });
 });

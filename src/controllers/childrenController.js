@@ -78,6 +78,14 @@ const mapChildrenForResponse = (child) => {
 };
 
 const createChildren = async (req, res, next) => {
+  if (req.user.role !== "AGENT") {
+    return res.status(403).json({ message: "Accès refusé. Seuls les agents peuvent créer des enfants." });
+  }
+
+  if (!req.user.healthCenterId) {
+    return res.status(400).json({ message: "Votre compte n'est pas associé à un centre de santé." });
+  }
+
   const {
     firstName,
     lastName,
@@ -91,6 +99,8 @@ const createChildren = async (req, res, next) => {
     fatherName,
     motherName,
   } = req.body;
+
+  const finalHealthCenterId = req.user.healthCenterId;
 
   const now = new Date();
   const birth = new Date(birthDate);
@@ -144,7 +154,7 @@ const createChildren = async (req, res, next) => {
           birthPlace,
           address,
           gender,
-          healthCenterId,
+          healthCenterId: finalHealthCenterId,
           status: "A_JOUR",
           emailParent,
           phoneParent,
@@ -632,8 +642,17 @@ const getChildVaccinations = async (req, res, next) => {
 };
 
 const getParentsOverview = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL"].includes(req.user.role)) {
+  if (
+    !["NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)
+  ) {
     return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  // Pour les agents, vérifier qu'ils sont admin ou staff
+  if (req.user.role === "AGENT") {
+    if (!["ADMIN", "STAFF"].includes(req.user.agentLevel)) {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
   }
 
   try {
@@ -657,6 +676,26 @@ const getParentsOverview = async (req, res, next) => {
             },
           },
         },
+      };
+    } else if (req.user.role === "DISTRICT") {
+      // Pour les districts, filtrer par leur district
+      if (!req.user.districtId) {
+        return res.json({ success: true, data: [] });
+      }
+
+      whereClause = {
+        healthCenter: {
+          districtId: req.user.districtId,
+        },
+      };
+    } else if (req.user.role === "AGENT") {
+      // Pour les agents, filtrer par leur centre de santé
+      if (!req.user.healthCenterId) {
+        return res.json({ success: true, data: [] });
+      }
+
+      whereClause = {
+        healthCenterId: req.user.healthCenterId,
       };
     }
 
@@ -737,10 +776,70 @@ const getParentsOverview = async (req, res, next) => {
   }
 };
 
+const deleteChild = async (req, res, next) => {
+  if (req.user.role !== "AGENT" || !req.user.healthCenterId) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  try {
+    const { id } = req.params;
+
+    const child = await prisma.children.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        healthCenterId: true,
+      },
+    });
+
+    if (!child) {
+      return res.status(404).json({ message: "Enfant introuvable" });
+    }
+
+    // Vérifier que l'enfant appartient au centre de santé de l'agent
+    if (child.healthCenterId !== req.user.healthCenterId) {
+      return res.status(403).json({ message: "Accès refusé pour cet enfant" });
+    }
+
+    // Supprimer toutes les données liées en cascade
+    await prisma.$transaction(async (tx) => {
+      // Supprimer les réservations de stock liées aux rendez-vous
+      const scheduledVaccines = await tx.childVaccineScheduled.findMany({
+        where: { childId: id },
+        select: { id: true },
+      });
+
+      const scheduleIds = scheduledVaccines.map((s) => s.id);
+      if (scheduleIds.length > 0) {
+        await tx.stockReservation.deleteMany({
+          where: { scheduleId: { in: scheduleIds } },
+        });
+      }
+
+      // Supprimer les vaccinations
+      await tx.childVaccineScheduled.deleteMany({ where: { childId: id } });
+      await tx.childVaccineCompleted.deleteMany({ where: { childId: id } });
+      await tx.childVaccineDue.deleteMany({ where: { childId: id } });
+      await tx.childVaccineLate.deleteMany({ where: { childId: id } });
+      await tx.childVaccineOverdue.deleteMany({ where: { childId: id } });
+
+      // Supprimer l'enfant
+      await tx.children.delete({ where: { id } });
+    });
+
+    res.json({ message: "Enfant supprimé avec succès" });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createChildren,
   updateChildren,
   getChildren,
   getChildVaccinations,
   getParentsOverview,
+  deleteChild,
 };

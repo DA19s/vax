@@ -60,4 +60,6 @@ router.get("/stats/regional", requireAuth, stockController.getRegionalStockStats
 router.get("/stats/district", requireAuth, stockController.getDistrictStockStats);
 router.get("/stats/health-center", requireAuth, stockController.getHealthCenterStockStats);
 
+router.get("/health-center/reservations", requireAuth, stockController.getHealthCenterReservations);
+
 module.exports = router;

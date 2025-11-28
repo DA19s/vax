@@ -15,6 +15,14 @@ type JwtPayload = {
   role: string;
 };
 
+type RoleOption = {
+  role: string;
+  agentLevel?: string | null;
+  region?: { id: string; name: string } | null;
+  district?: { id: string; name: string } | null;
+  healthCenter?: { id: string; name: string } | null;
+};
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:6000";
 
 export default function LoginPage() {
@@ -25,25 +33,50 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [roleOptions, setRoleOptions] = useState<RoleOption[]>([]);
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const formatRoleLabel = (option: RoleOption) => {
+    switch (option.role) {
+      case "NATIONAL":
+        return "Interface nationale";
+      case "REGIONAL":
+        return option.region
+          ? `Région : ${option.region.name}`
+          : "Interface régionale";
+      case "DISTRICT":
+        return option.district
+          ? `District : ${option.district.name}`
+          : "Interface district";
+      case "AGENT":
+        if (option.healthCenter) {
+          return `${option.agentLevel === "ADMIN" ? "Admin" : "Staff"} · ${
+            option.healthCenter.name
+          }`;
+        }
+        return "Interface agent";
+      default:
+        return option.role;
+    }
+  };
+
+  const performLogin = async (
+    emailValue: string,
+    passwordValue: string,
+    selectedRole?: string,
+  ) => {
     setLoading(true);
     setError(null);
+    setRoleOptions([]);
 
     try {
-      const form = event.currentTarget;
-      const formData = new FormData(form);
-      const emailValue = (formData.get("email") ?? "").toString();
-      const passwordValue = (formData.get("password") ?? "").toString();
-
-      setEmail(emailValue);
-      setPassword(passwordValue);
-
       const response = await fetch(`${API_URL}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: emailValue, password: passwordValue }),
+        body: JSON.stringify({
+          email: emailValue,
+          password: passwordValue,
+          ...(selectedRole ? { role: selectedRole } : {}),
+        }),
       });
 
       const data = await response.json();
@@ -53,18 +86,22 @@ export default function LoginPage() {
         return;
       }
 
+      if (data?.requiresRoleSelection && Array.isArray(data.roles)) {
+        setRoleOptions(data.roles as RoleOption[]);
+        return;
+      }
+
       if (!data?.accessToken || !data?.refreshToken) {
         setError("Réponse invalide du serveur.");
         return;
       }
 
-      // Vérifier rapidement le rôle pour la redirection
       let role: string | null = null;
       try {
         const decoded = jwtDecode<JwtPayload>(data.accessToken);
         role = decoded?.role ?? null;
       } catch {
-        // ignore, login() fera une validation complète
+        // ignore
       }
 
       login(
@@ -72,7 +109,7 @@ export default function LoginPage() {
           accessToken: data.accessToken,
           refreshToken: data.refreshToken,
         },
-        { email }
+        { email: emailValue },
       );
 
       if (!role) {
@@ -80,28 +117,33 @@ export default function LoginPage() {
         return;
       }
 
-      switch (role.toUpperCase()) {
-        case "NATIONAL":
-          router.push("/dashboard");
-          break;
-        case "REGIONAL":
-          router.push("/dashboard");
-          break;
-        case "DISTRICT":
-          router.push("/dashboard");
-          break;
-        case "AGENT":
-          router.push("/dashboard");
-          break;
-        default:
-          router.push("/dashboard");
-      }
+      router.push("/dashboard");
     } catch (err) {
       console.error("Erreur login frontend:", err);
       setError("Impossible de contacter le serveur.");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const emailValue = (formData.get("email") ?? "").toString();
+    const passwordValue = (formData.get("password") ?? "").toString();
+
+    setEmail(emailValue);
+    setPassword(passwordValue);
+    await performLogin(emailValue, passwordValue);
+  };
+
+  const handleRoleSelection = async (role: string) => {
+    if (!email || !password) {
+      setError("Veuillez saisir vos identifiants.");
+      return;
+    }
+    await performLogin(email, password, role);
   };
 
   return (
@@ -130,12 +172,42 @@ export default function LoginPage() {
         />
 
         {error && <AuthAlert type="error" message={error} />}
+        {roleOptions.length > 1 && (
+          <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4 text-sm text-emerald-900">
+            <p className="font-semibold">
+              Sélectionnez l&apos;interface que vous souhaitez ouvrir :
+            </p>
+            <div className="mt-3 space-y-3">
+              {roleOptions.map((option) => (
+                <button
+                  key={option.role}
+                  type="button"
+                  onClick={() => handleRoleSelection(option.role)}
+                  className="w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-left shadow-sm transition hover:border-emerald-400"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-emerald-900">
+                      {option.role}
+                    </span>
+                    <span className="text-xs text-emerald-600">
+                      {option.agentLevel}
+                    </span>
+                  </div>
+                  <p className="text-[13px] text-emerald-700">
+                    {formatRoleLabel(option)}
+                  </p>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <AuthButton
           type="submit"
           loading={loading}
           loadingText="Connexion en cours..."
           icon={ArrowRight}
+          disabled={loading}
         >
           Se connecter
         </AuthButton>

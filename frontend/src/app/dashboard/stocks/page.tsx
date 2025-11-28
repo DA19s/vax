@@ -4,11 +4,17 @@ import { FormEvent, useEffect, useMemo, useState, useCallback } from "react";
 import {
   AlertTriangle,
   ArrowRightLeft,
+  Calendar,
+  Clock,
+  Filter,
   PackageOpen,
   PenSquare,
   Plus,
+  Search,
   Syringe,
   Trash2,
+  User,
+  X,
 } from "lucide-react";
 import DashboardShell from "@/app/dashboard/components/DashboardShell";
 import StatCard from "@/app/dashboard/components/StatCard";
@@ -70,6 +76,7 @@ type LotItem = {
   status: "VALID" | "EXPIRED";
   sourceLotId: string | null;
   derivedCount: number;
+  reservedQuantity?: number;
 };
 
 type LotResponse = {
@@ -3375,6 +3382,13 @@ function AgentAdminStocksPage() {
   const [lotLoading, setLotLoading] = useState(false);
   const [lotError, setLotError] = useState<string | null>(null);
   const [healthDeletingId, setHealthDeletingId] = useState<string | null>(null);
+  const [reservations, setReservations] = useState<any[]>([]);
+  const [reservationsLoading, setReservationsLoading] = useState(false);
+  const [reservationsError, setReservationsError] = useState<string | null>(null);
+  const [reservationsModalOpen, setReservationsModalOpen] = useState(false);
+  const [reservationSearch, setReservationSearch] = useState("");
+  const [reservationVaccineFilter, setReservationVaccineFilter] = useState<string>("Tous");
+  const [reservationStatusFilter, setReservationStatusFilter] = useState<string>("Tous");
 
   const fetchHealthCenterStats = useCallback(async () => {
     if (!accessToken) {
@@ -3473,6 +3487,41 @@ function AgentAdminStocksPage() {
       setVaccines([]);
     } finally {
       setLoading(false);
+    }
+  }, [accessToken]);
+
+  const fetchReservations = useCallback(async () => {
+    if (!accessToken) {
+      setReservations([]);
+      return;
+    }
+
+    try {
+      setReservationsLoading(true);
+      setReservationsError(null);
+
+      const response = await fetch(`${API_URL}/api/stock/health-center/reservations`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `Erreur ${response.status}`);
+      }
+
+      const payload = await response.json();
+      setReservations(Array.isArray(payload?.reservations) ? payload.reservations : []);
+    } catch (err) {
+      console.error("Erreur chargement réservations:", err);
+      setReservationsError(
+        err instanceof Error ? err.message : "Impossible de charger les réservations"
+      );
+      setReservations([]);
+    } finally {
+      setReservationsLoading(false);
     }
   }, [accessToken]);
 
@@ -3608,6 +3657,29 @@ function AgentAdminStocksPage() {
     }
   }, [fetchHealthCenterLots, lotContext]);
 
+  const filteredReservations = useMemo(() => {
+    const normalizedSearch = reservationSearch.trim().toLowerCase();
+    return reservations.filter((reservation) => {
+      const matchesSearch =
+        normalizedSearch.length === 0 ||
+        reservation.vaccine.name.toLowerCase().includes(normalizedSearch) ||
+        reservation.appointment.child.name.toLowerCase().includes(normalizedSearch);
+
+      const matchesVaccine =
+        reservationVaccineFilter === "Tous" ||
+        reservation.vaccine.name === reservationVaccineFilter;
+
+      const appointmentDate = new Date(reservation.appointment.scheduledFor);
+      const isPast = appointmentDate < new Date();
+      const matchesStatus =
+        reservationStatusFilter === "Tous" ||
+        (reservationStatusFilter === "À venir" && !isPast) ||
+        (reservationStatusFilter === "Passé" && isPast);
+
+      return matchesSearch && matchesVaccine && matchesStatus;
+    });
+  }, [reservations, reservationSearch, reservationVaccineFilter, reservationStatusFilter]);
+
   return (
     <DashboardShell active="/dashboard/stocks">
       <div className="space-y-8">
@@ -3621,6 +3693,19 @@ function AgentAdminStocksPage() {
           <div className="flex gap-3">
             <button
               type="button"
+              onClick={async () => {
+                console.log("Ouverture modal réservations");
+                setReservationsModalOpen(true);
+                await fetchReservations();
+                console.log("Réservations chargées:", reservations.length);
+              }}
+              className="flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 transition hover:border-amber-400 hover:bg-amber-100"
+            >
+              <Clock className="h-4 w-4" />
+              Réservations
+            </button>
+            <button
+              type="button"
               onClick={() => setCreateModalOpen(true)}
               className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
               disabled={availableVaccinesForCreation.length === 0}
@@ -3630,7 +3715,10 @@ function AgentAdminStocksPage() {
             </button>
             <button
               type="button"
-              onClick={fetchHealthCenterStocks}
+              onClick={() => {
+                fetchHealthCenterStocks();
+                fetchHealthCenterStats();
+              }}
               className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-blue-400 hover:text-blue-600"
             >
               <ArrowRightLeft className="h-4 w-4" />
@@ -3952,7 +4040,14 @@ function AgentAdminStocksPage() {
                             {lot.quantity.toLocaleString("fr-FR")}
                           </td>
                           <td className="px-4 py-3 text-slate-700">
-                            {lot.remainingQuantity.toLocaleString("fr-FR")}
+                            <div className="flex items-center gap-2">
+                              <span>{lot.remainingQuantity.toLocaleString("fr-FR")}</span>
+                              {lot.reservedQuantity && lot.reservedQuantity > 0 && (
+                                <span className="text-xs text-amber-600">
+                                  ({lot.reservedQuantity} réservé{lot.reservedQuantity > 1 ? "s" : ""})
+                                </span>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -3981,6 +4076,222 @@ function AgentAdminStocksPage() {
                   type="button"
                   onClick={closeHealthLotModal}
                   className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+                >
+                  Fermer
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {reservationsModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4" style={{ zIndex: 9999 }}>
+          <div className="w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-gradient-to-r from-amber-50 to-amber-100 px-6 py-4">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">
+                  Vaccins réservés
+                </h3>
+                <p className="text-sm text-slate-600">
+                  Doses réservées pour des rendez-vous programmés
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setReservationsModalOpen(false);
+                  setReservationSearch("");
+                  setReservationVaccineFilter("Tous");
+                  setReservationStatusFilter("Tous");
+                }}
+                className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              {reservationsError && (
+                <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  {reservationsError}
+                </div>
+              )}
+
+              {!reservationsLoading && reservations.length === 0 && !reservationsError && (
+                <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700">
+                  Aucune réservation trouvée. Les réservations apparaîtront ici lorsqu'un rendez-vous est programmé.
+                </div>
+              )}
+
+              <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <Filter className="h-4 w-4 text-slate-600" />
+                  <h4 className="text-sm font-semibold text-slate-900">Filtres</h4>
+                </div>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={reservationSearch}
+                      onChange={(e) => setReservationSearch(e.target.value)}
+                      placeholder="Rechercher un enfant ou vaccin..."
+                      className="w-full rounded-lg border border-slate-300 py-2 pl-10 pr-4 text-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
+                    />
+                  </div>
+
+                  <div>
+                    <select
+                      value={reservationVaccineFilter}
+                      onChange={(e) => setReservationVaccineFilter(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 py-2 px-4 text-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
+                    >
+                      <option value="Tous">Tous les vaccins</option>
+                      {Array.from(new Set(reservations.map((r) => r.vaccine.name)))
+                        .sort()
+                        .map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <select
+                      value={reservationStatusFilter}
+                      onChange={(e) => setReservationStatusFilter(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 py-2 px-4 text-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
+                    >
+                      <option value="Tous">Tous les statuts</option>
+                      <option value="À venir">À venir</option>
+                      <option value="Passé">Passé</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {reservationsLoading ? (
+                <div className="flex items-center justify-center py-16">
+                  <div className="text-center">
+                    <div className="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-b-2 border-amber-600" />
+                    <p className="text-sm text-slate-600">Chargement des réservations...</p>
+                  </div>
+                </div>
+              ) : filteredReservations.length === 0 ? (
+                    <div className="flex items-center justify-center py-16">
+                      <div className="text-center">
+                        <Clock className="mx-auto mb-4 h-12 w-12 text-slate-300" />
+                        <p className="font-medium text-slate-500">Aucune réservation trouvée</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {filteredReservations.map((reservation) => {
+                        const appointmentDate = new Date(reservation.appointment.scheduledFor);
+                        const isPast = appointmentDate < new Date();
+                        const lotExpiration = new Date(reservation.lot.expiration);
+                        const lotExpired = lotExpiration < new Date();
+
+                        return (
+                          <div
+                            key={reservation.id}
+                            className={`rounded-xl border p-4 ${
+                              isPast
+                                ? "border-red-200 bg-red-50/50"
+                                : lotExpired
+                                ? "border-amber-300 bg-amber-50/50"
+                                : "border-amber-200 bg-amber-50/30"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="flex-1">
+                                <div className="mb-2 flex items-center gap-2">
+                                  <Syringe className="h-4 w-4 text-amber-600" />
+                                  <span className="font-semibold text-slate-900">
+                                    {reservation.vaccine.name}
+                                  </span>
+                                  <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-medium text-amber-800">
+                                    {reservation.quantity} dose{reservation.quantity > 1 ? "s" : ""}
+                                  </span>
+                                  {isPast && (
+                                    <span className="rounded-full bg-red-200 px-2 py-0.5 text-xs font-medium text-red-800">
+                                      Rendez-vous passé
+                                    </span>
+                                  )}
+                                  {lotExpired && (
+                                    <span className="rounded-full bg-amber-300 px-2 py-0.5 text-xs font-medium text-amber-900">
+                                      Lot expiré
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="grid grid-cols-1 gap-2 text-sm text-slate-600 md:grid-cols-2">
+                                  <div className="flex items-center gap-2">
+                                    <User className="h-4 w-4 text-slate-400" />
+                                    <span>
+                                      <span className="font-medium">Enfant:</span>{" "}
+                                      {reservation.appointment.child.name}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center gap-2">
+                                    <Calendar className="h-4 w-4 text-slate-400" />
+                                    <span>
+                                      <span className="font-medium">RDV:</span>{" "}
+                                      {appointmentDate.toLocaleDateString("fr-FR", {
+                                        weekday: "long",
+                                        day: "numeric",
+                                        month: "long",
+                                        year: "numeric",
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                      })}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center gap-2">
+                                    <PackageOpen className="h-4 w-4 text-slate-400" />
+                                    <span>
+                                      <span className="font-medium">Dose:</span>{" "}
+                                      {reservation.appointment.dose}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center gap-2">
+                                    <Clock className="h-4 w-4 text-slate-400" />
+                                    <span>
+                                      <span className="font-medium">Lot expire:</span>{" "}
+                                      {lotExpiration.toLocaleDateString("fr-FR")}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+            </div>
+
+            <div className="border-t border-slate-200 bg-slate-50 px-6 py-4">
+              <div className="flex items-center justify-between text-sm text-slate-600">
+                <span>
+                  {reservationsLoading
+                    ? "Chargement..."
+                    : `${filteredReservations.length} réservation${filteredReservations.length > 1 ? "s" : ""}`}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReservationsModalOpen(false);
+                    setReservationSearch("");
+                    setReservationVaccineFilter("Tous");
+                    setReservationStatusFilter("Tous");
+                  }}
+                  className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
                 >
                   Fermer
                 </button>

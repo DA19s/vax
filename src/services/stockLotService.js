@@ -23,6 +23,20 @@ const determineStatusFromExpiration = (expirationDate) => {
   return expirationDate <= now ? LOT_STATUS.EXPIRED : LOT_STATUS.VALID;
 };
 
+const ensurePositiveInteger = (value, fieldName) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    const error = new Error(
+      fieldName
+        ? `${fieldName} doit être un entier positif`
+        : "La valeur doit être un entier positif",
+    );
+    error.status = 400;
+    throw error;
+  }
+  return parsed;
+};
+
 const getDbClient = (tx) => tx ?? prisma;
 
 const updateNearestExpiration = async (
@@ -464,6 +478,202 @@ const deleteLotCascade = async (tx, lotId) => {
   return collected.map(({ lot }) => lot.id);
 };
 
+const reserveDoseForHealthCenter = async (
+  tx,
+  { vaccineId, healthCenterId, quantity = 1, appointmentDate = null },
+) => {
+  const db = getDbClient(tx);
+  if (!healthCenterId) {
+    const error = new Error("Centre de santé invalide pour la réservation");
+    error.status = 400;
+    throw error;
+  }
+
+  const qty = ensurePositiveInteger(quantity, "La quantité réservée");
+
+  const stock = await db.stockHEALTHCENTER.findUnique({
+    where: {
+      vaccineId_healthCenterId: {
+        vaccineId,
+        healthCenterId,
+      },
+    },
+    select: {
+      quantity: true,
+    },
+  });
+
+  const available = stock?.quantity ?? 0;
+  if (available < qty) {
+    const error = new Error("Stock insuffisant pour ce vaccin");
+    error.status = 400;
+    throw error;
+  }
+
+  // Si une date de rendez-vous est fournie, on vérifie que le lot ne sera pas expiré
+  const appointmentDateObj = appointmentDate
+    ? new Date(appointmentDate)
+    : null;
+  const appointmentDateOnly = appointmentDateObj
+    ? new Date(
+        appointmentDateObj.getFullYear(),
+        appointmentDateObj.getMonth(),
+        appointmentDateObj.getDate(),
+      )
+    : null;
+
+  // Chercher un lot valide qui ne sera pas expiré au moment du rendez-vous
+  // On utilise 'gt' (greater than) pour s'assurer que le lot est encore valide le jour du rendez-vous
+  const lot = await db.stockLot.findFirst({
+    where: {
+      vaccineId,
+      ownerType: OWNER_TYPES.HEALTHCENTER,
+      ownerId: healthCenterId,
+      status: LOT_STATUS.VALID,
+      remainingQuantity: { gt: 0 },
+      ...(appointmentDateOnly
+        ? {
+            expiration: {
+              gt: appointmentDateOnly,
+            },
+          }
+        : {}),
+    },
+    orderBy: {
+      expiration: "asc",
+    },
+  });
+
+  if (!lot || lot.remainingQuantity < qty) {
+      // Vérifier s'il y a des lots valides mais qui seront expirés avant ou le jour du rendez-vous
+      if (appointmentDateOnly) {
+        const validButExpiredLot = await db.stockLot.findFirst({
+          where: {
+            vaccineId,
+            ownerType: OWNER_TYPES.HEALTHCENTER,
+            ownerId: healthCenterId,
+            status: LOT_STATUS.VALID,
+            remainingQuantity: { gt: 0 },
+            expiration: {
+              lte: appointmentDateOnly,
+            },
+          },
+        });
+
+        if (validButExpiredLot) {
+          const error = new Error(
+            "Le stock restant sera expiré avant le rendez-vous programmé",
+          );
+          error.status = 400;
+          throw error;
+        }
+      }
+
+    const expiredLot = await db.stockLot.findFirst({
+      where: {
+        vaccineId,
+        ownerType: OWNER_TYPES.HEALTHCENTER,
+        ownerId: healthCenterId,
+        status: LOT_STATUS.EXPIRED,
+        remainingQuantity: { gt: 0 },
+      },
+    });
+
+    const error = new Error(
+      expiredLot
+        ? "Tous les lots disponibles pour ce vaccin sont expirés"
+        : "Impossible de réserver ce vaccin car aucun lot disponible",
+    );
+    error.status = 400;
+    throw error;
+  }
+
+  const newQuantity = available - qty;
+  await db.stockHEALTHCENTER.update({
+    where: {
+      vaccineId_healthCenterId: {
+        vaccineId,
+        healthCenterId,
+      },
+    },
+    data: {
+      quantity: newQuantity,
+    },
+  });
+
+  await db.stockLot.update({
+    where: { id: lot.id },
+    data: { remainingQuantity: { decrement: qty } },
+  });
+
+  await updateNearestExpiration(db, {
+    vaccineId,
+    ownerType: OWNER_TYPES.HEALTHCENTER,
+    ownerId: healthCenterId,
+  });
+
+  return {
+    lotId: lot.id,
+    quantity: qty,
+  };
+};
+
+const releaseDoseForHealthCenter = async (
+  tx,
+  { vaccineId, healthCenterId, lotId, quantity = 1 },
+) => {
+  const db = getDbClient(tx);
+  if (!healthCenterId || !lotId) {
+    return null;
+  }
+
+  const qty = ensurePositiveInteger(quantity, "La quantité libérée");
+
+  await db.stockLot.update({
+    where: { id: lotId },
+    data: { remainingQuantity: { increment: qty } },
+  });
+
+  const stock = await db.stockHEALTHCENTER.findUnique({
+    where: {
+      vaccineId_healthCenterId: {
+        vaccineId,
+        healthCenterId,
+      },
+    },
+    select: { quantity: true },
+  });
+
+  if (stock) {
+    const nextQuantity = (stock.quantity ?? 0) + qty;
+    await db.stockHEALTHCENTER.update({
+      where: {
+        vaccineId_healthCenterId: {
+          vaccineId,
+          healthCenterId,
+        },
+      },
+      data: { quantity: nextQuantity },
+    });
+  } else {
+    await db.stockHEALTHCENTER.create({
+      data: {
+        vaccineId,
+        healthCenterId,
+        quantity: qty,
+      },
+    });
+  }
+
+  await updateNearestExpiration(db, {
+    vaccineId,
+    ownerType: OWNER_TYPES.HEALTHCENTER,
+    ownerId: healthCenterId,
+  });
+
+  return true;
+};
+
 module.exports = {
   OWNER_TYPES,
   LOT_STATUS,
@@ -474,5 +684,7 @@ module.exports = {
   deleteLotCascade,
   updateNearestExpiration,
   modifyStockQuantity,
+  reserveDoseForHealthCenter,
+  releaseDoseForHealthCenter,
 };
 

@@ -496,7 +496,39 @@ const listHealthCenterLots = async (req, res, next) => {
       ownerId: healthCenterId,
     });
 
-    res.json(buildLotsResponse(lots));
+    const lotIds = lots.map((lot) => lot.id);
+    const reservations = await prisma.stockReservation.findMany({
+      where: {
+        stockLotId: { in: lotIds },
+      },
+      select: {
+        stockLotId: true,
+        quantity: true,
+      },
+    });
+
+    const reservationsByLotId = reservations.reduce((acc, res) => {
+      if (!acc[res.stockLotId]) {
+        acc[res.stockLotId] = 0;
+      }
+      acc[res.stockLotId] += res.quantity;
+      return acc;
+    }, {});
+
+    const formatted = formatLotRecords(lots).map((lot) => ({
+      ...lot,
+      reservedQuantity: reservationsByLotId[lot.id] ?? 0,
+    }));
+
+    const totalRemaining = formatted.reduce(
+      (sum, lot) => sum + lot.remainingQuantity,
+      0,
+    );
+
+    res.json({
+      lots: formatted,
+      totalRemaining,
+    });
   } catch (error) {
     next(error);
   }
@@ -2285,6 +2317,145 @@ const getHealthCenterStockStats = async (req, res, next) => {
   }
 };
 
+const getHealthCenterReservations = async (req, res, next) => {
+  if (!["NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  try {
+    let healthCenterId = null;
+
+    if (req.user.role === "AGENT") {
+      if (req.user.agentLevel !== "ADMIN") {
+        return res.status(403).json({ message: "Accès refusé" });
+      }
+      healthCenterId = await resolveHealthCenterIdForUser(req.user);
+      if (!healthCenterId) {
+        return res.json({ reservations: [] });
+      }
+    } else if (req.user.role === "DISTRICT") {
+      const { healthCenterId: queryHealthCenterId } = req.query;
+      if (!queryHealthCenterId) {
+        return res.status(400).json({ message: "healthCenterId est requis" });
+      }
+      const districtId = await resolveDistrictIdForUser(req.user);
+      if (!districtId) {
+        return res.status(400).json({ message: "Votre compte n'est pas associé à un district" });
+      }
+      const healthCenter = await prisma.healthCenter.findUnique({
+        where: { id: queryHealthCenterId },
+        select: { districtId: true },
+      });
+      if (!healthCenter || healthCenter.districtId !== districtId) {
+        return res.status(403).json({ message: "Centre de santé hors de votre district" });
+      }
+      healthCenterId = queryHealthCenterId;
+    } else if (req.user.role === "REGIONAL") {
+      const { healthCenterId: queryHealthCenterId } = req.query;
+      if (!queryHealthCenterId) {
+        return res.status(400).json({ message: "healthCenterId est requis" });
+      }
+      const regionId = await resolveRegionIdForUser(req.user);
+      if (!regionId) {
+        return res.status(400).json({ message: "Votre compte n'est pas associé à une région" });
+      }
+      const healthCenter = await prisma.healthCenter.findUnique({
+        where: { id: queryHealthCenterId },
+        include: {
+          district: {
+            include: {
+              commune: {
+                select: { regionId: true },
+              },
+            },
+          },
+        },
+      });
+      if (!healthCenter || healthCenter.district?.commune?.regionId !== regionId) {
+        return res.status(403).json({ message: "Centre de santé hors de votre région" });
+      }
+      healthCenterId = queryHealthCenterId;
+    } else {
+      const { healthCenterId: queryHealthCenterId } = req.query;
+      if (!queryHealthCenterId) {
+        return res.status(400).json({ message: "healthCenterId est requis" });
+      }
+      healthCenterId = queryHealthCenterId;
+    }
+
+    const reservations = await prisma.stockReservation.findMany({
+      where: {
+        stockLot: {
+          ownerType: OWNER_TYPES.HEALTHCENTER,
+          ownerId: healthCenterId,
+        },
+      },
+      include: {
+        stockLot: {
+          include: {
+            vaccine: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+        schedule: {
+          include: {
+            child: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+              },
+            },
+            vaccine: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        schedule: {
+          scheduledFor: "asc",
+        },
+      },
+    });
+
+    const formatted = reservations.map((reservation) => ({
+      id: reservation.id,
+      quantity: reservation.quantity,
+      createdAt: reservation.createdAt,
+      vaccine: {
+        id: reservation.stockLot.vaccine.id,
+        name: reservation.stockLot.vaccine.name,
+      },
+      lot: {
+        id: reservation.stockLot.id,
+        expiration: reservation.stockLot.expiration,
+        status: reservation.stockLot.status,
+      },
+      appointment: {
+        id: reservation.schedule.id,
+        scheduledFor: reservation.schedule.scheduledFor,
+        dose: reservation.schedule.dose ?? 1,
+        child: {
+          id: reservation.schedule.child.id,
+          name: `${reservation.schedule.child.firstName} ${reservation.schedule.child.lastName}`,
+        },
+      },
+    }));
+
+    res.json({ reservations: formatted });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createStockNATIONAL,
   createStockREGIONAL,
@@ -2319,4 +2490,5 @@ module.exports = {
   getDistrictStockStats,
   getHealthCenterStockStats,
   deleteLot,
+  getHealthCenterReservations,
 };

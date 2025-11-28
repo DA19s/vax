@@ -192,18 +192,108 @@ const ensureNationalBuckets = async () => {
 
 const login = async (req, res, next) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, role: requestedRole } = req.body ?? {};
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    if (!email?.trim() || !password) {
+      return res.status(400).json({ message: "Email et mot de passe requis." });
+    }
 
-    if (!user || !user.isActive) {
+    const includeRelations = {
+      region: { select: { id: true, name: true } },
+      district: {
+        select: {
+          id: true,
+          name: true,
+          commune: {
+            select: {
+              id: true,
+              name: true,
+              regionId: true,
+            },
+          },
+        },
+      },
+      healthCenter: {
+        select: {
+          id: true,
+          name: true,
+          district: {
+            select: {
+              id: true,
+              name: true,
+              commune: {
+                select: {
+                  id: true,
+                  name: true,
+                  regionId: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    let candidateUsers = [];
+
+    if (requestedRole) {
+      const user = await prisma.user.findUnique({
+        where: {
+          email_role: {
+            email,
+            role: requestedRole,
+          },
+        },
+        include: includeRelations,
+      });
+      candidateUsers = user ? [user] : [];
+    } else {
+      candidateUsers = await prisma.user.findMany({
+        where: { email },
+        include: includeRelations,
+      });
+    }
+
+    if (!candidateUsers.length) {
       return res.status(401).json({ message: "Identifiants invalides." });
     }
 
-    const isValid = await bcrypt.compare(password, user.password);
-    if (!isValid) {
+    const matchingUsers = [];
+    for (const user of candidateUsers) {
+      if (!user.isActive) {
+        continue;
+      }
+
+      const isValid = await bcrypt.compare(password, user.password);
+      if (isValid) {
+        matchingUsers.push(user);
+      }
+    }
+
+    if (!matchingUsers.length) {
       return res.status(401).json({ message: "Identifiants invalides." });
     }
+
+    if (matchingUsers.length > 1 && !requestedRole) {
+      return res.json({
+        requiresRoleSelection: true,
+        roles: matchingUsers.map((user) => ({
+          role: user.role,
+          agentLevel: user.agentLevel,
+          region: user.region
+            ? { id: user.region.id, name: user.region.name }
+            : null,
+          district: user.district
+            ? { id: user.district.id, name: user.district.name }
+            : null,
+          healthCenter: user.healthCenter
+            ? { id: user.healthCenter.id, name: user.healthCenter.name }
+            : null,
+        })),
+      });
+    }
+
+    const user = matchingUsers[0];
 
     let expiredLotsSummary = [];
 

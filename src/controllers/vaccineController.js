@@ -1,6 +1,11 @@
 const PDFDocument = require("pdfkit");
 const prisma = require("../config/prismaClient");
 const { get } = require("../routes");
+const {
+  reserveDoseForHealthCenter,
+  releaseDoseForHealthCenter,
+  OWNER_TYPES,
+} = require("../services/stockLotService");
 
 const createVaccine = async (req, res, next) => {
 
@@ -19,6 +24,9 @@ const createVaccine = async (req, res, next) => {
 
     res.status(201).json(newVaccine);
   } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
     next(error);
   }
 };
@@ -393,6 +401,53 @@ const downloadVaccineCalendarPdf = async (req, res, next) => {
   }
 };
 
+const releaseReservationForSchedule = async (
+  tx,
+  scheduleId,
+  { consume = false } = {},
+) => {
+  if (!scheduleId) {
+    return null;
+  }
+
+  const reservation = await tx.stockReservation.findUnique({
+    where: { scheduleId },
+    include: {
+      stockLot: {
+        select: {
+          id: true,
+          vaccineId: true,
+          ownerType: true,
+          ownerId: true,
+        },
+      },
+    },
+  });
+
+  if (!reservation) {
+    return null;
+  }
+
+  if (!consume) {
+    const lotOwnerType = reservation.stockLot.ownerType;
+    const lotOwnerId = reservation.stockLot.ownerId;
+    if (lotOwnerType === OWNER_TYPES.HEALTHCENTER && lotOwnerId) {
+      await releaseDoseForHealthCenter(tx, {
+        vaccineId: reservation.stockLot.vaccineId,
+        healthCenterId: lotOwnerId,
+        lotId: reservation.stockLot.id,
+        quantity: reservation.quantity,
+      });
+    }
+  }
+
+  await tx.stockReservation.delete({
+    where: { id: reservation.id },
+  });
+
+  return reservation;
+};
+
 const updateVaccine = async (req, res, next) => {
   if (req.user.role !== "NATIONAL") {
     return res.status(403).json({ message: "Accès refusé" });
@@ -440,9 +495,8 @@ const deleteVaccine = async (req, res, next) => {
 
 
 const ScheduleVaccine = async (req, res, next) => {
-
-  if (req.user.role !== "AGENT") {
-        return res.status(403).json({ message: "Accès refusé" });
+  if (req.user.role !== "AGENT" || !req.user.healthCenterId) {
+    return res.status(403).json({ message: "Accès refusé" });
   }
 
   try {
@@ -467,6 +521,19 @@ const ScheduleVaccine = async (req, res, next) => {
     }
 
     const result = await prisma.$transaction(async (tx) => {
+      const child = await tx.children.findUnique({
+        where: { id: childId },
+        select: { healthCenterId: true },
+      });
+
+      if (!child) {
+        throw Object.assign(new Error("Enfant introuvable"), { status: 404 });
+      }
+
+      if (child.healthCenterId !== req.user.healthCenterId) {
+        throw Object.assign(new Error("Accès refusé"), { status: 403 });
+      }
+
       const vaccine = await tx.vaccine.findUnique({
         where: { id: vaccineId },
         select: { dosesRequired: true },
@@ -502,6 +569,13 @@ const ScheduleVaccine = async (req, res, next) => {
         );
       }
 
+      const reservation = await reserveDoseForHealthCenter(tx, {
+        vaccineId,
+        healthCenterId: child.healthCenterId,
+        quantity: 1,
+        appointmentDate: scheduleDate,
+      });
+
       const created = await tx.childVaccineScheduled.create({
         data: {
           childId,
@@ -513,6 +587,14 @@ const ScheduleVaccine = async (req, res, next) => {
         },
         include: {
           vaccine: { select: { id: true, name: true, dosesRequired: true } },
+        },
+      });
+
+      await tx.stockReservation.create({
+        data: {
+          scheduleId: created.id,
+          stockLotId: reservation.lotId,
+          quantity: reservation.quantity,
         },
       });
 
@@ -555,8 +637,10 @@ const ScheduleVaccine = async (req, res, next) => {
     });
 
     res.status(201).json(result);
-
   } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
     next(error);
   }
 };
@@ -732,65 +816,95 @@ const completeVaccine = async (req, res, next) => {
   }
 
   try {
-    const scheduled = await prisma.childVaccineScheduled.findUnique({
-      where: { id: req.params.id },
-      select: {
-        childId: true,
-        vaccineCalendarId: true,
-        vaccineId: true,
-        plannerId: true,
-        dose: true,
-        child: { select: { healthCenterId: true } },
-      },
+    const completed = await prisma.$transaction(async (tx) => {
+      const scheduled = await tx.childVaccineScheduled.findUnique({
+        where: { id: req.params.id },
+        select: {
+          childId: true,
+          vaccineCalendarId: true,
+          vaccineId: true,
+          plannerId: true,
+          dose: true,
+          child: { select: { healthCenterId: true } },
+        },
+      });
+
+      if (!scheduled) {
+        throw Object.assign(new Error("Rendez-vous introuvable"), {
+          status: 404,
+        });
+      }
+
+      if (scheduled.child?.healthCenterId !== req.user.healthCenterId) {
+        throw Object.assign(new Error("Accès refusé"), { status: 403 });
+      }
+
+      const newVaccineCompleted = await tx.childVaccineCompleted.create({
+        data: {
+          childId: scheduled.childId,
+          vaccineCalendarId: scheduled.vaccineCalendarId,
+          vaccineId: scheduled.vaccineId,
+          notes: req.body.notes,
+          administeredById: scheduled.plannerId,
+          dose: scheduled.dose ?? 1,
+        },
+      });
+
+      await releaseReservationForSchedule(tx, req.params.id, { consume: true });
+
+      await tx.childVaccineScheduled.delete({ where: { id: req.params.id } });
+
+      const dose = scheduled.dose ?? 1;
+
+      await tx.childVaccineDue.deleteMany({
+        where: {
+          childId: scheduled.childId,
+          vaccineId: scheduled.vaccineId,
+          dose,
+        },
+      });
+
+      // Supprimer les entrées overdue pour cette dose spécifique
+      await tx.childVaccineOverdue.deleteMany({
+        where: {
+          childId: scheduled.childId,
+          vaccineId: scheduled.vaccineId,
+          dose,
+        },
+      });
+
+      // Supprimer les entrées late pour cette dose spécifique
+      // Si vaccineCalendarId est null, supprimer toutes les entrées pour ce vaccin et cette dose
+      // Sinon, supprimer uniquement celles avec le même vaccineCalendarId
+      if (scheduled.vaccineCalendarId) {
+        await tx.childVaccineLate.deleteMany({
+          where: {
+            childId: scheduled.childId,
+            vaccineId: scheduled.vaccineId,
+            dose,
+            vaccineCalendarId: scheduled.vaccineCalendarId,
+          },
+        });
+      } else {
+        // Si vaccineCalendarId est null, supprimer toutes les entrées late pour ce vaccin et cette dose
+        // car on ne peut pas faire correspondre un calendarId spécifique
+        await tx.childVaccineLate.deleteMany({
+          where: {
+            childId: scheduled.childId,
+            vaccineId: scheduled.vaccineId,
+            dose,
+          },
+        });
+      }
+
+      return newVaccineCompleted;
     });
 
-    if (!scheduled) {
-      return res.status(404).json({ message: "Rendez-vous introuvable" });
-    }
-
-    if (scheduled.child?.healthCenterId !== req.user.healthCenterId) {
-      return res.status(403).json({ message: "Accès refusé" });
-    }
-
-    const newVaccineCompleted = await prisma.childVaccineCompleted.create({
-      data: {
-        childId: scheduled.childId,
-        vaccineCalendarId: scheduled.vaccineCalendarId,
-        vaccineId: scheduled.vaccineId,
-        notes: req.body.notes,
-        administeredById: scheduled.plannerId,
-        dose: scheduled.dose ?? 1,
-      },
-    });
-
-    await prisma.childVaccineScheduled.delete({ where: { id: req.params.id } });
-
-    await prisma.childVaccineDue.deleteMany({
-      where: {
-        childId: scheduled.childId,
-        vaccineId: scheduled.vaccineId,
-        dose: scheduled.dose ?? 1,
-      },
-    });
-
-    await prisma.childVaccineOverdue.deleteMany({
-      where: {
-        childId: scheduled.childId,
-        vaccineId: scheduled.vaccineId,
-        dose: scheduled.dose ?? 1,
-      },
-    });
-
-    await prisma.childVaccineLate.deleteMany({
-      where: {
-        childId: scheduled.childId,
-        vaccineId: scheduled.vaccineId,
-        dose: scheduled.dose ?? 1,
-      },
-    });
-
-    return res.status(201).json(newVaccineCompleted);
+    return res.status(201).json(completed);
   } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
     next(error);
   }
 };
@@ -820,6 +934,28 @@ const moveScheduledToOverdue = async (tx, scheduled) => {
       dose,
     },
   });
+
+  // Supprimer les entrées correspondantes dans late et due pour éviter les doublons
+  await tx.childVaccineLate.deleteMany({
+    where: {
+      childId: scheduled.childId,
+      vaccineId: scheduled.vaccineId,
+      dose,
+    },
+  });
+
+  await tx.childVaccineDue.deleteMany({
+    where: {
+      childId: scheduled.childId,
+      vaccineId: scheduled.vaccineId,
+      dose,
+      ...(scheduled.vaccineCalendarId
+        ? { vaccineCalendarId: scheduled.vaccineCalendarId }
+        : { vaccineCalendarId: null }),
+    },
+  });
+
+  await releaseReservationForSchedule(tx, scheduled.id, { consume: false });
 
   await tx.childVaccineScheduled.delete({
     where: { id: scheduled.id },
@@ -934,8 +1070,6 @@ const updateScheduledVaccine = async (req, res, next) => {
       }
 
       if (scheduled.vaccineId !== vaccineId) {
-        await tx.childVaccineScheduled.delete({ where: { id } });
-
         const vaccine = await tx.vaccine.findUnique({
           where: { id: vaccineId },
           select: { dosesRequired: true },
@@ -971,6 +1105,15 @@ const updateScheduledVaccine = async (req, res, next) => {
           vaccineCalendarId !== undefined
             ? vaccineCalendarId
             : scheduled.vaccineCalendarId;
+        await releaseReservationForSchedule(tx, id, { consume: false });
+        await tx.childVaccineScheduled.delete({ where: { id } });
+
+        const reservation = await reserveDoseForHealthCenter(tx, {
+          vaccineId,
+          healthCenterId: scheduled.child.healthCenterId,
+          quantity: 1,
+          appointmentDate: scheduleDate,
+        });
 
         const recreated = await tx.childVaccineScheduled.create({
           data: {
@@ -983,6 +1126,14 @@ const updateScheduledVaccine = async (req, res, next) => {
           },
           include: {
             vaccine: { select: { id: true, name: true, dosesRequired: true } },
+          },
+        });
+
+        await tx.stockReservation.create({
+          data: {
+            scheduleId: recreated.id,
+            stockLotId: reservation.lotId,
+            quantity: reservation.quantity,
           },
         });
 
@@ -1059,26 +1210,35 @@ const cancelScheduledVaccine = async (req, res, next) => {
 
   try {
     const { id } = req.params;
-    const scheduled = await prisma.childVaccineScheduled.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        child: { select: { healthCenterId: true } },
-      },
+    await prisma.$transaction(async (tx) => {
+      const scheduled = await tx.childVaccineScheduled.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          child: { select: { healthCenterId: true } },
+        },
+      });
+
+      if (!scheduled) {
+        throw Object.assign(new Error("Rendez-vous introuvable"), {
+          status: 404,
+        });
+      }
+
+      if (scheduled.child?.healthCenterId !== req.user.healthCenterId) {
+        throw Object.assign(new Error("Accès refusé"), { status: 403 });
+      }
+
+      await releaseReservationForSchedule(tx, scheduled.id, { consume: false });
+
+      await tx.childVaccineScheduled.delete({ where: { id } });
     });
-
-    if (!scheduled) {
-      return res.status(404).json({ message: "Rendez-vous introuvable" });
-    }
-
-    if (scheduled.child?.healthCenterId !== req.user.healthCenterId) {
-      return res.status(403).json({ message: "Accès refusé" });
-    }
-
-    await prisma.childVaccineScheduled.delete({ where: { id } });
 
     res.status(204).send();
   } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
     next(error);
   }
 };

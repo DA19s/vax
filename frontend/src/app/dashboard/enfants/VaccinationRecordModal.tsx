@@ -147,21 +147,22 @@ function VaccinationRecordModal({ isOpen, onClose, detail }: Props) {
                 ) : (
                   Object.entries(
                     [...vaccinations.late, ...vaccinations.overdue].reduce<
-                      Record<string, { entry: typeof vaccinations.late[number]; doses: number[] }>
+                      Record<string, { entry: typeof vaccinations.late[number]; doses: Set<number> }>
                     >((acc, item) => {
                       const key = `${item.vaccineId}-${item.calendarId ?? "none"}`;
                       if (!acc[key]) {
-                        acc[key] = { entry: item, doses: [] };
+                        acc[key] = { entry: item, doses: new Set<number>() };
                       }
-                      acc[key].doses.push(item.dose);
+                      acc[key].doses.add(item.dose);
                       return acc;
                     }, {}),
                   ).map(([key, group]) => {
                     const { entry, doses } = group;
+                    const uniqueDoses = Array.from(doses).sort((a, b) => a - b);
                     const doseLabel =
-                      doses.length === 1
-                        ? `Dose ${doses[0]}`
-                        : `Doses ${doses.sort((a, b) => a - b).join(", ")}`;
+                      uniqueDoses.length === 1
+                        ? `Dose ${uniqueDoses[0]}`
+                        : `Doses ${uniqueDoses.join(", ")}`;
                     return (
                       <div key={key} className="rounded-xl border border-red-100 bg-red-50 p-3">
                         <p className="font-semibold text-red-900">{entry.vaccineName}</p>

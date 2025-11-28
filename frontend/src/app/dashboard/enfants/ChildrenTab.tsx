@@ -8,9 +8,12 @@ import {
   CheckCircle,
   Filter,
   MapPin,
+  Plus,
   Search,
   Syringe,
+  Trash2,
   User,
+  X,
 } from "lucide-react";
 import ChildDetailsModal from "./ChildDetailsModal";
 import { Child } from "./types";
@@ -99,6 +102,25 @@ export default function ChildrenTab({
   const [page, setPage] = useState(1);
   const pageSize = 10;
 
+  const isAgent = role?.toUpperCase() === "AGENT";
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [deletingChildId, setDeletingChildId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [formData, setFormData] = useState({
+    firstName: "",
+    lastName: "",
+    birthDate: "",
+    birthPlace: "",
+    address: "",
+    gender: "M" as "M" | "F",
+    emailParent: "",
+    phoneParent: "",
+    fatherName: "",
+    motherName: "",
+  });
+
   const normalizedRole = role?.toUpperCase() ?? "NATIONAL";
   const showRegionFilter = normalizedRole === "NATIONAL" || normalizedRole === "REGIONAL";
   const showDistrictFilter =
@@ -107,6 +129,95 @@ export default function ChildrenTab({
     normalizedRole === "NATIONAL" ||
     normalizedRole === "REGIONAL" ||
     normalizedRole === "DISTRICT";
+
+  const handleCreateChild = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token) {
+      setCreateError("Non authentifié");
+      return;
+    }
+
+    setCreating(true);
+    setCreateError(null);
+
+    try {
+      const response = await fetch(`${apiBase}/api/children`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(formData),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.message ?? `Erreur ${response.status}`);
+      }
+
+      setCreateModalOpen(false);
+      setFormData({
+        firstName: "",
+        lastName: "",
+        birthDate: "",
+        birthPlace: "",
+        address: "",
+        gender: "M",
+        emailParent: "",
+        phoneParent: "",
+        fatherName: "",
+        motherName: "",
+      });
+      if (onRefresh) {
+        onRefresh();
+      }
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : "Erreur lors de la création");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleDeleteChild = async (childId: string, childName: string) => {
+    if (!token) {
+      setDeleteError("Non authentifié");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Êtes-vous sûr de vouloir supprimer l'enfant "${childName}" ? Cette action est irréversible et supprimera toutes les données associées (vaccinations, rendez-vous, etc.).`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingChildId(childId);
+    setDeleteError(null);
+
+    try {
+      const response = await fetch(`${apiBase}/api/children/${childId}`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.message ?? `Erreur ${response.status}`);
+      }
+
+      if (onRefresh) {
+        onRefresh();
+      }
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Erreur lors de la suppression");
+    } finally {
+      setDeletingChildId(null);
+    }
+  };
 
   const derivedRegions = useMemo(() => {
     const values = new Set<string>();
@@ -290,23 +401,35 @@ export default function ChildrenTab({
 
   return (
     <div className="space-y-6 p-6">
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        <div className="rounded-2xl border border-blue-200 bg-blue-50/80 p-4">
-          <p className="text-sm font-medium text-blue-700">Total enfants</p>
-          <p className="text-3xl font-semibold text-blue-900">{stats.total}</p>
+      <div className="flex items-center justify-between">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-4 flex-1">
+          <div className="rounded-2xl border border-blue-200 bg-blue-50/80 p-4">
+            <p className="text-sm font-medium text-blue-700">Total enfants</p>
+            <p className="text-3xl font-semibold text-blue-900">{stats.total}</p>
+          </div>
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4">
+            <p className="text-sm font-medium text-emerald-700">À jour</p>
+            <p className="text-3xl font-semibold text-emerald-900">{stats.upToDate}</p>
+          </div>
+          <div className="rounded-2xl border border-amber-200 bg-amber-50/80 p-4">
+            <p className="text-sm font-medium text-amber-700">En retard</p>
+            <p className="text-3xl font-semibold text-amber-900">{stats.late}</p>
+          </div>
+          <div className="rounded-2xl border border-purple-200 bg-purple-50/80 p-4">
+            <p className="text-sm font-medium text-purple-700">RDV programmés</p>
+            <p className="text-3xl font-semibold text-purple-900">{stats.scheduled}</p>
+          </div>
         </div>
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4">
-          <p className="text-sm font-medium text-emerald-700">À jour</p>
-          <p className="text-3xl font-semibold text-emerald-900">{stats.upToDate}</p>
-        </div>
-        <div className="rounded-2xl border border-amber-200 bg-amber-50/80 p-4">
-          <p className="text-sm font-medium text-amber-700">En retard</p>
-          <p className="text-3xl font-semibold text-amber-900">{stats.late}</p>
-        </div>
-        <div className="rounded-2xl border border-purple-200 bg-purple-50/80 p-4">
-          <p className="text-sm font-medium text-purple-700">RDV programmés</p>
-          <p className="text-3xl font-semibold text-purple-900">{stats.scheduled}</p>
-        </div>
+        {isAgent && (
+          <button
+            type="button"
+            onClick={() => setCreateModalOpen(true)}
+            className="ml-4 flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
+          >
+            <Plus className="h-5 w-5" />
+            Ajouter un enfant
+          </button>
+        )}
       </div>
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
         <div className="mb-4 flex items-center gap-2">
@@ -433,6 +556,11 @@ export default function ChildrenTab({
         </div>
       ) : (
         <>
+          {deleteError && (
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              {deleteError}
+            </div>
+          )}
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
             <div className="overflow-x-auto">
               <table className="min-w-full">
@@ -443,6 +571,7 @@ export default function ChildrenTab({
                     <th className="px-6 py-4">{locationColumnLabel}</th>
                     <th className="px-6 py-4">Centre</th>
                     <th className="px-6 py-4">Statut</th>
+                    {isAgent && <th className="px-6 py-4">Actions</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
@@ -482,6 +611,22 @@ export default function ChildrenTab({
                             {badge}
                           </span>
                         </td>
+                        {isAgent && (
+                          <td className="px-6 py-4">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteChild(child.id, child.name);
+                              }}
+                              disabled={deletingChildId === child.id}
+                              className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              {deletingChildId === child.id ? "Suppression..." : "Supprimer"}
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -527,6 +672,213 @@ export default function ChildrenTab({
           onRefresh={onRefresh}
           canSchedule={normalizedRole === "AGENT"}
         />
+      )}
+
+      {createModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+              <div className="flex items-center gap-2 text-lg font-semibold text-slate-800">
+                <Baby className="h-5 w-5 text-blue-600" />
+                Ajouter un enfant
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setCreateModalOpen(false);
+                  setCreateError(null);
+                  setFormData({
+                    firstName: "",
+                    lastName: "",
+                    birthDate: "",
+                    birthPlace: "",
+                    address: "",
+                    gender: "M",
+                    emailParent: "",
+                    phoneParent: "",
+                    fatherName: "",
+                    motherName: "",
+                  });
+                }}
+                className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateChild} className="space-y-4 px-6 py-6">
+              {createError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  {createError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    Prénom <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.firstName}
+                    onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
+                    required
+                    className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    Nom <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.lastName}
+                    onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
+                    required
+                    className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    Date de naissance <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.birthDate}
+                    onChange={(e) => setFormData({ ...formData, birthDate: e.target.value })}
+                    required
+                    max={new Date().toISOString().split("T")[0]}
+                    className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    Lieu de naissance <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.birthPlace}
+                    onChange={(e) => setFormData({ ...formData, birthPlace: e.target.value })}
+                    required
+                    className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    Sexe <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={formData.gender}
+                    onChange={(e) => setFormData({ ...formData, gender: e.target.value as "M" | "F" })}
+                    required
+                    className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  >
+                    <option value="M">Masculin</option>
+                    <option value="F">Féminin</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    Adresse <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.address}
+                    onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                    required
+                    className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    Nom du père
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.fatherName}
+                    onChange={(e) => setFormData({ ...formData, fatherName: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    Nom de la mère
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.motherName}
+                    onChange={(e) => setFormData({ ...formData, motherName: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    Email du parent
+                  </label>
+                  <input
+                    type="email"
+                    value={formData.emailParent}
+                    onChange={(e) => setFormData({ ...formData, emailParent: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    Téléphone du parent <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="tel"
+                    value={formData.phoneParent}
+                    onChange={(e) => setFormData({ ...formData, phoneParent: e.target.value })}
+                    required
+                    className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreateModalOpen(false);
+                    setCreateError(null);
+                    setFormData({
+                      firstName: "",
+                      lastName: "",
+                      birthDate: "",
+                      birthPlace: "",
+                      address: "",
+                      gender: "M",
+                      emailParent: "",
+                      phoneParent: "",
+                      fatherName: "",
+                      motherName: "",
+                    });
+                  }}
+                  className="rounded-xl border border-slate-300 px-6 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={creating}
+                  className="rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {creating ? "Création..." : "Créer l'enfant"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -5,6 +5,25 @@ const { sendInvitationEmail, sendTwoFactorCode } = require("../services/emailSer
 
 const SALT_ROUNDS = 10;
 
+const respondIfUniqueConstraint = (error, res, defaultMessage) => {
+  if (error?.code !== "P2002") {
+    return false;
+  }
+
+  const fieldMessageMap = {
+    User_email_role_key: "Cet email est déjà utilisé pour ce rôle.",
+    User_phone_role_key: "Ce numéro de téléphone est déjà utilisé pour ce rôle.",
+  };
+
+  const metaField =
+    error.meta?.constraint ?? error.meta?.target ?? error.meta?.field_name;
+
+  const message = fieldMessageMap[metaField] ?? defaultMessage ?? "Cette valeur est déjà utilisée.";
+
+  res.status(409).json({ message });
+  return true;
+};
+
 /**
  * Détermine quel rôle (et agentLevel) le créateur est autorisé à produire.
  */
@@ -109,6 +128,9 @@ const createUser = async (req, res, next) => {
       email: user.email,
     });
   } catch (error) {
+    if (respondIfUniqueConstraint(error, res, "Cette valeur est déjà utilisée.")) {
+      return;
+    }
     next(error);
   }
 };
@@ -164,6 +186,9 @@ const createRegional = async (req, res, next) => {
       email: newRegional.email,
     });*/
   } catch (error) {
+    if (respondIfUniqueConstraint(error, res, "Cette valeur est déjà utilisée.")) {
+      return;
+    }
     next(error);
   }
 };
@@ -232,6 +257,9 @@ const createDistricit = async (req, res, next) => {
       user: newDistrictUser,
     });
   } catch (error) {
+    if (respondIfUniqueConstraint(error, res, "Cette valeur est déjà utilisée.")) {
+      return;
+    }
     next(error);
   }
 };
@@ -293,6 +321,9 @@ const createAgentAdmin = async (req, res, next) => {
       user: newAgentAdmin,
     });
   } catch (error) {
+    if (respondIfUniqueConstraint(error, res, "Cette valeur est déjà utilisée.")) {
+      return;
+    }
     next(error);
   }
 };

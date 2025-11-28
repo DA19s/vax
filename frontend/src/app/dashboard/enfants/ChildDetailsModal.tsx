@@ -238,6 +238,7 @@ export default function ChildDetailsModal({
 
   const handleOpenSchedule = () => {
     if (scheduleOptions.length === 0) {
+      setScheduleError("Aucun vaccin disponible pour la programmation. Vérifiez que l'enfant a des vaccins à faire ou en retard.");
       return;
     }
     if (!selectedVaccineId) {
@@ -301,7 +302,14 @@ export default function ChildDetailsModal({
 
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
-        throw new Error(payload?.message ?? "Impossible de programmer le rendez-vous.");
+        const errorMessage = payload?.message ?? `Erreur ${response.status}: Impossible de programmer le rendez-vous.`;
+        console.error("Erreur programmation vaccin:", {
+          status: response.status,
+          payload,
+          childId: child.id,
+          vaccineId: selectedOption.vaccineId,
+        });
+        throw new Error(errorMessage);
       }
 
       await fetchDetail();
@@ -443,15 +451,29 @@ export default function ChildDetailsModal({
                       ) : (
                         <div className="space-y-2">
                           <p className="text-sm text-slate-500">Non planifié</p>
-                          {canSchedule && scheduleOptions.length > 0 && (
-                            <button
-                              type="button"
-                              onClick={handleOpenSchedule}
-                              className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-semibold text-amber-700 transition hover:bg-amber-100"
-                            >
-                              <CalendarPlus className="h-4 w-4" />
-                              Programmer un rendez-vous
-                            </button>
+                          {canSchedule && (
+                            <>
+                              {scheduleOptions.length > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={handleOpenSchedule}
+                                  className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-semibold text-amber-700 transition hover:bg-amber-100"
+                                >
+                                  <CalendarPlus className="h-4 w-4" />
+                                  Programmer un rendez-vous
+                                </button>
+                              ) : (
+                                <p className="text-xs text-slate-400">
+                                  Aucun vaccin à programmer pour le moment
+                                </p>
+                              )}
+                              {scheduleError && scheduleOptions.length === 0 && (
+                                <div className="mt-2 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+                                  <AlertCircle className="h-4 w-4" />
+                                  {scheduleError}
+                                </div>
+                              )}
+                            </>
                           )}
                         </div>
                       )}
@@ -491,7 +513,7 @@ export default function ChildDetailsModal({
         />
       )}
 
-      {showScheduleModal && sortedDueEntries.length > 0 && (
+      {showScheduleModal && scheduleOptions.length > 0 && (
         <div className="fixed inset-0 z-[55] flex items-center justify-center bg-slate-900/70 px-4">
           <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">

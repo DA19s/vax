@@ -133,10 +133,10 @@ export default function Sidebar({ active = "/dashboard" }: SidebarProps) {
               href={item.href}
               className={`flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium transition ${
                 isActive
-                  ? "text-white shadow-lg shadow-emerald-500/20"
+                  ? "bg-emerald-600 text-white shadow-lg shadow-emerald-500/30"
                   : item.disabled
                     ? "cursor-not-allowed text-slate-500"
-                    : "hover:bg-white/5 hover:text-white"
+                    : "text-slate-300 hover:bg-white/10 hover:text-white"
               }`}
               aria-disabled={item.disabled}
               onClick={(event) => {

@@ -7,6 +7,15 @@ let server;
 
 const startServer = async () => {
   try {
+    // Créer le dossier uploads s'il n'existe pas
+    const fs = require("fs");
+    const path = require("path");
+    const uploadDir = path.join(__dirname, "../uploads/campaigns");
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+      console.log("Uploads directory created");
+    }
+
     await prisma.$connect();
     console.log("Database connected");
 
