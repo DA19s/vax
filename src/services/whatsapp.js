@@ -97,6 +97,23 @@ _VacxCare - Protéger la santé de nos enfants_`;
   return sendWhatsApp(to, message);
 };
 
+const sendVerificationCodeWhatsApp = async (to, parentName, verificationCode) => {
+  const message = `🔐 *Code de vérification VacxCare*
+
+Bonjour ${parentName},
+
+Votre code de vérification est : *${verificationCode}*
+
+Ce code expire dans 10 minutes.
+
+Utilisez ce code pour finaliser votre inscription dans l'application VacxCare.
+
+💬 Besoin d'aide ? Répondez à ce message.
+_VacxCare - Protéger la santé de nos enfants_`;
+
+  return sendWhatsApp(to, message);
+};
+
 const sendVaccinationReminder = async (
   to,
   parentName,
@@ -120,5 +137,6 @@ VaxCare`;
 module.exports = {
   sendWhatsApp,
   sendAccessCodeWhatsApp,
+  sendVerificationCodeWhatsApp,
   sendVaccinationReminder,
 };

@@ -18,6 +18,7 @@ router.use("/children", require("./children"));
 router.use("/systemSettings", require("./systemSettings"));
 router.use("/dashboard", require("./dashboard"));
 router.use("/campaigns", require("./campaign"));
+router.use("/mobile", require("./mobile"));
 
 module.exports = router;
 

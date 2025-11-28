@@ -1,0 +1,49 @@
+name: vacxcare_mobile
+description: "Application mobile VacxCare pour le suivi vaccinal des enfants."
+publish_to: 'none' # Ne pas publier sur pub.dev
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Icônes iOS (par défaut)
+  cupertino_icons: ^1.0.8
+
+  # Carousel & UI
+  carousel_slider: ^5.0.0
+  smooth_page_indicator: ^1.2.1
+  google_fonts: ^6.1.0
+
+  # Gestion d'état et API
+  provider: ^6.1.2
+  http: ^1.2.0
+  intl: ^0.20.2
+  table_calendar: ^3.2.0
+  shared_preferences: ^2.5.3
+  flutter_secure_storage: ^9.2.4
+  socket_io_client: ^3.1.2
+  url_launcher: ^6.3.0
+  cached_network_image: ^3.3.0
+  video_player: ^2.8.0
+  youtube_player_flutter: ^9.0.0
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  connectivity_plus: ^6.0.3
+  path_provider: ^2.1.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/icons/

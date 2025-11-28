@@ -257,7 +257,7 @@ model Children {
   birthPlace              String
   gender                  Gender
   address                 String
-  healthCenterId          String          @unique
+  healthCenterId          String
   healthCenter            HealthCenter    @relation(fields: [healthCenterId], references: [id])
   status                  Status
   emailParent             String
