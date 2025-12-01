@@ -31,7 +31,6 @@ type NavItem = {
 const navItems: NavItem[] = [
   { label: "Tableau de bord", href: "/dashboard", icon: LayoutDashboard },
   { label: "Régions", href: "/dashboard/regions", icon: MapPinned },
-  { label: "Communes", href: "/dashboard/communes", icon: MapPinned },
   { label: "Régionaux", href: "/dashboard/regionaux", icon: Users },
   { label: "Campagnes", href: "/dashboard/campagnes", icon: Calendar },
   { label: "Conseils", href: "/dashboard/conseils", icon: Lightbulb },

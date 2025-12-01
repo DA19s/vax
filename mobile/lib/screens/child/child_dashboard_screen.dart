@@ -18,6 +18,7 @@ import '../stats/health_stats_screen.dart';
 import '../conseils/health_tips_screen.dart';
 import '../campagnes/campagne_screen.dart';
 import '../notifications/notifications_screen.dart';
+import '../profil/profile_screen.dart';
 
 class ChildDashboardScreen extends StatefulWidget {
   final Map<String, dynamic>? userData;
@@ -43,6 +44,7 @@ class _ChildDashboardScreenState extends State<ChildDashboardScreen> {
   int _notificationCount = 0;
   IO.Socket? _socket;
   List<Map<String, dynamic>> _upcomingAppointments = [];
+  int _currentIndex = 0; // 0: Accueil, 1: Vaccins, 2: Calendrier, 3: Profil
 
   @override
   void initState() {
@@ -219,25 +221,58 @@ class _ChildDashboardScreenState extends State<ChildDashboardScreen> {
       return const SizedBox.shrink();
     }
 
-    final child = _dashboardData!["child"] as Map<String, dynamic>;
-    final stats = _dashboardData!["stats"] as Map<String, dynamic>;
-
-    final parentName = child["parentName"] ?? "";
-
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
-      body: CustomScrollView(
-        slivers: [
-          // Header avec "Bonjour" et nom du parent
-          SliverAppBar(
-            expandedHeight: 100,
-            floating: false,
-            pinned: true,
-            backgroundColor: const Color(0xFF0A1A33),
-            flexibleSpace: FlexibleSpaceBar(
-              background: Stack(
-                fit: StackFit.expand,
-                children: [
+      body: _buildBody(),
+      bottomNavigationBar: _buildBottomNav(),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_dashboardData == null) {
+      return const SizedBox.shrink();
+    }
+
+    switch (_currentIndex) {
+      case 0:
+        return _buildHomeTab();
+      case 1:
+        return VaccinationListScreen(
+          childId: widget.childId,
+          initialFilter: null,
+        );
+      case 2:
+        return CalendrierVaccinalScreen(
+          child: _dashboardData!["child"] as Map<String, dynamic>,
+        );
+      case 3:
+        return ProfileScreen(child: _dashboardData!["child"] as Map<String, dynamic>);
+      default:
+        return _buildHomeTab();
+    }
+  }
+
+  Widget _buildHomeTab() {
+    if (_dashboardData == null) {
+      return const SizedBox.shrink();
+    }
+
+    final child = _dashboardData!["child"] as Map<String, dynamic>;
+    final stats = _dashboardData!["stats"] as Map<String, dynamic>;
+    final parentName = child["parentName"] ?? "";
+
+    return CustomScrollView(
+      slivers: [
+        // Header avec "Bonjour" et nom du parent
+        SliverAppBar(
+          expandedHeight: 100,
+          floating: false,
+          pinned: true,
+          backgroundColor: const Color(0xFF0A1A33),
+          flexibleSpace: FlexibleSpaceBar(
+            background: Stack(
+              fit: StackFit.expand,
+              children: [
                   // Image en arrière-plan
                   Image.asset(
                     'assets/images/onboarding1.png',
@@ -263,301 +298,283 @@ class _ChildDashboardScreenState extends State<ChildDashboardScreen> {
                   ),
                   // Contenu du header
                   SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.all(AppSpacing.lg),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        Row(
-                          children: [
-                            // Avatar
-                            Container(
-                              width: 48,
-                              height: 48,
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.2),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Colors.white.withOpacity(0.3),
-                                  width: 2,
+                    child: Padding(
+                      padding: const EdgeInsets.all(AppSpacing.lg),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          Row(
+                            children: [
+                              // Avatar
+                              Container(
+                                width: 48,
+                                height: 48,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.2),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white.withOpacity(0.3),
+                                    width: 2,
+                                  ),
+                                ),
+                                child: const Icon(
+                                  Icons.person,
+                                  color: Colors.white,
+                                  size: 28,
                                 ),
                               ),
-                              child: const Icon(
-                                Icons.person,
-                                color: Colors.white,
-                                size: 28,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            // Name and greeting
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Bonjour 👋',
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 14,
-                                      color: Colors.white.withOpacity(0.9),
-                                      fontWeight: FontWeight.w400,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    parentName.isNotEmpty ? parentName : "Parent",
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 20,
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            // Bouton logout
-                            IconButton(
-                              onPressed: () async {
-                                final confirm = await showDialog<bool>(
-                                  context: context,
-                                  builder: (ctx) => AlertDialog(
-                                    title: const Text('Déconnexion'),
-                                    content: const Text('Voulez-vous vous déconnecter ?'),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () => Navigator.pop(ctx, false),
-                                        child: const Text('Annuler'),
+                              const SizedBox(width: 12),
+                              // Name and greeting
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Bonjour 👋',
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 14,
+                                        color: Colors.white.withOpacity(0.9),
+                                        fontWeight: FontWeight.w400,
                                       ),
-                                      TextButton(
-                                        onPressed: () => Navigator.pop(ctx, true),
-                                        child: const Text('Déconnexion'),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      parentName.isNotEmpty ? parentName : "Parent",
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 20,
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w700,
                                       ),
-                                    ],
-                                  ),
-                                );
-                                if (confirm == true && mounted) {
-                                  await storage.deleteAll();
-                                  if (mounted) {
-                                    Navigator.of(context).pushNamedAndRemoveUntil(
-                                      '/',
-                                      (route) => false,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              // Bouton profil
+                              IconButton(
+                                onPressed: () {
+                                  if (_dashboardData != null) {
+                                    final child = _dashboardData!["child"] as Map<String, dynamic>;
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => ProfileScreen(child: child),
+                                      ),
                                     );
                                   }
-                                }
-                              },
-                              icon: const Icon(
-                                Icons.logout_outlined,
-                                color: Colors.white,
-                                size: 24,
+                                },
+                                icon: const Icon(
+                                  Icons.person_outline_rounded,
+                                  color: Colors.white,
+                                  size: 24,
+                                ),
+                                tooltip: 'Profil',
                               ),
-                              tooltip: 'Se déconnecter',
-                            ),
-                            const SizedBox(width: 8),
-                            // Notification badge
-                            GestureDetector(
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => NotificationsScreen(
-                                      apiBase: ApiConfig.baseUrl,
-                                      child: _dashboardData?["child"] as Map<String, dynamic>? ?? {},
-                                      onNotificationChanged: () {
-                                        _loadDashboardData();
-                                      },
-                                    ),
-                                  ),
-                                ).then((_) {
-                                  _loadDashboardData();
-                                });
-                              },
-                              child: Stack(
-                                clipBehavior: Clip.none,
-                                children: [
-                                  Container(
-                                    width: 44,
-                                    height: 44,
-                                    decoration: BoxDecoration(
-                                      color: Colors.white.withOpacity(0.15),
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: const Icon(
-                                      Icons.notifications_outlined,
-                                      color: Colors.white,
-                                      size: 24,
-                                    ),
-                                  ),
-                                  if (_notificationCount > 0)
-                                    Positioned(
-                                      right: -2,
-                                      top: -2,
-                                      child: Container(
-                                        padding: const EdgeInsets.all(4),
-                                        decoration: const BoxDecoration(
-                                          color: Color(0xFFD32F2F),
-                                          shape: BoxShape.circle,
-                                        ),
-                                        constraints: const BoxConstraints(
-                                          minWidth: 20,
-                                          minHeight: 20,
-                                        ),
-                                        child: Text(
-                                          _notificationCount > 99 ? '99+' : _notificationCount.toString(),
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
+                              const SizedBox(width: 8),
+                              // Notification badge
+                              GestureDetector(
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => NotificationsScreen(
+                                        apiBase: ApiConfig.baseUrl,
+                                        child: _dashboardData?["child"] as Map<String, dynamic>? ?? {},
+                                        onNotificationChanged: () {
+                                          _loadDashboardData();
+                                        },
                                       ),
                                     ),
-                                ],
+                                  ).then((_) {
+                                    _loadDashboardData();
+                                  });
+                                },
+                                child: Stack(
+                                  clipBehavior: Clip.none,
+                                  children: [
+                                    Container(
+                                      width: 44,
+                                      height: 44,
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withOpacity(0.15),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(
+                                        Icons.notifications_outlined,
+                                        color: Colors.white,
+                                        size: 24,
+                                      ),
+                                    ),
+                                    if (_notificationCount > 0)
+                                      Positioned(
+                                        right: -2,
+                                        top: -2,
+                                        child: Container(
+                                          padding: const EdgeInsets.all(4),
+                                          decoration: const BoxDecoration(
+                                            color: Color(0xFFD32F2F),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          constraints: const BoxConstraints(
+                                            minWidth: 20,
+                                            minHeight: 20,
+                                          ),
+                                          child: Text(
+                                            _notificationCount > 99 ? '99+' : _notificationCount.toString(),
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                            textAlign: TextAlign.center,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                      ],
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                ],
-              ),
+              ],
             ),
           ),
-          // Rendez-vous à venir (entre le header et les blocs de statistiques)
-          if (_upcomingAppointments.isNotEmpty)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Rendez-vous à venir',
-                          style: GoogleFonts.poppins(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                            color: const Color(0xFF0A1A33),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => AppointmentsScreen(childId: widget.childId),
-                              ),
-                            );
-                          },
-                          child: Text(
-                            'Voir tout',
-                            style: GoogleFonts.poppins(
-                              fontSize: 14,
-                              color: const Color(0xFF3B760F),
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    ..._upcomingAppointments.map((apt) => _buildAppointmentCard(apt)),
-                  ],
-                ),
-              ),
-            ),
-          // Contenu principal - 4 blocs de statistiques
+        ),
+        // Rendez-vous à venir (entre le header et les blocs de statistiques)
+        if (_upcomingAppointments.isNotEmpty)
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.md),
-              child: Column(
-                children: [
-                  // Première ligne : Vaccins faits et Vaccins ratés
-                  Row(
-                    children: [
-                      Expanded(
-                        child: StatCard(
-                          label: 'Vaccins faits',
-                          value: stats["totalCompleted"].toString(),
-                          icon: Icons.check_circle_outline,
-                          color: AppColors.success,
-                          subtitle: 'Sur ${(stats["totalDue"] ?? 0) + (stats["totalCompleted"] ?? 0) + (stats["totalLate"] ?? 0) + (stats["totalOverdue"] ?? 0)}',
-                          onTap: () => _navigateToVaccines('completed'),
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.sm),
-                      Expanded(
-                        child: StatCard(
-                          label: 'Vaccins ratés',
-                          value: (stats["totalOverdue"] ?? 0).toString(),
-                          icon: Icons.warning_amber_rounded,
-                          color: AppColors.warning,
-                          subtitle: 'À rattraper',
-                          onTap: () => _navigateToVaccines('missed'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  // Deuxième ligne : Restants et Vaccins en retard
-                  Row(
-                    children: [
-                      Expanded(
-                        child: StatCard(
-                          label: 'Restants',
-                          value: stats["totalDue"].toString(),
-                          icon: Icons.pending_outlined,
-                          color: AppColors.info,
-                          subtitle: 'À faire',
-                          onTap: () => _navigateToVaccines('due'),
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.sm),
-                      Expanded(
-                        child: StatCard(
-                          label: 'Vaccins en retard',
-                          value: stats["totalLate"].toString(),
-                          icon: Icons.error_outline_rounded,
-                          color: AppColors.error,
-                          subtitle: 'En retard',
-                          onTap: () => _navigateToVaccines('late'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-          // Grille de fonctionnalités
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.md),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'Fonctionnalités',
-                    style: GoogleFonts.poppins(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: const Color(0xFF0A1A33),
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Rendez-vous à venir',
+                        style: GoogleFonts.poppins(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF0A1A33),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => AppointmentsScreen(childId: widget.childId),
+                            ),
+                          );
+                        },
+                        child: Text(
+                          'Voir tout',
+                          style: GoogleFonts.poppins(
+                            fontSize: 14,
+                            color: const Color(0xFF3B760F),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: AppSpacing.md),
-                  _buildFeaturesGrid(),
+                  const SizedBox(height: 12),
+                  ..._upcomingAppointments.map((apt) => _buildAppointmentCard(apt)),
                 ],
               ),
             ),
           ),
-        ],
-      ),
+        // Contenu principal - 4 blocs de statistiques
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Column(
+              children: [
+                // Première ligne : Vaccins faits et Vaccins ratés
+                Row(
+                  children: [
+                    Expanded(
+                      child: StatCard(
+                        label: 'Vaccins faits',
+                        value: stats["totalCompleted"].toString(),
+                        icon: Icons.check_circle_outline,
+                        color: AppColors.success,
+                        subtitle: 'Sur ${(stats["totalDue"] ?? 0) + (stats["totalCompleted"] ?? 0) + (stats["totalLate"] ?? 0) + (stats["totalOverdue"] ?? 0)}',
+                        onTap: () => _navigateToVaccines('completed'),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: StatCard(
+                        label: 'Vaccins ratés',
+                        value: (stats["totalOverdue"] ?? 0).toString(),
+                        icon: Icons.warning_amber_rounded,
+                        color: AppColors.warning,
+                        subtitle: 'À rattraper',
+                        onTap: () => _navigateToVaccines('missed'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                // Deuxième ligne : Restants et Vaccins en retard
+                Row(
+                  children: [
+                    Expanded(
+                      child: StatCard(
+                        label: 'Restants',
+                        value: stats["totalDue"].toString(),
+                        icon: Icons.pending_outlined,
+                        color: AppColors.info,
+                        subtitle: 'À faire',
+                        onTap: () => _navigateToVaccines('due'),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: StatCard(
+                        label: 'Vaccins en retard',
+                        value: stats["totalLate"].toString(),
+                        icon: Icons.error_outline_rounded,
+                        color: AppColors.error,
+                        subtitle: 'En retard',
+                        onTap: () => _navigateToVaccines('late'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        // Grille de fonctionnalités
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Fonctionnalités',
+                  style: GoogleFonts.poppins(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF0A1A33),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                _buildFeaturesGrid(),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1126,5 +1143,91 @@ class _ChildDashboardScreenState extends State<ChildDashboardScreen> {
     } catch (e) {
       // Ignorer les erreurs silencieusement
     }
+  }
+
+  /// 📱 Bottom Navigation Bar
+  Widget _buildBottomNav() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildNavItem(
+                icon: Icons.home_rounded,
+                label: 'Accueil',
+                index: 0,
+              ),
+              _buildNavItem(
+                icon: Icons.vaccines_outlined,
+                label: 'Vaccins',
+                index: 1,
+              ),
+              _buildNavItem(
+                icon: Icons.calendar_today_outlined,
+                label: 'Calendrier',
+                index: 2,
+              ),
+              _buildNavItem(
+                icon: Icons.person_outline_rounded,
+                label: 'Profil',
+                index: 3,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNavItem({
+    required IconData icon,
+    required String label,
+    required int index,
+  }) {
+    final isActive = _currentIndex == index;
+
+    return GestureDetector(
+      onTap: () => setState(() => _currentIndex = index),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
+        decoration: BoxDecoration(
+          color: isActive ? AppColors.primary.withOpacity(0.1) : Colors.transparent,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              color: isActive ? AppColors.primary : AppColors.textTertiary,
+              size: 24,
+            ),
+            const SizedBox(height: AppSpacing.xxs),
+            Text(
+              label,
+              style: AppTextStyles.caption.copyWith(
+                color: isActive ? AppColors.primary : AppColors.textTertiary,
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

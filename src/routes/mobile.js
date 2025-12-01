@@ -19,6 +19,8 @@ router.post("/parent-login", mobileController.parentLogin);
 // Gestion du PIN
 router.post("/parent-pin/save", mobileController.saveParentPin);
 router.post("/parent-pin/verify", mobileController.verifyParentPin);
+router.post("/parent-pin/request-change-code", requireMobileAuth, mobileController.requestChangePinCode);
+router.post("/parent-pin/change", requireMobileAuth, mobileController.changeParentPin);
 
 // Marquer les vaccins comme effectués
 router.post("/children/:childId/mark-vaccines-done", mobileController.markVaccinesDone);

@@ -1761,6 +1761,164 @@ const getCalendar = async (req, res, next) => {
   }
 };
 
+/**
+ * POST /api/mobile/parent-pin/request-change-code
+ * Demander un code WhatsApp pour changer le PIN
+ */
+const requestChangePinCode = async (req, res, next) => {
+  try {
+    const { childId, parentPhone, oldPin } = req.body;
+
+    if (!childId || !parentPhone || !oldPin) {
+      return res.status(400).json({
+        success: false,
+        message: "childId, parentPhone et oldPin requis",
+      });
+    }
+
+    // Trouver l'enfant
+    const child = await prisma.children.findUnique({
+      where: { id: childId },
+    });
+
+    if (!child || child.phoneParent !== parentPhone) {
+      return res.status(404).json({
+        success: false,
+        message: "Enfant non trouvé",
+      });
+    }
+
+    // Vérifier l'ancien PIN
+    if (!child.passwordParent || child.passwordParent === "0000") {
+      return res.status(401).json({
+        success: false,
+        message: "PIN non configuré",
+      });
+    }
+
+    const isOldPinValid = await bcrypt.compare(oldPin, child.passwordParent);
+
+    if (!isOldPinValid) {
+      return res.status(401).json({
+        success: false,
+        message: "Ancien PIN incorrect",
+      });
+    }
+
+    // Générer un code de vérification à 6 chiffres
+    const verificationCode = generateAccessCode(6);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Stocker le code temporairement dans le champ code (format: CHANGE_PIN_CODE_EXPIRESAT)
+    await prisma.children.update({
+      where: { id: childId },
+      data: {
+        code: `CHANGE_PIN_${verificationCode}_${expiresAt.getTime()}`,
+      },
+    });
+
+    // Envoyer le code par WhatsApp
+    const parentName = child.fatherName || child.motherName || "Parent";
+    await sendVerificationCode({
+      to: parentPhone,
+      parentName,
+      verificationCode,
+    });
+
+    res.json({
+      success: true,
+      message: "Code de vérification envoyé par WhatsApp",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/mobile/parent-pin/change
+ * Changer le PIN après vérification du code WhatsApp
+ */
+const changeParentPin = async (req, res, next) => {
+  try {
+    const { childId, parentPhone, verificationCode, newPin } = req.body;
+
+    if (!childId || !parentPhone || !verificationCode || !newPin || newPin.length !== 4) {
+      return res.status(400).json({
+        success: false,
+        message: "childId, parentPhone, verificationCode et newPin (4 chiffres) requis",
+      });
+    }
+
+    // Trouver l'enfant
+    const child = await prisma.children.findUnique({
+      where: { id: childId },
+    });
+
+    if (!child || child.phoneParent !== parentPhone) {
+      return res.status(404).json({
+        success: false,
+        message: "Enfant non trouvé",
+      });
+    }
+
+    // Vérifier le code de vérification
+    if (!child.code || !child.code.startsWith("CHANGE_PIN_")) {
+      return res.status(400).json({
+        success: false,
+        message: "Aucune demande de changement de PIN en cours",
+      });
+    }
+
+    const codeParts = child.code.split("_");
+    if (codeParts.length !== 4) {
+      return res.status(400).json({
+        success: false,
+        message: "Format de code invalide",
+      });
+    }
+
+    const storedCode = codeParts[2];
+    const expiresAt = parseInt(codeParts[3]);
+
+    if (storedCode !== verificationCode) {
+      return res.status(401).json({
+        success: false,
+        message: "Code de vérification incorrect",
+      });
+    }
+
+    if (Date.now() > expiresAt) {
+      await prisma.children.update({
+        where: { id: childId },
+        data: { code: null },
+      });
+      return res.status(400).json({
+        success: false,
+        message: "Code de vérification expiré",
+      });
+    }
+
+    // Hasher le nouveau PIN
+    const hashedPin = await bcrypt.hash(newPin, 10);
+
+    // Mettre à jour le PIN et supprimer le code temporaire
+    await prisma.children.update({
+      where: { id: childId },
+      data: {
+        passwordParent: hashedPin,
+        code: null,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: "PIN modifié avec succès",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   requestVerificationCode,
   parentRegister,
@@ -1768,6 +1926,8 @@ module.exports = {
   parentLogin,
   saveParentPin,
   verifyParentPin,
+  requestChangePinCode,
+  changeParentPin,
   getRegions,
   getHealthCenters,
   getVaccineCalendar,

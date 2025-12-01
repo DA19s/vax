@@ -157,5 +157,49 @@ class ApiService {
       return [];
     }
   }
+  
+  // ==================== ENFANTS ====================
+  
+  /// Récupérer les informations d'un enfant
+  static Future<Map<String, dynamic>> getChild(String childId) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.get(
+        Uri.parse('$_baseUrl/mobile/children/$childId/dashboard'),
+        headers: headers,
+      );
+      _handleHttpError(response);
+      final data = json.decode(response.body);
+      // Retourner les données de l'enfant depuis le dashboard
+      if (data is Map && data['child'] != null) {
+        return Map<String, dynamic>.from(data['child']);
+      }
+      return Map<String, dynamic>.from(data);
+    } catch (e) {
+      print('❌ Erreur getChild: $e');
+      return {};
+    }
+  }
+  
+  /// Récupérer la liste des enfants du parent
+  static Future<List<Map<String, dynamic>>> getParentChildren() async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.get(
+        Uri.parse('$_baseUrl/mobile/children'),
+        headers: headers,
+      );
+      _handleHttpError(response);
+      final data = json.decode(response.body);
+      // L'API retourne { success: true, children: [...] }
+      if (data is Map && data['children'] != null) {
+        return List<Map<String, dynamic>>.from(data['children']);
+      }
+      return List<Map<String, dynamic>>.from(data);
+    } catch (e) {
+      print('❌ Erreur getParentChildren: $e');
+      return [];
+    }
+  }
 }
 
