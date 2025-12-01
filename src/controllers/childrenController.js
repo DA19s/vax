@@ -175,35 +175,40 @@ const createChildren = async (req, res, next) => {
             ? computeDueDate(entry.ageUnit, entry.specificAge)
             : computeDueDate(entry.ageUnit, entry.maxAge);
 
-        const isWithinRange =
-          entry.specificAge != null
-            ? age === entry.specificAge
-            : age >= entry.minAge && age <= entry.maxAge;
+        // Vérifier si l'enfant est dans la plage d'âge (minAge à maxAge)
+        // Le specificAge est utilisé uniquement pour calculer la date cible, pas pour l'éligibilité
+        const isWithinRange = age >= entry.minAge && age <= entry.maxAge;
 
-        const isPastRange =
-          entry.specificAge != null
-            ? age > entry.specificAge
-            : age > entry.maxAge;
+        // Vérifier si l'enfant a dépassé la plage d'âge
+        const isPastRange = age > entry.maxAge;
 
         if (isWithinRange) {
           for (const vaccine of entry.vaccines) {
-            duePayload.push({
-              childId: createdChild.id,
-              vaccineCalendarId: entry.id,
-              vaccineId: vaccine.id,
-              scheduledFor: dueDate,
-              dose: 1,
-            });
+            // Créer une entrée pour chaque dose requise
+            const dosesRequired = Number.parseInt(vaccine.dosesRequired ?? "1", 10) || 1;
+            for (let dose = 1; dose <= dosesRequired; dose++) {
+              duePayload.push({
+                childId: createdChild.id,
+                vaccineCalendarId: entry.id,
+                vaccineId: vaccine.id,
+                scheduledFor: dueDate,
+                dose,
+              });
+            }
           }
         } else if (isPastRange) {
           for (const vaccine of entry.vaccines) {
-            latePayload.push({
-              childId: createdChild.id,
-              vaccineCalendarId: entry.id,
-              vaccineId: vaccine.id,
-              dueDate,
-              dose: 1,
-            });
+            // Créer une entrée pour chaque dose requise
+            const dosesRequired = Number.parseInt(vaccine.dosesRequired ?? "1", 10) || 1;
+            for (let dose = 1; dose <= dosesRequired; dose++) {
+              latePayload.push({
+                childId: createdChild.id,
+                vaccineCalendarId: entry.id,
+                vaccineId: vaccine.id,
+                dueDate,
+                dose,
+              });
+            }
             hasLate = true;
           }
         }

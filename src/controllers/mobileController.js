@@ -232,36 +232,41 @@ const parentRegister = async (req, res, next) => {
             ? computeDueDate(entry.ageUnit, entry.specificAge)
             : computeDueDate(entry.ageUnit, entry.maxAge);
 
-        const isWithinRange =
-          entry.specificAge != null
-            ? age === entry.specificAge
-            : age >= entry.minAge && age <= entry.maxAge;
+        // Vérifier si l'enfant est dans la plage d'âge (minAge à maxAge)
+        // Le specificAge est utilisé uniquement pour calculer la date cible, pas pour l'éligibilité
+        const isWithinRange = age >= entry.minAge && age <= entry.maxAge;
 
-        const isPastRange =
-          entry.specificAge != null
-            ? age > entry.specificAge
-            : age > entry.maxAge;
+        // Vérifier si l'enfant a dépassé la plage d'âge
+        const isPastRange = age > entry.maxAge;
 
         if (isWithinRange) {
           for (const vaccine of entry.vaccines) {
-            duePayload.push({
-              childId: updatedChildId,
-              vaccineCalendarId: entry.id,
-              vaccineId: vaccine.id,
-              scheduledFor: dueDate,
-              dose: 1,
-            });
+            // Créer une entrée pour chaque dose requise
+            const dosesRequired = Number.parseInt(vaccine.dosesRequired ?? "1", 10) || 1;
+            for (let dose = 1; dose <= dosesRequired; dose++) {
+              duePayload.push({
+                childId: updatedChildId,
+                vaccineCalendarId: entry.id,
+                vaccineId: vaccine.id,
+                scheduledFor: dueDate,
+                dose,
+              });
+            }
           }
         } else if (isPastRange) {
           hasLate = true;
           for (const vaccine of entry.vaccines) {
-            latePayload.push({
-              childId: updatedChildId,
-              vaccineCalendarId: entry.id,
-              vaccineId: vaccine.id,
-              dueDate: dueDate,
-              dose: 1,
-            });
+            // Créer une entrée pour chaque dose requise
+            const dosesRequired = Number.parseInt(vaccine.dosesRequired ?? "1", 10) || 1;
+            for (let dose = 1; dose <= dosesRequired; dose++) {
+              latePayload.push({
+                childId: updatedChildId,
+                vaccineCalendarId: entry.id,
+                vaccineId: vaccine.id,
+                dueDate: dueDate,
+                dose,
+              });
+            }
           }
         }
       }
@@ -897,7 +902,8 @@ const markVaccinesDone = async (req, res, next) => {
           },
         });
 
-        // Supprimer les entrées correspondantes dans due, late, overdue
+        // Supprimer uniquement l'entrée correspondant à la dose complétée
+        // (pas toutes les doses du vaccin)
         await tx.childVaccineDue.deleteMany({
           where: {
             childId,
@@ -923,6 +929,50 @@ const markVaccinesDone = async (req, res, next) => {
             dose,
           },
         });
+
+        // Vérifier si toutes les doses requises du vaccin sont complétées
+        const vaccine = await tx.vaccine.findUnique({
+          where: { id: vaccineId },
+          select: { dosesRequired: true },
+        });
+
+        const dosesRequired = vaccine?.dosesRequired 
+          ? parseInt(vaccine.dosesRequired, 10) 
+          : 1;
+        const totalDoses = isFinite(dosesRequired) && dosesRequired > 0 ? dosesRequired : 1;
+
+        // Compter les doses complétées pour ce vaccin
+        const completedCount = await tx.childVaccineCompleted.count({
+          where: {
+            childId,
+            vaccineId,
+          },
+        });
+
+        // Si toutes les doses sont complétées, supprimer toutes les entrées restantes
+        // (au cas où il y aurait des entrées pour d'autres doses qui n'ont pas été supprimées)
+        if (completedCount >= totalDoses) {
+          await tx.childVaccineDue.deleteMany({
+            where: {
+              childId,
+              vaccineId,
+            },
+          });
+
+          await tx.childVaccineLate.deleteMany({
+            where: {
+              childId,
+              vaccineId,
+            },
+          });
+
+          await tx.childVaccineOverdue.deleteMany({
+            where: {
+              childId,
+              vaccineId,
+            },
+          });
+        }
       }
 
       // Mettre à jour le statut de l'enfant si nécessaire
@@ -949,6 +999,768 @@ const markVaccinesDone = async (req, res, next) => {
   }
 };
 
+/**
+ * GET /api/mobile/children/:childId/dashboard
+ * Obtenir toutes les données du dashboard pour un enfant
+ */
+const getChildDashboard = async (req, res, next) => {
+  try {
+    const { childId } = req.params;
+
+    // Vérifier que l'enfant existe et que le parent a accès
+    const child = await prisma.children.findUnique({
+      where: { id: childId },
+      include: {
+        healthCenter: {
+          select: {
+            id: true,
+            name: true,
+            address: true,
+            district: {
+              select: {
+                id: true,
+                name: true,
+                commune: {
+                  select: {
+                    id: true,
+                    name: true,
+                    region: {
+                      select: {
+                        id: true,
+                        name: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        dueVaccines: {
+          include: {
+            vaccine: { select: { id: true, name: true, dosesRequired: true } },
+            vaccineCalendar: {
+              select: {
+                id: true,
+                description: true,
+                ageUnit: true,
+                specificAge: true,
+                minAge: true,
+                maxAge: true,
+              },
+            },
+          },
+          orderBy: { scheduledFor: "asc" },
+        },
+        scheduledVaccines: {
+          include: {
+            vaccine: { select: { id: true, name: true, dosesRequired: true } },
+            planner: {
+              select: { id: true, firstName: true, lastName: true },
+            },
+            vaccineCalendar: {
+              select: {
+                id: true,
+                description: true,
+              },
+            },
+          },
+          orderBy: { scheduledFor: "asc" },
+        },
+        lateVaccines: {
+          include: {
+            vaccine: { select: { id: true, name: true, dosesRequired: true } },
+            vaccineCalendar: {
+              select: {
+                id: true,
+                description: true,
+                ageUnit: true,
+                specificAge: true,
+                minAge: true,
+                maxAge: true,
+              },
+            },
+          },
+          orderBy: { dueDate: "asc" },
+        },
+        overdueVaccines: {
+          include: {
+            vaccine: { select: { id: true, name: true, dosesRequired: true } },
+            vaccineCalendar: {
+              select: {
+                id: true,
+                description: true,
+              },
+            },
+          },
+          orderBy: { dueDate: "asc" },
+        },
+        completedVaccines: {
+          include: {
+            vaccine: { select: { id: true, name: true, dosesRequired: true } },
+            administeredBy: {
+              select: { id: true, firstName: true, lastName: true },
+            },
+            vaccineCalendar: {
+              select: {
+                id: true,
+                description: true,
+              },
+            },
+          },
+          orderBy: { administeredAt: "desc" },
+        },
+      },
+    });
+
+    if (!child) {
+      return res.status(404).json({
+        success: false,
+        message: "Enfant non trouvé",
+      });
+    }
+
+    // L'accès est déjà vérifié par le middleware requireMobileAuth
+
+    // Calculer l'âge de l'enfant
+    const now = new Date();
+    const birth = new Date(child.birthDate);
+    const ageInDays = Math.floor((now.getTime() - birth.getTime()) / 86400000);
+    const ageInWeeks = Math.floor(ageInDays / 7);
+    const ageInMonths = Math.floor(ageInDays / 30.4375);
+    const ageInYears = Math.floor(ageInDays / 365.25);
+
+    res.json({
+      success: true,
+      child: {
+        id: child.id,
+        firstName: child.firstName,
+        lastName: child.lastName,
+        name: `${child.firstName} ${child.lastName}`.trim(),
+        gender: child.gender,
+        birthDate: child.birthDate,
+        birthPlace: child.birthPlace,
+        address: child.address,
+        status: child.status,
+        parentName: child.fatherName || child.motherName || "",
+        parentPhone: child.phoneParent,
+        fatherName: child.fatherName,
+        motherName: child.motherName,
+        nextAppointment: child.nextAppointment,
+        healthCenter: {
+          id: child.healthCenter.id,
+          name: child.healthCenter.name,
+          address: child.healthCenter.address,
+          region: child.healthCenter.district?.commune?.region?.name ?? "",
+          district: child.healthCenter.district?.name ?? "",
+        },
+        age: {
+          days: ageInDays,
+          weeks: ageInWeeks,
+          months: ageInMonths,
+          years: ageInYears,
+        },
+      },
+      vaccinations: {
+        due: child.dueVaccines.map((entry) => ({
+          id: entry.id,
+          vaccineId: entry.vaccineId,
+          vaccineName: entry.vaccine.name,
+          dosesRequired: entry.vaccine.dosesRequired,
+          scheduledFor: entry.scheduledFor,
+          calendarId: entry.vaccineCalendarId,
+          calendarDescription: entry.vaccineCalendar?.description ?? null,
+          ageUnit: entry.vaccineCalendar?.ageUnit ?? null,
+          specificAge: entry.vaccineCalendar?.specificAge ?? null,
+          minAge: entry.vaccineCalendar?.minAge ?? null,
+          maxAge: entry.vaccineCalendar?.maxAge ?? null,
+          dose: entry.dose ?? 1,
+        })),
+        scheduled: child.scheduledVaccines.map((entry) => ({
+          id: entry.id,
+          vaccineId: entry.vaccineId,
+          vaccineName: entry.vaccine.name,
+          dosesRequired: entry.vaccine.dosesRequired,
+          scheduledFor: entry.scheduledFor,
+          plannerId: entry.plannerId,
+          plannerName: entry.planner
+            ? `${entry.planner.firstName ?? ""} ${entry.planner.lastName ?? ""}`.trim()
+            : null,
+          calendarId: entry.vaccineCalendarId,
+          calendarDescription: entry.vaccineCalendar?.description ?? null,
+          dose: entry.dose ?? 1,
+        })),
+        late: child.lateVaccines.map((entry) => ({
+          id: entry.id,
+          vaccineId: entry.vaccineId,
+          vaccineName: entry.vaccine.name,
+          dosesRequired: entry.vaccine.dosesRequired,
+          dueDate: entry.dueDate,
+          calendarId: entry.vaccineCalendarId,
+          calendarDescription: entry.vaccineCalendar?.description ?? null,
+          ageUnit: entry.vaccineCalendar?.ageUnit ?? null,
+          specificAge: entry.vaccineCalendar?.specificAge ?? null,
+          minAge: entry.vaccineCalendar?.minAge ?? null,
+          maxAge: entry.vaccineCalendar?.maxAge ?? null,
+          dose: entry.dose ?? 1,
+        })),
+        overdue: child.overdueVaccines.map((entry) => ({
+          id: entry.id,
+          vaccineId: entry.vaccineId,
+          vaccineName: entry.vaccine.name,
+          dosesRequired: entry.vaccine.dosesRequired,
+          dueDate: entry.dueDate,
+          calendarId: entry.vaccineCalendarId,
+          calendarDescription: entry.vaccineCalendar?.description ?? null,
+          dose: entry.dose ?? 1,
+        })),
+        completed: child.completedVaccines.map((entry) => ({
+          id: entry.id,
+          vaccineId: entry.vaccineId,
+          vaccineName: entry.vaccine.name,
+          dosesRequired: entry.vaccine.dosesRequired,
+          administeredAt: entry.administeredAt,
+          administeredById: entry.administeredById,
+          administeredByName: entry.administeredBy
+            ? `${entry.administeredBy.firstName ?? ""} ${entry.administeredBy.lastName ?? ""}`.trim()
+            : null,
+          calendarId: entry.vaccineCalendarId,
+          calendarDescription: entry.vaccineCalendar?.description ?? null,
+          dose: entry.dose ?? 1,
+        })),
+      },
+      stats: {
+        totalDue: child.dueVaccines.length,
+        totalScheduled: child.scheduledVaccines.length,
+        totalLate: child.lateVaccines.length,
+        totalOverdue: child.overdueVaccines.length,
+        totalCompleted: child.completedVaccines.length,
+      },
+      // Ajouter le nombre de notifications non lues
+      unreadNotifications: await prisma.notification.count({
+        where: {
+          childId: childId,
+          isRead: false,
+        },
+      }),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/mobile/advice
+ * Obtenir les conseils pour un enfant (filtrés par âge)
+ * Query params: ?childId=xxx (optionnel, pour filtrer par âge de l'enfant)
+ */
+const getAdvice = async (req, res, next) => {
+  try {
+    const { childId } = req.query;
+
+    let ageInWeeks = null;
+    let ageInMonths = null;
+    let ageInYears = null;
+    let ageUnit = null;
+
+    // Si childId est fourni, calculer l'âge de l'enfant
+    if (childId) {
+      const child = await prisma.children.findUnique({
+        where: { id: childId },
+        select: { birthDate: true },
+      });
+
+      if (child) {
+        const now = new Date();
+        const birth = new Date(child.birthDate);
+        const ageInDays = Math.floor((now.getTime() - birth.getTime()) / 86400000);
+        ageInWeeks = Math.floor(ageInDays / 7);
+        ageInMonths = Math.floor(ageInDays / 30.4375);
+        ageInYears = Math.floor(ageInDays / 365.25);
+      }
+    }
+
+    // Construire la requête pour filtrer les conseils
+    const whereClause = {
+      isActive: true,
+    };
+
+    // Si on a l'âge de l'enfant, filtrer les conseils pertinents
+    if (ageInWeeks !== null || ageInMonths !== null || ageInYears !== null) {
+      whereClause.OR = [];
+
+      // Conseils sans restriction d'âge
+      whereClause.OR.push({
+        ageUnit: null,
+        minAge: null,
+        maxAge: null,
+        specificAge: null,
+      });
+
+      // Conseils avec âge spécifique
+      if (ageInWeeks !== null) {
+        whereClause.OR.push({
+          ageUnit: "WEEKS",
+          specificAge: ageInWeeks,
+        });
+      }
+      if (ageInMonths !== null) {
+        whereClause.OR.push({
+          ageUnit: "MONTHS",
+          specificAge: ageInMonths,
+        });
+      }
+      if (ageInYears !== null) {
+        whereClause.OR.push({
+          ageUnit: "YEARS",
+          specificAge: ageInYears,
+        });
+      }
+
+      // Conseils avec plage d'âge
+      if (ageInWeeks !== null) {
+        whereClause.OR.push({
+          ageUnit: "WEEKS",
+          minAge: { lte: ageInWeeks },
+          maxAge: { gte: ageInWeeks },
+        });
+      }
+      if (ageInMonths !== null) {
+        whereClause.OR.push({
+          ageUnit: "MONTHS",
+          minAge: { lte: ageInMonths },
+          maxAge: { gte: ageInMonths },
+        });
+      }
+      if (ageInYears !== null) {
+        whereClause.OR.push({
+          ageUnit: "YEARS",
+          minAge: { lte: ageInYears },
+          maxAge: { gte: ageInYears },
+        });
+      }
+    }
+
+    const advice = await prisma.advice.findMany({
+      where: whereClause,
+      orderBy: [
+        { ageUnit: "asc" },
+        { minAge: "asc" },
+        { createdAt: "desc" },
+      ],
+    });
+
+    res.json({
+      success: true,
+      total: advice.length,
+      items: advice.map((item) => ({
+        id: item.id,
+        title: item.title,
+        content: item.content,
+        ageUnit: item.ageUnit,
+        minAge: item.minAge,
+        maxAge: item.maxAge,
+        specificAge: item.specificAge,
+        category: item.category,
+        createdAt: item.createdAt,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/mobile/campaigns
+ * Obtenir les campagnes de vaccination (pour les parents mobiles)
+ */
+const getCampaigns = async (req, res, next) => {
+  try {
+    // Les parents mobiles peuvent voir toutes les campagnes actives
+    const campaigns = await prisma.campaign.findMany({
+      include: {
+        region: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+      orderBy: {
+        startDate: "desc",
+      },
+    });
+
+    res.json({
+      success: true,
+      total: campaigns.length,
+      campaigns: campaigns.map((campaign) => ({
+        id: campaign.id,
+        title: campaign.title,
+        description: campaign.description,
+        startDate: campaign.startDate,
+        endDate: campaign.endDate,
+        region: campaign.region,
+        medias: campaign.medias || [],
+        createdAt: campaign.createdAt,
+        updatedAt: campaign.updatedAt,
+      })),
+    });
+  } catch (error) {
+    console.error("Error in getCampaigns (mobile):", error);
+    next(error);
+  }
+};
+
+/**
+ * GET /api/mobile/children/:childId/appointments
+ * Obtenir les rendez-vous d'un enfant (nécessite authentification)
+ */
+const getAppointments = async (req, res, next) => {
+  try {
+    const { childId } = req.params;
+
+    // Récupérer les vaccins programmés (scheduled)
+    const scheduledVaccines = await prisma.childVaccineScheduled.findMany({
+      where: {
+        childId: childId,
+      },
+      include: {
+        vaccine: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        planner: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+      orderBy: {
+        scheduledFor: "asc",
+      },
+    });
+
+    // Formater les rendez-vous
+    const appointments = scheduledVaccines.map((scheduled) => ({
+      id: scheduled.id,
+      vaccineId: scheduled.vaccineId,
+      vaccineName: scheduled.vaccine.name,
+      date: scheduled.scheduledFor,
+      dose: scheduled.dose,
+      planner: scheduled.planner
+        ? `${scheduled.planner.firstName} ${scheduled.planner.lastName}`
+        : null,
+      status: "scheduled",
+    }));
+
+    res.json({
+      success: true,
+      total: appointments.length,
+      appointments,
+    });
+  } catch (error) {
+    console.error("Error in getAppointments (mobile):", error);
+    next(error);
+  }
+};
+
+/**
+ * GET /api/mobile/children/:childId/notifications
+ * Obtenir les notifications d'un enfant (nécessite authentification)
+ */
+const getNotifications = async (req, res, next) => {
+  try {
+    // Utiliser req.childId du middleware requireMobileAuth pour la sécurité
+    const childId = req.childId || req.params.childId;
+
+    if (!childId) {
+      return res.status(400).json({
+        success: false,
+        message: "childId requis",
+      });
+    }
+
+    const notifications = await prisma.notification.findMany({
+      where: {
+        childId: childId,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    res.json({
+      success: true,
+      total: notifications.length,
+      notifications: notifications.map((notif) => ({
+        id: notif.id,
+        title: notif.title,
+        message: notif.message,
+        type: notif.type,
+        read: notif.isRead,
+        createdAt: notif.createdAt,
+        updatedAt: notif.updatedAt,
+      })),
+    });
+  } catch (error) {
+    console.error("Error in getNotifications (mobile):", error);
+    console.error("Error details:", {
+      message: error.message,
+      code: error.code,
+      meta: error.meta,
+      stack: error.stack,
+    });
+    return res.status(500).json({
+      success: false,
+      message: "Erreur lors de la récupération des notifications",
+      error: process.env.NODE_ENV !== "production" ? error.message : undefined,
+    });
+  }
+};
+
+/**
+ * PUT /api/mobile/children/:childId/notifications/mark-all-read
+ * Marquer toutes les notifications comme lues pour un enfant
+ */
+const markAllNotificationsAsRead = async (req, res, next) => {
+  try {
+    const childId = req.childId || req.params.childId;
+
+    if (!childId) {
+      return res.status(400).json({
+        success: false,
+        message: "childId requis",
+      });
+    }
+
+    const result = await prisma.notification.updateMany({
+      where: {
+        childId: childId,
+        isRead: false,
+      },
+      data: {
+        isRead: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: `${result.count} notification(s) marquée(s) comme lue(s)`,
+      count: result.count,
+    });
+  } catch (error) {
+    console.error("Error in markAllNotificationsAsRead:", error);
+    next(error);
+  }
+};
+
+/**
+ * GET /api/mobile/children/:childId/calendar
+ * Obtenir le calendrier vaccinal d'un enfant (nécessite authentification)
+ * Retourne les vaccins faits, manqués, et programmés fusionnés
+ */
+const getCalendar = async (req, res, next) => {
+  try {
+    const { childId } = req.params;
+
+    // Récupérer tous les types de vaccins pour l'enfant
+    const [completed, scheduled, overdue, late, due] = await Promise.all([
+      // Vaccins complétés
+      prisma.childVaccineCompleted.findMany({
+        where: { childId },
+        include: {
+          vaccine: { select: { id: true, name: true } },
+          vaccineCalendar: {
+            select: {
+              id: true,
+              description: true,
+              ageUnit: true,
+              specificAge: true,
+              minAge: true,
+              maxAge: true,
+            },
+          },
+        },
+      }),
+      // Vaccins programmés
+      prisma.childVaccineScheduled.findMany({
+        where: { childId },
+        include: {
+          vaccine: { select: { id: true, name: true } },
+          vaccineCalendar: {
+            select: {
+              id: true,
+              description: true,
+              ageUnit: true,
+              specificAge: true,
+              minAge: true,
+              maxAge: true,
+            },
+          },
+        },
+      }),
+      // Vaccins en retard (ratés)
+      prisma.childVaccineOverdue.findMany({
+        where: { childId },
+        include: {
+          vaccine: { select: { id: true, name: true } },
+          vaccineCalendar: {
+            select: {
+              id: true,
+              description: true,
+              ageUnit: true,
+              specificAge: true,
+              minAge: true,
+              maxAge: true,
+            },
+          },
+        },
+      }),
+      // Vaccins en retard (tardifs mais faisables)
+      prisma.childVaccineLate.findMany({
+        where: { childId },
+        include: {
+          vaccine: { select: { id: true, name: true } },
+          vaccineCalendar: {
+            select: {
+              id: true,
+              description: true,
+              ageUnit: true,
+              specificAge: true,
+              minAge: true,
+              maxAge: true,
+            },
+          },
+        },
+      }),
+      // Vaccins à faire
+      prisma.childVaccineDue.findMany({
+        where: { childId },
+        include: {
+          vaccine: { select: { id: true, name: true } },
+          vaccineCalendar: {
+            select: {
+              id: true,
+              description: true,
+              ageUnit: true,
+              specificAge: true,
+              minAge: true,
+              maxAge: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    // Fusionner tous les vaccins avec leur statut
+    const merged = [];
+
+    // Vaccins complétés
+    completed.forEach((item) => {
+      merged.push({
+        id: item.id,
+        vaccineId: item.vaccineId,
+        vaccineName: item.vaccine.name,
+        date: item.completedAt,
+        dose: item.dose,
+        status: "done",
+        calendarId: item.vaccineCalendarId,
+        calendarDescription: item.vaccineCalendar?.description ?? null,
+        ageUnit: item.vaccineCalendar?.ageUnit ?? null,
+        specificAge: item.vaccineCalendar?.specificAge ?? null,
+        minAge: item.vaccineCalendar?.minAge ?? null,
+        maxAge: item.vaccineCalendar?.maxAge ?? null,
+      });
+    });
+
+    // Vaccins programmés
+    scheduled.forEach((item) => {
+      merged.push({
+        id: item.id,
+        vaccineId: item.vaccineId,
+        vaccineName: item.vaccine.name,
+        date: item.scheduledFor,
+        dose: item.dose,
+        status: "scheduled",
+        calendarId: item.vaccineCalendarId,
+        calendarDescription: item.vaccineCalendar?.description ?? null,
+        ageUnit: item.vaccineCalendar?.ageUnit ?? null,
+        specificAge: item.vaccineCalendar?.specificAge ?? null,
+        minAge: item.vaccineCalendar?.minAge ?? null,
+        maxAge: item.vaccineCalendar?.maxAge ?? null,
+      });
+    });
+
+    // Vaccins en retard (ratés)
+    overdue.forEach((item) => {
+      merged.push({
+        id: item.id,
+        vaccineId: item.vaccineId,
+        vaccineName: item.vaccine.name,
+        date: item.dueDate,
+        dose: item.dose,
+        status: "missed",
+        calendarId: item.vaccineCalendarId,
+        calendarDescription: item.vaccineCalendar?.description ?? null,
+        ageUnit: item.vaccineCalendar?.ageUnit ?? null,
+        specificAge: item.vaccineCalendar?.specificAge ?? null,
+        minAge: item.vaccineCalendar?.minAge ?? null,
+        maxAge: item.vaccineCalendar?.maxAge ?? null,
+      });
+    });
+
+    // Vaccins en retard (tardifs)
+    late.forEach((item) => {
+      merged.push({
+        id: item.id,
+        vaccineId: item.vaccineId,
+        vaccineName: item.vaccine.name,
+        date: item.dueDate,
+        dose: item.dose,
+        status: "late",
+        calendarId: item.vaccineCalendarId,
+        calendarDescription: item.vaccineCalendar?.description ?? null,
+        ageUnit: item.vaccineCalendar?.ageUnit ?? null,
+        specificAge: item.vaccineCalendar?.specificAge ?? null,
+        minAge: item.vaccineCalendar?.minAge ?? null,
+        maxAge: item.vaccineCalendar?.maxAge ?? null,
+      });
+    });
+
+    // Vaccins à faire
+    due.forEach((item) => {
+      merged.push({
+        id: item.id,
+        vaccineId: item.vaccineId,
+        vaccineName: item.vaccine.name,
+        date: item.scheduledFor,
+        dose: item.dose,
+        status: "due",
+        calendarId: item.vaccineCalendarId,
+        calendarDescription: item.vaccineCalendar?.description ?? null,
+        ageUnit: item.vaccineCalendar?.ageUnit ?? null,
+        specificAge: item.vaccineCalendar?.specificAge ?? null,
+        minAge: item.vaccineCalendar?.minAge ?? null,
+        maxAge: item.vaccineCalendar?.maxAge ?? null,
+      });
+    });
+
+    res.json({
+      success: true,
+      total: merged.length,
+      merged,
+    });
+  } catch (error) {
+    console.error("Error in getCalendar (mobile):", error);
+    next(error);
+  }
+};
+
 module.exports = {
   requestVerificationCode,
   parentRegister,
@@ -960,5 +1772,12 @@ module.exports = {
   getHealthCenters,
   getVaccineCalendar,
   markVaccinesDone,
+  getChildDashboard,
+  getAdvice,
+  getCampaigns,
+  getAppointments,
+  getCalendar,
+  getNotifications,
+  markAllNotificationsAsRead,
 };
 

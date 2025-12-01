@@ -1,4 +1,5 @@
 const prisma = require("../config/prismaClient");
+const { notifyNewCampaign } = require("../services/notificationService");
 
 const getCampaigns = async (req, res, next) => {
   try {
@@ -85,6 +86,59 @@ const createCampaign = async (req, res, next) => {
           },
         },
       },
+    });
+
+    // Créer des notifications pour tous les enfants de la région
+    // On le fait après la réponse pour ne pas ralentir la création de la campagne
+    setImmediate(async () => {
+      try {
+        // Récupérer tous les enfants de la région via les centres de santé
+        const healthCenters = await prisma.healthCenter.findMany({
+          where: {
+            district: {
+              commune: {
+                regionId: finalRegionId,
+              },
+            },
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        const healthCenterIds = healthCenters.map((hc) => hc.id);
+
+        if (healthCenterIds.length > 0) {
+          const children = await prisma.children.findMany({
+            where: {
+              healthCenterId: {
+                in: healthCenterIds,
+              },
+            },
+            select: {
+              id: true,
+            },
+          });
+
+          // Créer une notification pour chaque enfant
+          for (const child of children) {
+            try {
+              await notifyNewCampaign({
+                childId: child.id,
+                campaignTitle: campaign.title,
+              });
+            } catch (notifError) {
+              console.error(`Erreur notification pour enfant ${child.id}:`, notifError);
+              // Continuer avec les autres enfants même si une notification échoue
+            }
+          }
+
+          console.log(`✅ ${children.length} notifications créées pour la campagne "${campaign.title}"`);
+        }
+      } catch (error) {
+        console.error("Erreur création notifications campagne:", error);
+        // Ne pas faire échouer la création de la campagne si les notifications échouent
+      }
     });
 
     res.status(201).json(campaign);

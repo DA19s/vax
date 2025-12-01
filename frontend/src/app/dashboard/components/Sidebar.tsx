@@ -8,6 +8,7 @@ import {
   MapPinned,
   Package,
   CalendarCheck,
+  Lightbulb,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import LogoPreview from "@/app/components/LogoPreview";
@@ -33,6 +34,7 @@ const navItems: NavItem[] = [
   { label: "Communes", href: "/dashboard/communes", icon: MapPinned },
   { label: "Régionaux", href: "/dashboard/regionaux", icon: Users },
   { label: "Campagnes", href: "/dashboard/campagnes", icon: Calendar },
+  { label: "Conseils", href: "/dashboard/conseils", icon: Lightbulb },
   { label: "Stocks & lots", href: "/dashboard/stocks", icon: Package },
   { label: "Vaccins", href: "/dashboard/vaccins", icon: Syringe },
   { label: "Calendrier vaccinal", href: "/dashboard/calendrier", icon: Calendar },

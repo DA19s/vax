@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'create_pin_screen.dart';
+import '../../core/config/api_config.dart';
 
 class VerificationCodeScreen extends StatefulWidget {
   final String registrationId;
@@ -48,7 +49,7 @@ class _VerificationCodeScreenState extends State<VerificationCodeScreen> {
 
     try {
       // Vérifier le code et créer le compte
-      final url = Uri.parse("http://localhost:5050/api/mobile/parent-register");
+      final url = Uri.parse("${ApiConfig.apiBaseUrl}/mobile/parent-register");
       final response = await http.post(
         url,
         headers: {"Content-Type": "application/json"},

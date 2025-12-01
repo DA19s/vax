@@ -29,3 +29,5 @@ FROM "User"
 GROUP BY phone, role
 HAVING COUNT(*) > 1;
 
+
+

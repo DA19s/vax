@@ -39,16 +39,16 @@ const formatAgeLabel = (birthDate: string): string => {
 };
 
 const formatStatusLabel = (child: Child): string => {
-  if (child.status === "A_JOUR") {
-    return "À jour";
-  }
+  // Calculer le statut en fonction des données réelles plutôt que du statut stocké
+  // pour éviter les incohérences
   if (child.vaccinesLate.length > 0 || child.vaccinesOverdue.length > 0) {
     return "En retard";
   }
   if (child.vaccinesDue.length > 0) {
     return "À faire";
   }
-  return "Pas à jour";
+  // Si aucun vaccin en retard, à faire ou overdue, l'enfant est à jour
+  return "À jour";
 };
 
 const statusBadgeClasses = (label: string): string => {

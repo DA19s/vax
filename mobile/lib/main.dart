@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart';
@@ -8,6 +9,17 @@ import 'screens/auth/pin_login_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Gestion globale des erreurs pour éviter les crashes
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+  };
+  
+  // Gestion des erreurs asynchrones non capturées
+  PlatformDispatcher.instance.onError = (error, stack) {
+    return true;
+  };
+  
   await initializeDateFormatting('fr_FR', null);
   Intl.defaultLocale = 'fr_FR';
   runApp(const VacxCareApp());

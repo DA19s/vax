@@ -39,6 +39,7 @@ model User {
   records                 Record[]
   vaccinesCompleted      ChildVaccineCompleted[] @relation("UserAsAdministered")
   vaccinesScheduled      ChildVaccineScheduled[] @relation("UserAsScheduler")
+  vaccineRequests        VaccineRequest[]        @relation("UserAsScheduler")
   vaccinesEscalated      ChildVaccineOverdue[]   @relation("UserAsEscalated")
 
   @@unique([email, role])
@@ -96,6 +97,7 @@ model VaccineCalendar {
   scheduledEntries   ChildVaccineScheduled[]
   overdueEntries     ChildVaccineOverdue[] 
   lateEntries        ChildVaccineLate[]
+  vaccineRequests    VaccineRequest[]
 }
 
 enum AgeUnit {
@@ -126,6 +128,7 @@ model Vaccine {
   lateForChildren      ChildVaccineLate[]
   stockLots            StockLot[]
   stockTransfers       StockTransfer[]
+  vaccineRequests      VaccineRequest[]
 }
 
 model Commune {
@@ -278,6 +281,8 @@ model Children {
   scheduledVaccines      ChildVaccineScheduled[]
   overdueVaccines        ChildVaccineOverdue[]
   lateVaccines           ChildVaccineLate[]
+  notifications          Notification[]
+  vaccineRequests        VaccineRequest[]
 }
 
 enum Gender {
@@ -410,6 +415,61 @@ model Campaign {
   medias      Json      @default("[]") // Array of { url: string, type: "video" | "pdf" }
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+}
+
+model Advice {
+  id          String    @id @default(uuid())
+  title       String
+  content     String
+  ageUnit     AgeUnit?  // WEEKS, MONTHS, YEARS
+  minAge      Int?      // Âge minimum (en unité spécifiée)
+  maxAge      Int?      // Âge maximum (en unité spécifiée)
+  specificAge Int?      // Âge spécifique (si null, utilise minAge/maxAge)
+  category    String?   // Ex: "nutrition", "hygiene", "vaccination", etc.
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Notification {
+  id          String    @id @default(uuid())
+  childId     String
+  child       Children  @relation(fields: [childId], references: [id], onDelete: Cascade)
+  title       String
+  message     String
+  type        String    // "vaccination", "appointment", "reminder", "system", etc.
+  isRead      Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([childId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+model VaccineRequest {
+  id                 String            @id @default(uuid())
+  childId            String
+  child              Children          @relation(fields: [childId], references: [id], onDelete: Cascade)
+  vaccineId          String
+  vaccine            Vaccine           @relation(fields: [vaccineId], references: [id])
+  vaccineCalendarId  String?
+  vaccineCalendar    VaccineCalendar?  @relation(fields: [vaccineCalendarId], references: [id])
+  dose               Int               @default(1)
+  status             String            @default("PENDING") // PENDING, SCHEDULED, CANCELLED
+  requestedAt        DateTime          @default(now())
+  scheduledFor       DateTime?
+  scheduledById      String?
+  scheduledBy        User?             @relation("UserAsScheduler", fields: [scheduledById], references: [id])
+  appointmentId      String?           // ID du rendez-vous créé à partir de cette demande
+  notes              String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@index([childId])
+  @@index([status])
+  @@index([requestedAt])
+  @@index([scheduledById])
 }
 
 

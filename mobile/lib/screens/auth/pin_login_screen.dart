@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'child_selection_screen.dart';
 import '../child/child_dashboard_screen.dart';
+import '../../core/config/api_config.dart';
 
 class PinLoginScreen extends StatefulWidget {
   const PinLoginScreen({super.key});
@@ -133,7 +134,7 @@ class _PinLoginScreenState extends State<PinLoginScreen>
     });
 
     try {
-      final url = Uri.parse("http://localhost:5050/api/mobile/parent-login");
+      final url = Uri.parse("${ApiConfig.apiBaseUrl}/mobile/parent-login");
       final response = await http.post(
         url,
         headers: {"Content-Type": "application/json"},

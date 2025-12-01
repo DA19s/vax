@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../child/child_dashboard_screen.dart';
+import '../../core/config/api_config.dart';
 
 class VaccineSelectionScreen extends StatefulWidget {
   final String childId;
@@ -53,7 +54,7 @@ class _VaccineSelectionScreenState extends State<VaccineSelectionScreen> {
     try {
       final ageInMonths = _getChildAgeInMonths();
       
-      final url = Uri.parse("http://localhost:5050/api/mobile/vaccine-calendar");
+      final url = Uri.parse("${ApiConfig.apiBaseUrl}/mobile/vaccine-calendar");
       final response = await http.get(
         url,
         headers: {
@@ -64,32 +65,33 @@ class _VaccineSelectionScreenState extends State<VaccineSelectionScreen> {
       if (response.statusCode == 200) {
         final List<dynamic> allCalendar = jsonDecode(response.body);
 
-        // Filtrer les vaccins jusqu'à l'âge actuel de l'enfant
+        // Filtrer les vaccins qui sont pertinents pour l'enfant :
+        // 1. Les vaccins dans la plage d'âge actuelle (minAge <= age <= maxAge)
+        // 2. Les vaccins recommandés AVANT l'âge actuel (maxAge < age) pour savoir s'ils ont été faits
         final relevantVaccines = allCalendar.where((entry) {
           final ageUnit = entry['ageUnit'] as String;
-          double vaccineAgeInMonths = 0;
-
-          if (entry['specificAge'] != null) {
-            final age = entry['specificAge'] as int;
-            if (ageUnit == 'MONTHS') {
-              vaccineAgeInMonths = age.toDouble();
-            } else if (ageUnit == 'WEEKS') {
-              vaccineAgeInMonths = age / 4.33;
-            } else if (ageUnit == 'YEARS') {
-              vaccineAgeInMonths = age * 12.0;
-            }
-          } else if (entry['minAge'] != null) {
-            final age = entry['minAge'] as int;
-            if (ageUnit == 'MONTHS') {
-              vaccineAgeInMonths = age.toDouble();
-            } else if (ageUnit == 'WEEKS') {
-              vaccineAgeInMonths = age / 4.33;
-            } else if (ageUnit == 'YEARS') {
-              vaccineAgeInMonths = age * 12.0;
-            }
+          final minAge = entry['minAge'] as int?;
+          final maxAge = entry['maxAge'] as int?;
+          
+          // Convertir l'âge de l'enfant dans l'unité du calendrier
+          double childAgeInCalendarUnit = 0;
+          if (ageUnit == 'MONTHS') {
+            childAgeInCalendarUnit = ageInMonths.toDouble();
+          } else if (ageUnit == 'WEEKS') {
+            childAgeInCalendarUnit = (ageInMonths * 4.33);
+          } else if (ageUnit == 'YEARS') {
+            childAgeInCalendarUnit = (ageInMonths / 12.0);
           }
-
-          return vaccineAgeInMonths <= ageInMonths;
+          
+          // Inclure le vaccin si :
+          // - L'enfant est dans la plage d'âge (minAge <= age <= maxAge), OU
+          // - Le vaccin est recommandé avant l'âge actuel (maxAge < age) pour vérifier s'il a été fait
+          final isInCurrentRange = (minAge == null || childAgeInCalendarUnit >= minAge) &&
+                                    (maxAge == null || childAgeInCalendarUnit <= maxAge);
+          
+          final isPastRange = maxAge != null && childAgeInCalendarUnit > maxAge;
+          
+          return isInCurrentRange || isPastRange;
         }).toList();
 
         // Transformer en liste de vaccins individuels
@@ -188,7 +190,7 @@ class _VaccineSelectionScreenState extends State<VaccineSelectionScreen> {
       }
 
       final url = Uri.parse(
-          "http://localhost:5050/api/mobile/children/${widget.childId}/mark-vaccines-done");
+          "${ApiConfig.apiBaseUrl}/mobile/children/${widget.childId}/mark-vaccines-done");
       final response = await http.post(
         url,
         headers: {

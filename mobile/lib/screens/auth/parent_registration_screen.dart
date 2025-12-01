@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:intl/intl.dart';
 import '../../core/widgets/basic_date_picker.dart';
 import 'verification_code_screen.dart';
+import '../../core/config/api_config.dart';
 
 class ParentRegistrationScreen extends StatefulWidget {
   const ParentRegistrationScreen({super.key});
@@ -72,7 +73,7 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
     });
 
     try {
-      final url = Uri.parse("http://localhost:5050/api/mobile/regions");
+      final url = Uri.parse("${ApiConfig.apiBaseUrl}/mobile/regions");
       final response = await http.get(url);
 
       if (response.statusCode == 200) {
@@ -102,7 +103,7 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
     });
 
     try {
-      final url = Uri.parse("http://localhost:5050/api/mobile/health-centers${regionId != null ? '?regionId=$regionId' : ''}");
+      final url = Uri.parse("${ApiConfig.apiBaseUrl}/mobile/health-centers${regionId != null ? '?regionId=$regionId' : ''}");
       final response = await http.get(url);
 
       if (response.statusCode == 200) {
@@ -165,7 +166,7 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
     try {
       // Étape 1: Demander un code de vérification
       if (_registrationId == null) {
-        final requestUrl = Uri.parse("http://localhost:5050/api/mobile/request-verification-code");
+        final requestUrl = Uri.parse("${ApiConfig.apiBaseUrl}/mobile/request-verification-code");
         final requestResponse = await http.post(
           requestUrl,
           headers: {"Content-Type": "application/json"},

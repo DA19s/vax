@@ -169,8 +169,55 @@ const sendInvitationParentEmail = async ({
   }
 };
 
+const sendVaccineRequestEmail = async ({
+  agentEmail,
+  agentName,
+  childName,
+  vaccineName,
+  dose,
+  healthCenter,
+}) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
+      <h2 style="color:#2c7be5;">Nouvelle demande de vaccination</h2>
+      <p>Bonjour ${agentName || "Agent"},</p>
+      <p>Une nouvelle demande de vaccination a été effectuée :</p>
+      <div style="background:#f5f5f5; padding:15px; border-radius:5px; margin:20px 0;">
+        <p><strong>Enfant :</strong> ${childName}</p>
+        <p><strong>Vaccin :</strong> ${vaccineName}</p>
+        <p><strong>Dose :</strong> ${dose}</p>
+        <p><strong>Centre de santé :</strong> ${healthCenter || "Non spécifié"}</p>
+      </div>
+      <p>Veuillez vous connecter à la plateforme pour programmer le rendez-vous.</p>
+      <p style="text-align:center; margin:20px 0;">
+        <a href="${process.env.FRONTEND_URL}/dashboard/rendezvous" style="background:#2c7be5; color:#fff; padding:12px 24px; text-decoration:none; border-radius:5px; font-size:16px;">
+          Voir les demandes
+        </a>
+      </p>
+      <p style="font-size:12px; color:#888;">
+        Ceci est un email automatique, merci de ne pas y répondre.
+      </p>
+    </div>
+  `;
+
+  try {
+    const info = await transporter.sendMail({
+      from: `"VacxCare" <${process.env.SMTP_USER}>`,
+      to: agentEmail,
+      subject: `Nouvelle demande de vaccination - ${vaccineName}`,
+      html,
+    });
+    console.log("Email de demande de vaccin envoyé :", info.response);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error("Erreur envoi email demande vaccin:", error.message);
+    return { success: false, error: error.message };
+  }
+};
+
 module.exports = {
   sendInvitationEmail,
   sendPasswordResetEmail,
+  sendVaccineRequestEmail,
   sendTwoFactorCode,
 };

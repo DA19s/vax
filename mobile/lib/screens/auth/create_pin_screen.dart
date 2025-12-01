@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'vaccine_selection_screen.dart';
 import '../child/child_dashboard_screen.dart';
+import '../../core/config/api_config.dart';
 
 class CreatePinScreen extends StatefulWidget {
   final String token;
@@ -127,7 +128,7 @@ class _CreatePinScreenState extends State<CreatePinScreen> {
       final parentPhoneForApi = widget.userData['parentPhone'];
       
       final response = await http.post(
-        Uri.parse('http://localhost:5050/api/mobile/parent-pin/save'),
+        Uri.parse('${ApiConfig.apiBaseUrl}/mobile/parent-pin/save'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ${widget.token}',

@@ -2,9 +2,10 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../models/system_settings.dart';
+import '../core/config/api_config.dart';
 
 class SettingsService {
-  static const String baseUrl = 'http://localhost:5050/api';
+  static String get baseUrl => ApiConfig.apiBaseUrl;
 
   static Future<SystemSettings?> getSystemSettings() async {
     try {

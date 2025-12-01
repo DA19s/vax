@@ -11,3 +11,5 @@ HAVING COUNT(*) > 1;
 ALTER TABLE "User" 
 ADD CONSTRAINT "User_phone_role_key" UNIQUE (phone, role);
 
+
+

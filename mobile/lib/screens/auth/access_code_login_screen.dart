@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'create_pin_screen.dart';
+import '../../core/config/api_config.dart';
 
 class AccessCodeLoginScreen extends StatefulWidget {
   const AccessCodeLoginScreen({super.key});
@@ -118,7 +119,7 @@ class _AccessCodeLoginScreenState extends State<AccessCodeLoginScreen> with Tick
     });
 
     try {
-      final url = Uri.parse("http://localhost:5050/api/mobile/verify-access-code");
+      final url = Uri.parse("${ApiConfig.apiBaseUrl}/mobile/verify-access-code");
       final response = await http.post(
         url,
         headers: {"Content-Type": "application/json"},

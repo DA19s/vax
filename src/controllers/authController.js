@@ -93,15 +93,12 @@ const ensureNationalBuckets = async () => {
     for (const calendar of calendars) {
       const ageValue = computeAgeByUnit(child.birthDate, calendar.ageUnit);
 
-      const withinRange =
-        calendar.specificAge != null
-          ? ageValue === calendar.specificAge
-          : ageValue >= calendar.minAge && ageValue <= calendar.maxAge;
+      // Vérifier si l'enfant est dans la plage d'âge (minAge à maxAge)
+      // Le specificAge est utilisé uniquement pour calculer la date cible, pas pour l'éligibilité
+      const withinRange = ageValue >= calendar.minAge && ageValue <= calendar.maxAge;
 
-      const pastRange =
-        calendar.specificAge != null
-          ? ageValue > calendar.specificAge
-          : ageValue > calendar.maxAge;
+      // Vérifier si l'enfant a dépassé la plage d'âge
+      const pastRange = ageValue > calendar.maxAge;
 
       const scheduledDate = computeScheduledDate(
         child.birthDate,

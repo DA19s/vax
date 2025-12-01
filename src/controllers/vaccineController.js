@@ -1,5 +1,10 @@
 const PDFDocument = require("pdfkit");
 const prisma = require("../config/prismaClient");
+const {
+  notifyVaccineScheduled,
+  notifyVaccineMissed,
+  notifyVaccineLate,
+} = require("../services/notificationService");
 const { get } = require("../routes");
 const {
   reserveDoseForHealthCenter,
@@ -587,6 +592,7 @@ const ScheduleVaccine = async (req, res, next) => {
         },
         include: {
           vaccine: { select: { id: true, name: true, dosesRequired: true } },
+          child: { select: { id: true, phoneParent: true } },
         },
       });
 
@@ -598,35 +604,26 @@ const ScheduleVaccine = async (req, res, next) => {
         },
       });
 
-      await tx.childVaccineDue.deleteMany({
-        where: {
-          childId,
-          vaccineId,
-          dose,
-          ...(vaccineCalendarId
-            ? { vaccineCalendarId }
-            : { vaccineCalendarId: null }),
-        },
-      });
+      // Créer une notification pour le parent (après la transaction)
+      // On le fait après la transaction pour éviter les problèmes de rollback
+      if (created.child) {
+        setImmediate(async () => {
+          try {
+            await notifyVaccineScheduled({
+              childId: created.child.id,
+              vaccineName: created.vaccine.name,
+              scheduledDate: created.scheduledFor,
+            });
+          } catch (notifError) {
+            console.error("Erreur création notification:", notifError);
+          }
+        });
+      }
 
-      await tx.childVaccineOverdue.deleteMany({
-        where: {
-          childId,
-          vaccineId,
-          dose,
-        },
-      });
-
-      await tx.childVaccineLate.deleteMany({
-        where: {
-          childId,
-          vaccineId,
-          dose,
-          ...(vaccineCalendarId
-            ? { vaccineCalendarId }
-            : { vaccineCalendarId: null }),
-        },
-      });
+      // NE PAS supprimer les entrées de due, late, overdue lors de la programmation
+      // On attend que le vaccin soit complété (dans completeVaccine) pour les supprimer
+      // Cela garantit que les vaccins restent visibles comme "à faire" ou "en retard"
+      // jusqu'à ce qu'ils soient réellement administrés
 
       await tx.children.update({
         where: { id: childId },
@@ -856,6 +853,8 @@ const completeVaccine = async (req, res, next) => {
 
       const dose = scheduled.dose ?? 1;
 
+      // Supprimer uniquement l'entrée correspondant à la dose complétée
+      // (pas toutes les doses du vaccin)
       await tx.childVaccineDue.deleteMany({
         where: {
           childId: scheduled.childId,
@@ -864,18 +863,7 @@ const completeVaccine = async (req, res, next) => {
         },
       });
 
-      // Supprimer les entrées overdue pour cette dose spécifique
-      await tx.childVaccineOverdue.deleteMany({
-        where: {
-          childId: scheduled.childId,
-          vaccineId: scheduled.vaccineId,
-          dose,
-        },
-      });
-
-      // Supprimer les entrées late pour cette dose spécifique
-      // Si vaccineCalendarId est null, supprimer toutes les entrées pour ce vaccin et cette dose
-      // Sinon, supprimer uniquement celles avec le même vaccineCalendarId
+      // Supprimer l'entrée late pour cette dose spécifique
       if (scheduled.vaccineCalendarId) {
         await tx.childVaccineLate.deleteMany({
           where: {
@@ -886,8 +874,7 @@ const completeVaccine = async (req, res, next) => {
           },
         });
       } else {
-        // Si vaccineCalendarId est null, supprimer toutes les entrées late pour ce vaccin et cette dose
-        // car on ne peut pas faire correspondre un calendarId spécifique
+        // Si vaccineCalendarId est null, supprimer toutes les entrées late pour cette dose
         await tx.childVaccineLate.deleteMany({
           where: {
             childId: scheduled.childId,
@@ -896,6 +883,71 @@ const completeVaccine = async (req, res, next) => {
           },
         });
       }
+
+      // Supprimer l'entrée overdue pour cette dose spécifique
+      await tx.childVaccineOverdue.deleteMany({
+        where: {
+          childId: scheduled.childId,
+          vaccineId: scheduled.vaccineId,
+          dose,
+        },
+      });
+
+      // Vérifier si toutes les doses requises du vaccin sont complétées
+      const vaccine = await tx.vaccine.findUnique({
+        where: { id: scheduled.vaccineId },
+        select: { dosesRequired: true },
+      });
+
+      const dosesRequired = vaccine?.dosesRequired 
+        ? parseInt(vaccine.dosesRequired, 10) 
+        : 1;
+      const totalDoses = isFinite(dosesRequired) && dosesRequired > 0 ? dosesRequired : 1;
+
+      // Compter les doses complétées pour ce vaccin
+      const completedCount = await tx.childVaccineCompleted.count({
+        where: {
+          childId: scheduled.childId,
+          vaccineId: scheduled.vaccineId,
+        },
+      });
+
+      // Si toutes les doses sont complétées, supprimer toutes les entrées restantes
+      // (au cas où il y aurait des entrées pour d'autres doses qui n'ont pas été supprimées)
+      if (completedCount >= totalDoses) {
+        await tx.childVaccineDue.deleteMany({
+          where: {
+            childId: scheduled.childId,
+            vaccineId: scheduled.vaccineId,
+          },
+        });
+
+        await tx.childVaccineLate.deleteMany({
+          where: {
+            childId: scheduled.childId,
+            vaccineId: scheduled.vaccineId,
+          },
+        });
+
+        await tx.childVaccineOverdue.deleteMany({
+          where: {
+            childId: scheduled.childId,
+            vaccineId: scheduled.vaccineId,
+          },
+        });
+      }
+
+      // Mettre à jour le statut de l'enfant en fonction des vaccins restants
+      const hasLateOrOverdue =
+        (await tx.childVaccineLate.count({ where: { childId: scheduled.childId } })) > 0 ||
+        (await tx.childVaccineOverdue.count({ where: { childId: scheduled.childId } })) > 0;
+
+      await tx.children.update({
+        where: { id: scheduled.childId },
+        data: {
+          status: hasLateOrOverdue ? "PAS_A_JOUR" : "A_JOUR",
+        },
+      });
 
       return newVaccineCompleted;
     });
@@ -935,25 +987,10 @@ const moveScheduledToOverdue = async (tx, scheduled) => {
     },
   });
 
-  // Supprimer les entrées correspondantes dans late et due pour éviter les doublons
-  await tx.childVaccineLate.deleteMany({
-    where: {
-      childId: scheduled.childId,
-      vaccineId: scheduled.vaccineId,
-      dose,
-    },
-  });
-
-  await tx.childVaccineDue.deleteMany({
-    where: {
-      childId: scheduled.childId,
-      vaccineId: scheduled.vaccineId,
-      dose,
-      ...(scheduled.vaccineCalendarId
-        ? { vaccineCalendarId: scheduled.vaccineCalendarId }
-        : { vaccineCalendarId: null }),
-    },
-  });
+  // NE PAS supprimer les entrées dans late et due lors du passage en overdue
+  // On attend que le vaccin soit complété pour les supprimer
+  // Cela garantit que les vaccins restent visibles comme "à faire" ou "en retard"
+  // jusqu'à ce qu'ils soient réellement administrés
 
   await releaseReservationForSchedule(tx, scheduled.id, { consume: false });
 
@@ -1137,27 +1174,8 @@ const updateScheduledVaccine = async (req, res, next) => {
           },
         });
 
-        await tx.childVaccineDue.deleteMany({
-          where: {
-            childId: scheduled.childId,
-            vaccineId,
-            dose,
-          },
-        });
-        await tx.childVaccineLate.deleteMany({
-          where: {
-            childId: scheduled.childId,
-            vaccineId,
-            dose,
-          },
-        });
-        await tx.childVaccineOverdue.deleteMany({
-          where: {
-            childId: scheduled.childId,
-            vaccineId,
-            dose,
-          },
-        });
+        // NE PAS supprimer les entrées de due, late, overdue lors de la reprogrammation
+        // On attend que le vaccin soit complété pour les supprimer
 
         await tx.children.update({
           where: { id: scheduled.childId },

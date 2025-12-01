@@ -1,5 +1,6 @@
 const app = require("./app");
 const prisma = require("./config/prismaClient");
+const { initSocket } = require("./socket");
 
 const port = process.env.PORT || 5050;
 
@@ -22,6 +23,10 @@ const startServer = async () => {
     server = app.listen(port, () => {
       console.log(`API listening on http://localhost:${port}`);
     });
+
+    // Initialiser Socket.io
+    initSocket(server);
+    console.log("Socket.io initialized");
   } catch (error) {
     console.error("Unable to start server:", error);
     process.exit(1);
