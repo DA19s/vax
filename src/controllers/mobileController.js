@@ -907,8 +907,8 @@ const markVaccinesDone = async (req, res, next) => {
     }
 
     await prisma.$transaction(async (tx) => {
-      for (const vaccineData of vaccines) {
-        const { vaccineCalendarId, vaccineId } = vaccineData;
+      for (const vaccinePayload of vaccines) {
+        const { vaccineCalendarId, vaccineId } = vaccinePayload;
 
         if (!vaccineId) {
           continue; // Ignorer si vaccineId manquant
@@ -960,7 +960,6 @@ const markVaccinesDone = async (req, res, next) => {
           where: {
             childId,
             vaccineId,
-            dose,
             ...(vaccineCalendarId ? { vaccineCalendarId } : {}),
           },
         });
@@ -969,7 +968,6 @@ const markVaccinesDone = async (req, res, next) => {
           where: {
             childId,
             vaccineId,
-            dose,
             ...(vaccineCalendarId ? { vaccineCalendarId } : {}),
           },
         });
@@ -978,18 +976,17 @@ const markVaccinesDone = async (req, res, next) => {
           where: {
             childId,
             vaccineId,
-            dose,
           },
         });
 
         // Vérifier si toutes les doses requises du vaccin sont complétées
-        const vaccineData = await tx.vaccine.findUnique({
+        const vaccineInfo = await tx.vaccine.findUnique({
           where: { id: vaccineId },
           select: { dosesRequired: true },
         });
 
-        const dosesRequired = vaccineData?.dosesRequired 
-          ? parseInt(vaccineData.dosesRequired, 10) 
+        const dosesRequired = vaccineInfo?.dosesRequired
+          ? parseInt(vaccineInfo.dosesRequired, 10)
           : 1;
         const totalDoses = isFinite(dosesRequired) && dosesRequired > 0 ? dosesRequired : 1;
 

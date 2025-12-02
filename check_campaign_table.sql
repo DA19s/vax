@@ -5,3 +5,4 @@ SELECT EXISTS (
    AND table_name = 'Campaign'
 );
 
+

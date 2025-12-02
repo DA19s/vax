@@ -54,7 +54,10 @@ class _VaccineSelectionScreenState extends State<VaccineSelectionScreen> {
     try {
       final ageInMonths = _getChildAgeInMonths();
       
-      final url = Uri.parse("${ApiConfig.apiBaseUrl}/mobile/vaccine-calendar");
+      final uri = Uri.parse("${ApiConfig.apiBaseUrl}/mobile/vaccine-calendar");
+      final url = uri.replace(queryParameters: {
+        "childId": widget.childId,
+      });
       final response = await http.get(
         url,
         headers: {

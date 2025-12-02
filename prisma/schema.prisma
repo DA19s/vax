@@ -211,7 +211,7 @@ model Children {
   birthPlace              String
   gender                  Gender
   address                 String
-  healthCenterId          String          @unique
+  healthCenterId          String
   healthCenter            HealthCenter    @relation(fields: [healthCenterId], references: [id])
   status                  Status
   emailParent             String
@@ -232,6 +232,7 @@ model Children {
   scheduledVaccines      ChildVaccineScheduled[]
   overdueVaccines        ChildVaccineOverdue[]
   lateVaccines           ChildVaccineLate[]
+  notifications          Notification[]
 }
 
 enum Gender {
@@ -328,6 +329,22 @@ model ChildVaccineLate {
   vaccine            Vaccine          @relation(fields: [vaccineId], references: [id])
   dueDate            DateTime         
   detectedAt         DateTime         @default(now()) // moment où le retard est détecté
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  childId   String
+  child     Children @relation(fields: [childId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  type      String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([childId])
+  @@index([isRead])
+  @@index([createdAt])
 }
 
 enum StockLotOwnerType {

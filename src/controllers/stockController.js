@@ -323,7 +323,7 @@ const calculateNearestExpirations = async (stocks, ownerType) => {
   const where = {
     ownerType,
     vaccineId: { in: vaccineIds },
-    status: LOT_STATUS.VALID,
+    status: { in: [LOT_STATUS.VALID, LOT_STATUS.EXPIRED] },
     remainingQuantity: { gt: 0 },
   };
 
