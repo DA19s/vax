@@ -132,7 +132,7 @@ class _CalendrierVaccinalScreenState extends State<CalendrierVaccinalScreen> {
     String? next;
     final upcoming = merged
         .where((v) =>
-            ["scheduled", "planned", "pending"].contains(v['status']) &&
+            ["scheduled", "planned", "pending", "due"].contains(v['status']) &&
             v['date'] != null)
         .toList();
 
@@ -163,7 +163,8 @@ class _CalendrierVaccinalScreenState extends State<CalendrierVaccinalScreen> {
     final hasPlanned = events.any((e) =>
         e['status'] == 'scheduled' ||
         e['status'] == 'planned' ||
-        e['status'] == 'pending');
+        e['status'] == 'pending' ||
+        e['status'] == 'due');
 
     // ⭐ Filtre "Fait" → n'afficher que les jours qui ont au moins un "done"
     if (_filterDoneOnly) {
