@@ -8,6 +8,28 @@ const getCampaigns = async (req, res, next) => {
     // Si l'utilisateur est régional, filtrer par sa région
     if (req.user.role === "REGIONAL" && req.user.regionId) {
       whereClause.regionId = req.user.regionId;
+    } else if (req.user.role === "DISTRICT") {
+      // Si l'utilisateur est district, filtrer par la région de son district
+      if (!req.user.districtId) {
+        return res.json({ campaigns: [] });
+      }
+      
+      const district = await prisma.district.findUnique({
+        where: { id: req.user.districtId },
+        select: {
+          commune: {
+            select: {
+              regionId: true,
+            },
+          },
+        },
+      });
+
+      if (!district?.commune?.regionId) {
+        return res.json({ campaigns: [] });
+      }
+
+      whereClause.regionId = district.commune.regionId;
     }
 
     const campaigns = await prisma.campaign.findMany({

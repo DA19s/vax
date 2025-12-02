@@ -45,6 +45,14 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Rendez-vous'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Color(0xFF0A1A33)),
+          onPressed: () {
+            if (Navigator.canPop(context)) {
+              Navigator.pop(context);
+            }
+          },
+        ),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())

@@ -269,6 +269,14 @@ class _VaccineSelectionScreenState extends State<VaccineSelectionScreen> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Color(0xFF0A1A33)),
+          onPressed: () {
+            if (Navigator.canPop(context)) {
+              Navigator.pop(context);
+            }
+          },
+        ),
         title: Text(
           "Vaccins déjà faits",
           style: GoogleFonts.poppins(

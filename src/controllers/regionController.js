@@ -165,6 +165,21 @@ const deleteRegion = async (req, res, next) => {
         });
       }
 
+      // Récupérer les lots avant de les supprimer pour supprimer les StockTransferLot associés
+      const lots = await tx.stockLot.findMany({
+        where: { OR: lotConditions },
+        select: { id: true },
+      });
+
+      const lotIds = lots.map((lot) => lot.id);
+      if (lotIds.length > 0) {
+        // Supprimer d'abord les StockTransferLot (ils ont une FK vers StockLot)
+        await tx.stockTransferLot.deleteMany({
+          where: { lotId: { in: lotIds } },
+        });
+      }
+
+      // Maintenant on peut supprimer les lots
       await tx.stockLot.deleteMany({ where: { OR: lotConditions } });
 
       if (healthCenterIds.length) {

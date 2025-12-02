@@ -40,7 +40,7 @@ export default function VaccinsPage() {
   const [modalMode, setModalMode] = useState<"create" | "edit">("create");
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "", description: "", dosesRequired: "" });
+  const [form, setForm] = useState({ name: "", description: "", dosesRequired: "", gender: "" });
   const [saving, setSaving] = useState(false);
 
   const [stockModalId, setStockModalId] = useState<string | null>(null);
@@ -93,7 +93,7 @@ export default function VaccinsPage() {
     if (!isNational) return;
     setModalMode("create");
     setEditingId(null);
-    setForm({ name: "", description: "", dosesRequired: "" });
+    setForm({ name: "", description: "", dosesRequired: "", gender: "" });
     setModalOpen(true);
   };
 
@@ -105,6 +105,7 @@ export default function VaccinsPage() {
       name: vaccine.name,
       description: vaccine.description,
       dosesRequired: vaccine.dosesRequired,
+      gender: (vaccine as any).gender || "",
     });
     setModalOpen(true);
   };
@@ -112,7 +113,7 @@ export default function VaccinsPage() {
   const closeModal = () => {
     setModalOpen(false);
     setEditingId(null);
-    setForm({ name: "", description: "", dosesRequired: "" });
+    setForm({ name: "", description: "", dosesRequired: "", gender: "" });
   };
 
   const handleSubmit = async (event: FormEvent) => {
@@ -144,6 +145,7 @@ export default function VaccinsPage() {
           name: form.name.trim(),
           description: form.description.trim(),
           dosesRequired: form.dosesRequired.trim(),
+          gender: form.gender || null,
         }),
       });
 
@@ -343,6 +345,26 @@ export default function VaccinsPage() {
                   }
                   className="w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                 />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-600">
+                  Genre (optionnel)
+                </label>
+                <select
+                  value={form.gender}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, gender: event.target.value }))
+                  }
+                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                >
+                  <option value="">Pour garçons et filles</option>
+                  <option value="M">Garçons uniquement</option>
+                  <option value="F">Filles uniquement</option>
+                </select>
+                <p className="text-xs text-slate-500 mt-1">
+                  Si vide, le vaccin est pour tous. Sinon, spécifiez le genre cible.
+                </p>
               </div>
 
               <div className="flex justify-end gap-3 pt-2">

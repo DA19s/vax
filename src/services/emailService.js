@@ -215,9 +215,58 @@ const sendVaccineRequestEmail = async ({
   }
 };
 
+const sendStockTransferNotificationEmail = async ({
+  emails,
+  vaccineName,
+  quantity,
+  regionName,
+}) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
+      <h2 style="color:#2c7be5;">Nouvel envoi de stock</h2>
+      <p>Bonjour,</p>
+      <p>Un envoi de stock vous a été effectué depuis le niveau national :</p>
+      <div style="background:#f5f5f5; padding:15px; border-radius:5px; margin:20px 0;">
+        <p><strong>Vaccin :</strong> ${vaccineName}</p>
+        <p><strong>Quantité :</strong> ${quantity} doses</p>
+        <p><strong>Région :</strong> ${regionName || "Non spécifiée"}</p>
+      </div>
+      <p>Veuillez vous connecter à la plateforme pour confirmer la réception du stock une fois que vous l'aurez reçu physiquement.</p>
+      <p style="text-align:center; margin:20px 0;">
+        <a href="${process.env.FRONTEND_URL}/dashboard/stocks" style="background:#2c7be5; color:#fff; padding:12px 24px; text-decoration:none; border-radius:5px; font-size:16px;">
+          Voir les envois en attente
+        </a>
+      </p>
+      <p style="font-size:12px; color:#888;">
+        Ceci est un email automatique, merci de ne pas y répondre.
+      </p>
+    </div>
+  `;
+
+  const results = [];
+  for (const email of emails) {
+    try {
+      const info = await transporter.sendMail({
+        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        to: email,
+        subject: `Nouvel envoi de stock - ${vaccineName}`,
+        html,
+      });
+      console.log(`Email d'envoi de stock envoyé à ${email}:`, info.response);
+      results.push({ email, success: true, messageId: info.messageId });
+    } catch (error) {
+      console.error(`Erreur envoi email à ${email}:`, error.message);
+      results.push({ email, success: false, error: error.message });
+    }
+  }
+
+  return results;
+};
+
 module.exports = {
   sendInvitationEmail,
   sendPasswordResetEmail,
   sendVaccineRequestEmail,
   sendTwoFactorCode,
+  sendStockTransferNotificationEmail,
 };

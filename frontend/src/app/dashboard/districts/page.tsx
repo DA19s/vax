@@ -50,6 +50,7 @@ export default function DistrictsPage() {
   const [nameInput, setNameInput] = useState("");
   const [communeId, setCommuneId] = useState("");
   const [saving, setSaving] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
 
   const [deleteTarget, setDeleteTarget] = useState<District | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -134,6 +135,7 @@ export default function DistrictsPage() {
     setCurrentId(null);
     setNameInput("");
     setCommuneId("");
+    setModalError(null);
   };
 
   const openCreateModal = () => {
@@ -175,7 +177,7 @@ export default function DistrictsPage() {
 
     try {
       setSaving(true);
-      setError(null);
+      setModalError(null);
 
       const res = await fetch(endpoint, {
         method,
@@ -187,15 +189,20 @@ export default function DistrictsPage() {
       });
 
       if (!res.ok) {
-        const message = await res.json().catch(() => null);
-        throw new Error(message?.message ?? `status ${res.status}`);
+        const errorData = await res.json().catch(() => null);
+        const errorMessage = errorData?.message ?? `Erreur ${res.status}`;
+        throw new Error(errorMessage);
       }
 
       resetModal();
       await fetchDistricts();
     } catch (err) {
       console.error("Erreur sauvegarde district:", err);
-      setError("Impossible d'enregistrer le district");
+      // Utiliser le message d'erreur du backend s'il existe, sinon message générique
+      const errorMessage = err instanceof Error && err.message 
+        ? err.message 
+        : "Impossible d'enregistrer le district";
+      setModalError(errorMessage);
     } finally {
       setSaving(false);
     }
@@ -392,12 +399,24 @@ export default function DistrictsPage() {
             </div>
 
             <div className="space-y-4 px-6 py-4">
+              {modalError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4" />
+                    <span>{modalError}</span>
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="text-sm font-medium text-slate-600">Nom du district</label>
                 <input
                   type="text"
                   value={nameInput}
-                  onChange={(event) => setNameInput(event.target.value)}
+                  onChange={(event) => {
+                    setNameInput(event.target.value);
+                    setModalError(null);
+                  }}
                   className="mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
                 />
               </div>
@@ -407,7 +426,10 @@ export default function DistrictsPage() {
                   <label className="text-sm font-medium text-slate-600">Commune associée</label>
                   <select
                     value={communeId}
-                    onChange={(event) => setCommuneId(event.target.value)}
+                    onChange={(event) => {
+                      setCommuneId(event.target.value);
+                      setModalError(null);
+                    }}
                     className="mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
                   >
                     <option value="">— Sélectionner une commune —</option>

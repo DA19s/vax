@@ -22,7 +22,7 @@ type SystemSettingsContextShape = {
 };
 
 const defaultSettings: SystemSettings = {
-  appName: "VaxCare",
+  appName: "Imunia",
   appSubtitle: "Plateforme de gestion de vaccination",
   logoUrl: "/logo.png",
 };

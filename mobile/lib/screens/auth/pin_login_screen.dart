@@ -201,6 +201,18 @@ class _PinLoginScreenState extends State<PinLoginScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Color(0xFF0A1A33)),
+          onPressed: () {
+            if (Navigator.canPop(context)) {
+              Navigator.pop(context);
+            }
+          },
+        ),
+      ),
       body: SafeArea(
         child: FadeTransition(
           opacity: _fadeAnimation,
@@ -240,7 +252,7 @@ class _PinLoginScreenState extends State<PinLoginScreen>
                   const SizedBox(height: 20),
 
                   Text(
-                    "VaxCare",
+                    "Imunia",
                     style: GoogleFonts.poppins(
                       fontSize: 36,
                       fontWeight: FontWeight.bold,

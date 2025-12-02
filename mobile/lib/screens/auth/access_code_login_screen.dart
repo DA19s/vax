@@ -183,20 +183,38 @@ class _AccessCodeLoginScreenState extends State<AccessCodeLoginScreen> with Tick
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Color(0xFF0A1A33)),
+          onPressed: () {
+            if (Navigator.canPop(context)) {
+              Navigator.pop(context);
+            }
+          },
+        ),
+      ),
       body: SafeArea(
         child: FadeTransition(
           opacity: _fadeAnimation,
           child: SlideTransition(
             position: _slideAnimation,
-            child: SingleChildScrollView(
-              physics: const BouncingScrollPhysics(),
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-              child: Column(
-                children: [
-                  const SizedBox(height: 30),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight - 40,
+                    ),
+                    child: Column(
+                      children: [
+                        const SizedBox(height: 20),
 
-                  // Logo animé avec effet de respiration - AGRANDI
-                  ScaleTransition(
+                        // Logo animé avec effet de respiration - AGRANDI
+                        ScaleTransition(
                     scale: _logoAnimation,
                     child: Container(
                       padding: const EdgeInsets.all(25),
@@ -219,11 +237,11 @@ class _AccessCodeLoginScreenState extends State<AccessCodeLoginScreen> with Tick
                     ),
                   ),
 
-                  const SizedBox(height: 20),
+                        const SizedBox(height: 20),
 
-                  // Titre VAXCARE
-                  Text(
-                    "VaxCare",
+                        // Titre IMUNIA
+                        Text(
+                    "Imunia",
                     style: GoogleFonts.poppins(
                       fontSize: 36,
                       fontWeight: FontWeight.bold,
@@ -232,10 +250,10 @@ class _AccessCodeLoginScreenState extends State<AccessCodeLoginScreen> with Tick
                     ),
                   ),
 
-                  const SizedBox(height: 8),
+                        const SizedBox(height: 8),
 
-                  Text(
-                    "Bienvenue sur votre carnet de santé digital",
+                        Text(
+                          "Bienvenue sur votre carnet de santé digital",
                     textAlign: TextAlign.center,
                     style: GoogleFonts.poppins(
                       fontSize: 14,
@@ -244,10 +262,10 @@ class _AccessCodeLoginScreenState extends State<AccessCodeLoginScreen> with Tick
                     ),
                   ),
 
-                  const SizedBox(height: 50),
+                        const SizedBox(height: 50),
 
-                  // Card bleue avec transparence
-                  Container(
+                        // Card bleue avec transparence
+                        Container(
                     padding: const EdgeInsets.all(28),
                     decoration: BoxDecoration(
                       color: const Color(0xFF0A1A33).withOpacity(0.05),
@@ -406,45 +424,48 @@ class _AccessCodeLoginScreenState extends State<AccessCodeLoginScreen> with Tick
                         ],
                       ],
                     ),
-                  ),
-
-                  const SizedBox(height: 30),
-
-                  // Message d'aide
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0A1A33).withOpacity(0.05),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: const Color(0xFF0A1A33).withOpacity(0.1),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.info_outline,
-                          color: const Color(0xFF0A1A33).withOpacity(0.6),
-                          size: 22,
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            "Vous n'avez pas reçu le code d'accès ?\nContactez votre agent de santé.",
-                            style: GoogleFonts.poppins(
-                              fontSize: 13,
-                              color: const Color(0xFF64748B),
-                              height: 1.5,
+
+                        const SizedBox(height: 20),
+
+                        // Message d'aide
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0A1A33).withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: const Color(0xFF0A1A33).withOpacity(0.1),
                             ),
                           ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.info_outline,
+                                color: const Color(0xFF0A1A33).withOpacity(0.6),
+                                size: 22,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  "Vous n'avez pas reçu le code d'accès ?\nContactez votre agent de santé.",
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 13,
+                                    color: const Color(0xFF64748B),
+                                    height: 1.5,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
+                        
+                        const SizedBox(height: 20),
                       ],
                     ),
                   ),
-
-                  const SizedBox(height: 20),
-                ],
-              ),
+                );
+              },
             ),
           ),
         ),

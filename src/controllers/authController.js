@@ -4,6 +4,21 @@ const tokenService = require("../services/tokenService");
 const { missVaccine } = require("./vaccineController");
 const { refreshExpiredLots } = require("../services/stockLotService");
 
+/**
+ * Vérifie si un vaccin correspond au genre d'un enfant
+ * @param {Object} vaccine - Le vaccin avec son champ gender (peut être null, 'M', ou 'F')
+ * @param {string} childGender - Le genre de l'enfant ('M' ou 'F')
+ * @returns {boolean} - true si le vaccin peut être administré à cet enfant
+ */
+const isVaccineSuitableForGender = (vaccine, childGender) => {
+  // Si le vaccin n'a pas de genre spécifié (null), il est pour tous
+  if (!vaccine.gender) {
+    return true;
+  }
+  // Si le vaccin a un genre, il doit correspondre au genre de l'enfant
+  return vaccine.gender === childGender;
+};
+
 const computeAgeByUnit = (birthDate, unit) => {
   const now = new Date();
   const birth = new Date(birthDate);
@@ -62,31 +77,30 @@ const ensureNationalBuckets = async () => {
     const dueCreate = [];
     const lateCreate = [];
 
-    const completedDoseSet = new Set(
+    // Utiliser vaccineCalendarId et vaccineId pour identifier les vaccins (plus de dose)
+    const completedSet = new Set(
       (child.completedVaccines ?? []).map(
-        (entry) => `${entry.vaccineId}::${entry.dose ?? 1}`
+        (entry) => `${entry.vaccineId}::${entry.vaccineCalendarId ?? ""}`
       )
     );
-    const scheduledDoseSet = new Set(
+    const scheduledSet = new Set(
       (child.scheduledVaccines ?? []).map(
-        (entry) => `${entry.vaccineId}::${entry.dose ?? 1}`
+        (entry) => `${entry.vaccineId}::${entry.vaccineCalendarId ?? ""}`
       )
     );
-    const overdueDoseSet = new Set(
+    const overdueSet = new Set(
       (child.overdueVaccines ?? []).map(
-        (entry) => `${entry.vaccineId}::${entry.dose ?? 1}`
+        (entry) => `${entry.vaccineId}::${entry.vaccineCalendarId ?? ""}`
       )
     );
-    const dueDoseSet = new Set(
+    const dueSet = new Set(
       (child.dueVaccines ?? []).map(
-        (entry) =>
-          `${entry.vaccineId}::${entry.vaccineCalendarId ?? ""}::${entry.dose ?? 1}`
+        (entry) => `${entry.vaccineId}::${entry.vaccineCalendarId ?? ""}`
       )
     );
-    const lateDoseSet = new Set(
+    const lateSet = new Set(
       (child.lateVaccines ?? []).map(
-        (entry) =>
-          `${entry.vaccineId}::${entry.vaccineCalendarId ?? ""}::${entry.dose ?? 1}`
+        (entry) => `${entry.vaccineId}::${entry.vaccineCalendarId ?? ""}`
       )
     );
 
@@ -108,51 +122,36 @@ const ensureNationalBuckets = async () => {
       );
 
       for (const vaccine of calendar.vaccines) {
-        const dosesRequired = Number.parseInt(vaccine.dosesRequired, 10);
-        const totalDoses = Number.isFinite(dosesRequired) && dosesRequired > 0 ? dosesRequired : 1;
-
-        const missingDoses = [];
-        for (let dose = 1; dose <= totalDoses; dose += 1) {
-          const doseKey = `${vaccine.id}::${dose}`;
-          const hasCompleted = completedDoseSet.has(doseKey);
-          const hasScheduled = scheduledDoseSet.has(doseKey);
-          const hasOverdue = overdueDoseSet.has(doseKey);
-
-          if (!hasCompleted && !hasScheduled && !hasOverdue) {
-            missingDoses.push(dose);
-          }
+        // Vérifier si le vaccin correspond au genre de l'enfant
+        if (!isVaccineSuitableForGender(vaccine, child.gender)) {
+          continue; // Passer ce vaccin s'il ne correspond pas au genre
         }
 
-        if (withinRange && missingDoses.length > 0) {
-          const nextDose = missingDoses[0];
-          const dueKey = `${vaccine.id}::${calendar.id}::${nextDose}`;
-          if (!dueDoseSet.has(dueKey)) {
+        const key = `${vaccine.id}::${calendar.id}`;
+        const hasCompleted = completedSet.has(key);
+        const hasScheduled = scheduledSet.has(key);
+        const hasOverdue = overdueSet.has(key);
+        const hasDue = dueSet.has(key);
+        const hasLate = lateSet.has(key);
+
+        // Si l'enfant n'a pas encore ce vaccin pour ce calendrier
+        if (!hasCompleted && !hasScheduled && !hasOverdue && !hasDue && !hasLate) {
+          if (withinRange) {
+            // Dans la plage d'âge : créer une entrée "due"
             dueCreate.push({
               childId: child.id,
               vaccineId: vaccine.id,
               vaccineCalendarId: calendar.id,
               scheduledFor: scheduledDate,
-              dose: nextDose,
             });
-            dueDoseSet.add(dueKey);
-          }
-        }
-
-        if (pastRange && scheduledDate < today && missingDoses.length > 0) {
-          for (const dose of missingDoses) {
-            const lateKey = `${vaccine.id}::${calendar.id}::${dose}`;
-            if (lateDoseSet.has(lateKey)) {
-              continue;
-            }
-
+          } else if (pastRange && scheduledDate < today) {
+            // Dépassé la plage d'âge et la date est passée : créer une entrée "late"
             lateCreate.push({
               childId: child.id,
               vaccineId: vaccine.id,
               vaccineCalendarId: calendar.id,
               dueDate: scheduledDate,
-              dose,
             });
-            lateDoseSet.add(lateKey);
           }
         }
       }

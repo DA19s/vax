@@ -10,15 +10,116 @@ const respondIfUniqueConstraint = (error, res, defaultMessage) => {
     return false;
   }
 
-  const fieldMessageMap = {
-    User_email_role_key: "Cet email est déjà utilisé pour ce rôle.",
-    User_phone_role_key: "Ce numéro de téléphone est déjà utilisé pour ce rôle.",
-  };
+  // Récupérer les informations de la contrainte
+  const metaField = error.meta?.target?.[0] ?? error.meta?.field_name;
+  const constraintName = error.meta?.constraint;
+  const target = error.meta?.target;
 
-  const metaField =
-    error.meta?.constraint ?? error.meta?.target ?? error.meta?.field_name;
+  // Messages spécifiques selon le champ
+  let message = null;
 
-  const message = fieldMessageMap[metaField] ?? defaultMessage ?? "Cette valeur est déjà utilisée.";
+  // Vérifier si c'est l'email
+  if (
+    metaField === "email" ||
+    (Array.isArray(target) && target.includes("email")) ||
+    (typeof constraintName === "string" && constraintName.toLowerCase().includes("email"))
+  ) {
+    message = "Cet email est déjà utilisé. Veuillez utiliser un autre email.";
+  }
+  // Vérifier si c'est le téléphone
+  else if (
+    metaField === "phone" ||
+    (Array.isArray(target) && target.includes("phone")) ||
+    (typeof constraintName === "string" && constraintName.toLowerCase().includes("phone"))
+  ) {
+    message = "Ce numéro de téléphone est déjà utilisé. Veuillez utiliser un autre numéro.";
+  }
+  // Vérifier si c'est le code
+  else if (
+    metaField === "code" ||
+    (Array.isArray(target) && target.includes("code")) ||
+    (typeof constraintName === "string" && constraintName.toLowerCase().includes("code"))
+  ) {
+    message = "Ce code est déjà utilisé. Veuillez utiliser un autre code.";
+  }
+  // Vérifier si c'est le nom (pour les districts, communes, etc.)
+  else if (
+    metaField === "name" ||
+    (Array.isArray(target) && target.includes("name")) ||
+    (typeof constraintName === "string" && constraintName.toLowerCase().includes("name"))
+  ) {
+    message = "Ce nom est déjà utilisé. Veuillez utiliser un autre nom.";
+  }
+  // Vérifier les contraintes composites
+  else if (constraintName === "User_email_role_key") {
+    message = "Cet email est déjà utilisé pour ce rôle.";
+  } else if (constraintName === "User_phone_role_key") {
+    message = "Ce numéro de téléphone est déjà utilisé pour ce rôle.";
+  }
+  // Essayer d'extraire le nom du champ depuis le nom de la contrainte
+  else if (typeof constraintName === "string") {
+    const constraintLower = constraintName.toLowerCase();
+    // Extraire le nom du modèle et du champ depuis le nom de la contrainte
+    // Format typique: ModelName_fieldName_key ou ModelName_field1_field2_key
+    const parts = constraintName.split("_");
+    if (parts.length >= 2) {
+      // Le champ est généralement le dernier élément avant "key" ou l'avant-dernier
+      const fieldCandidate = parts[parts.length - 2] || parts[parts.length - 1];
+      const fieldLabels = {
+        email: "email",
+        phone: "numéro de téléphone",
+        code: "code",
+        name: "nom",
+        communeid: "commune",
+        districtid: "district",
+        regionid: "région",
+        healthcenterid: "centre de santé",
+      };
+      const label = fieldLabels[fieldCandidate.toLowerCase()];
+      if (label) {
+        message = `Ce ${label} est déjà utilisé. Veuillez utiliser un autre ${label}.`;
+      }
+    }
+  }
+  // Si on a un target array avec un seul élément, essayer de le mapper
+  else if (Array.isArray(target) && target.length === 1) {
+    const fieldLabels = {
+      email: "email",
+      phone: "numéro de téléphone",
+      code: "code",
+      name: "nom",
+      communeid: "commune",
+      districtid: "district",
+      regionid: "région",
+      healthcenterid: "centre de santé",
+    };
+    const label = fieldLabels[target[0].toLowerCase()];
+    if (label) {
+      message = `Ce ${label} est déjà utilisé. Veuillez utiliser un autre ${label}.`;
+    }
+  }
+  // Si on a un metaField, essayer de le mapper
+  else if (metaField) {
+    const fieldLabels = {
+      email: "email",
+      phone: "numéro de téléphone",
+      code: "code",
+      name: "nom",
+      communeid: "commune",
+      districtid: "district",
+      regionid: "région",
+      healthcenterid: "centre de santé",
+    };
+    const label = fieldLabels[metaField.toLowerCase()];
+    if (label) {
+      message = `Ce ${label} est déjà utilisé. Veuillez utiliser un autre ${label}.`;
+    }
+  }
+
+  // Si on n'a toujours pas de message, utiliser un message générique mais informatif
+  if (!message) {
+    message = "Une des informations saisies est déjà utilisée. Veuillez vérifier et modifier les champs concernés.";
+  }
 
   res.status(409).json({ message });
   return true;
@@ -95,6 +196,15 @@ const createUser = async (req, res, next) => {
       healthCenterName = healthCenter?.name;
     }
 
+    let regionName;
+    if (data.regionId) {
+      const region = await prisma.region.findUnique({
+        where: { id: data.regionId },
+        select: { name: true },
+      });
+      regionName = region?.name;
+    }
+
     const user = await prisma.user.create({
       data: {
         firstName: data.firstName,
@@ -109,7 +219,7 @@ const createUser = async (req, res, next) => {
         isActive: false,
         activationToken: token,
         activationExpires: expiresAt,
-        password: "", // défini lors de l’activation
+        password: "", // défini lors de l'activation
       },
     });
 
@@ -117,7 +227,7 @@ const createUser = async (req, res, next) => {
       email: user.email,
       token,
       role: user.role,
-      region: user.region,
+      region: regionName,
       healthCenter: healthCenterName,
     });
 
@@ -131,6 +241,13 @@ const createUser = async (req, res, next) => {
     if (respondIfUniqueConstraint(error, res, "Cette valeur est déjà utilisée.")) {
       return;
     }
+    // Gérer les autres erreurs Prisma
+    if (error.code === "P2003") {
+      return res.status(400).json({
+        message: "Une référence invalide a été fournie. Veuillez vérifier les informations saisies.",
+      });
+    }
+    console.error("Erreur création régional:", error);
     next(error);
   }
 };
@@ -169,6 +286,7 @@ const createRegional = async (req, res, next) => {
 
     const region = await prisma.region.findUnique({
       where: { id: newRegional.regionId },
+      select: { name: true },
     });
     
 
@@ -176,7 +294,7 @@ const createRegional = async (req, res, next) => {
       email: newRegional.email,
       token,
       role: newRegional.role,
-      region: region,
+      region: region?.name ?? null,
       user: newRegional,
     });
 
@@ -189,6 +307,13 @@ const createRegional = async (req, res, next) => {
     if (respondIfUniqueConstraint(error, res, "Cette valeur est déjà utilisée.")) {
       return;
     }
+    // Gérer les autres erreurs Prisma
+    if (error.code === "P2003") {
+      return res.status(400).json({
+        message: "Une référence invalide a été fournie. Veuillez vérifier les informations saisies.",
+      });
+    }
+    console.error("Erreur création régional:", error);
     next(error);
   }
 };
@@ -260,6 +385,13 @@ const createDistricit = async (req, res, next) => {
     if (respondIfUniqueConstraint(error, res, "Cette valeur est déjà utilisée.")) {
       return;
     }
+    // Gérer les autres erreurs Prisma
+    if (error.code === "P2003") {
+      return res.status(400).json({
+        message: "Une référence invalide a été fournie. Veuillez vérifier les informations saisies.",
+      });
+    }
+    console.error("Erreur création régional:", error);
     next(error);
   }
 };
@@ -324,6 +456,13 @@ const createAgentAdmin = async (req, res, next) => {
     if (respondIfUniqueConstraint(error, res, "Cette valeur est déjà utilisée.")) {
       return;
     }
+    // Gérer les autres erreurs Prisma
+    if (error.code === "P2003") {
+      return res.status(400).json({
+        message: "Une référence invalide a été fournie. Veuillez vérifier les informations saisies.",
+      });
+    }
+    console.error("Erreur création régional:", error);
     next(error);
   }
 };

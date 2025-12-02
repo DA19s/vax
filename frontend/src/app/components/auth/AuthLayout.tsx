@@ -39,7 +39,7 @@ export default function AuthLayout({
               <LogoPreview size="lg" />
             </div>
             <h1 className="mb-2 text-4xl font-bold tracking-tight text-slate-900">
-              {settings.appName ?? "VaxCare"}
+              {settings.appName ?? "Imunia"}
             </h1>
             <p className="text-sm font-medium text-slate-600">
               {subtitle ?? settings.appSubtitle}

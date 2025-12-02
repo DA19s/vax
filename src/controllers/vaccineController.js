@@ -9,8 +9,31 @@ const { get } = require("../routes");
 const {
   reserveDoseForHealthCenter,
   releaseDoseForHealthCenter,
+  deleteLotCascade,
   OWNER_TYPES,
 } = require("../services/stockLotService");
+
+/**
+ * Met à jour nextAppointment avec le prochain rendez-vous le plus proche pour un enfant
+ * @param {Object} tx - Transaction Prisma
+ * @param {string} childId - ID de l'enfant
+ */
+const updateNextAppointment = async (tx, childId) => {
+  const nextScheduled = await tx.childVaccineScheduled.findFirst({
+    where: { childId },
+    orderBy: { scheduledFor: "asc" },
+    select: { scheduledFor: true, vaccineId: true, plannerId: true },
+  });
+
+  await tx.children.update({
+    where: { id: childId },
+    data: {
+      nextAppointment: nextScheduled?.scheduledFor || null,
+      nextVaccineId: nextScheduled?.vaccineId || null,
+      nextAgentId: nextScheduled?.plannerId || null,
+    },
+  });
+};
 
 const createVaccine = async (req, res, next) => {
 
@@ -24,6 +47,7 @@ const createVaccine = async (req, res, next) => {
         name: req.body.name,
         description: req.body.description,
         dosesRequired: req.body.dosesRequired,
+        gender: req.body.gender || null, // null = pour tous, 'M' = garçons, 'F' = filles
       },
     });
 
@@ -37,12 +61,12 @@ const createVaccine = async (req, res, next) => {
 };
 
 const getVaccine = async (req, res, next) => {
-  const isAgentAdmin =
-    req.user.role === "AGENT" && req.user.agentLevel === "ADMIN";
+  const isAgent =
+    req.user.role === "AGENT" && (req.user.agentLevel === "ADMIN" || req.user.agentLevel === "STAFF");
 
   if (
     !["NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role) &&
-    !isAgentAdmin
+    !isAgent
   ) {
     return res.status(403).json({ message: "Accès refusé" });
   }
@@ -61,20 +85,37 @@ const getVaccine = async (req, res, next) => {
       prisma.vaccine.count(),
     ]);
 
-    const vaccines = items.map((vaccine) => ({
-      id: vaccine.id,
-      name: vaccine.name,
-      description: vaccine.description,
-      dosesRequired: vaccine.dosesRequired,
-      createdAt: vaccine.createdAt,
-      updatedAt: vaccine.updatedAt,
-      stock: {
-        national: vaccine.StockNATIONAL?.quantity ?? 0,
-        regional: vaccine.StockREGIONAL?.quantity ?? 0,
-        district: vaccine.StockDISTRICT?.quantity ?? 0,
-        healthCenter: vaccine.StockHEALTHCENTER?.quantity ?? 0,
-      },
-    }));
+    const vaccines = items.map((vaccine) => {
+      // Calculer la somme des stocks régionaux
+      const regionalTotal = Array.isArray(vaccine.StockREGIONAL)
+        ? vaccine.StockREGIONAL.reduce((sum, stock) => sum + (stock.quantity ?? 0), 0)
+        : 0;
+
+      // Calculer la somme des stocks districts
+      const districtTotal = Array.isArray(vaccine.StockDISTRICT)
+        ? vaccine.StockDISTRICT.reduce((sum, stock) => sum + (stock.quantity ?? 0), 0)
+        : 0;
+
+      // Calculer la somme des stocks centres de santé
+      const healthCenterTotal = Array.isArray(vaccine.StockHEALTHCENTER)
+        ? vaccine.StockHEALTHCENTER.reduce((sum, stock) => sum + (stock.quantity ?? 0), 0)
+        : 0;
+
+      return {
+        id: vaccine.id,
+        name: vaccine.name,
+        description: vaccine.description,
+        dosesRequired: vaccine.dosesRequired,
+        createdAt: vaccine.createdAt,
+        updatedAt: vaccine.updatedAt,
+        stock: {
+          national: vaccine.StockNATIONAL?.quantity ?? 0,
+          regional: regionalTotal,
+          district: districtTotal,
+          healthCenter: healthCenterTotal,
+        },
+      };
+    });
 
     res.json({ total, vaccines });
   } catch (error) {
@@ -305,12 +346,12 @@ const fetchCalendarsWithVaccines = async () => {
 };
 
 const listVaccineCalendars = async (req, res, next) => {
-  const isAgentAdmin =
-    req.user.role === "AGENT" && req.user.agentLevel === "ADMIN";
+  const isAgent =
+    req.user.role === "AGENT" && (req.user.agentLevel === "ADMIN" || req.user.agentLevel === "STAFF");
 
   if (
     !["NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role) &&
-    !isAgentAdmin
+    !isAgent
   ) {
     return res.status(403).json({ message: "Accès refusé" });
   }
@@ -324,12 +365,12 @@ const listVaccineCalendars = async (req, res, next) => {
 };
 
 const downloadVaccineCalendarPdf = async (req, res, next) => {
-  const isAgentAdmin =
-    req.user.role === "AGENT" && req.user.agentLevel === "ADMIN";
+  const isAgent =
+    req.user.role === "AGENT" && (req.user.agentLevel === "ADMIN" || req.user.agentLevel === "STAFF");
 
   if (
     !["NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role) &&
-    !isAgentAdmin
+    !isAgent
   ) {
     return res.status(403).json({ message: "Accès refusé" });
   }
@@ -459,7 +500,7 @@ const updateVaccine = async (req, res, next) => {
   }
 
   const vaccineId = req.params.id;
-  const { name, description, dosesRequired } = req.body ?? {};
+  const { name, description, dosesRequired, gender } = req.body ?? {};
 
   if (!name?.trim() || !description?.trim() || !dosesRequired?.trim()) {
     return res
@@ -474,6 +515,7 @@ const updateVaccine = async (req, res, next) => {
         name: name.trim(),
         description: description.trim(),
         dosesRequired: dosesRequired.trim(),
+        gender: gender || null, // null = pour tous, 'M' = garçons, 'F' = filles
       },
     });
 
@@ -491,9 +533,146 @@ const deleteVaccine = async (req, res, next) => {
   const vaccineId = req.params.id;
 
   try {
-    await prisma.vaccine.delete({ where: { id: vaccineId } });
+    // Vérifier que le vaccin existe
+    const vaccine = await prisma.vaccine.findUnique({
+      where: { id: vaccineId },
+    });
+
+    if (!vaccine) {
+      return res.status(404).json({ message: "Vaccin non trouvé" });
+    }
+
+    // Supprimer toutes les relations dépendantes dans une transaction
+    await prisma.$transaction(async (tx) => {
+      // 1. Supprimer les réservations de stock liées aux vaccins programmés
+      const scheduledVaccines = await tx.childVaccineScheduled.findMany({
+        where: { vaccineId },
+        select: { id: true },
+      });
+
+      const scheduledIds = scheduledVaccines.map((sv) => sv.id);
+      if (scheduledIds.length > 0) {
+        await tx.stockReservation.deleteMany({
+          where: { scheduleId: { in: scheduledIds } },
+        });
+      }
+
+      // 2. Supprimer les enregistrements de vaccination des enfants
+      await tx.childVaccineCompleted.deleteMany({
+        where: { vaccineId },
+      });
+
+      await tx.childVaccineDue.deleteMany({
+        where: { vaccineId },
+      });
+
+      await tx.childVaccineScheduled.deleteMany({
+        where: { vaccineId },
+      });
+
+      await tx.childVaccineOverdue.deleteMany({
+        where: { vaccineId },
+      });
+
+      await tx.childVaccineLate.deleteMany({
+        where: { vaccineId },
+      });
+
+      // 3. Supprimer les lots de stock en cascade (cela gère aussi les réservations)
+      const stockLots = await tx.stockLot.findMany({
+        where: { vaccineId },
+        select: { id: true },
+      });
+
+      // Utiliser deleteLotCascade pour chaque lot (gère les réservations et les transferts)
+      for (const lot of stockLots) {
+        await deleteLotCascade(tx, lot.id);
+      }
+
+      // 4. Supprimer les stocks
+      await tx.stockNATIONAL.deleteMany({
+        where: { vaccineId },
+      });
+
+      await tx.stockREGIONAL.deleteMany({
+        where: { vaccineId },
+      });
+
+      await tx.stockDISTRICT.deleteMany({
+        where: { vaccineId },
+      });
+
+      await tx.stockHEALTHCENTER.deleteMany({
+        where: { vaccineId },
+      });
+
+      // 5. Supprimer les enregistrements (records)
+      await tx.record.deleteMany({
+        where: { vaccineId },
+      });
+
+      // 6. Supprimer les demandes de vaccin (VaccineRequest)
+      // Note: VaccineRequest a une contrainte ON DELETE RESTRICT, donc on doit les supprimer avant
+      await tx.vaccineRequest.deleteMany({
+        where: { vaccineId },
+      });
+
+      // 7. Supprimer les transferts de stock (StockTransfer et StockTransferLot)
+      // Note: StockTransfer a une contrainte ON DELETE RESTRICT sur vaccineId
+      const stockTransfers = await tx.stockTransfer.findMany({
+        where: { vaccineId },
+        select: { id: true },
+      });
+
+      const transferIds = stockTransfers.map((st) => st.id);
+      if (transferIds.length > 0) {
+        // Supprimer d'abord les StockTransferLot (ils ont une FK vers StockTransfer)
+        await tx.stockTransferLot.deleteMany({
+          where: { transferId: { in: transferIds } },
+        });
+
+        // Puis supprimer les StockTransfer
+        await tx.stockTransfer.deleteMany({
+          where: { id: { in: transferIds } },
+        });
+      }
+
+      // 8. Mettre à jour les enfants qui ont ce vaccin comme nextVaccineId
+      await tx.children.updateMany({
+        where: { nextVaccineId: vaccineId },
+        data: { nextVaccineId: null },
+      });
+
+      // 9. Supprimer la relation many-to-many avec VaccineCalendar
+      // (Prisma gère automatiquement la table de jointure _VaccineToVaccineCalendar)
+
+      // 10. Supprimer le vaccin lui-même
+      await tx.vaccine.delete({
+        where: { id: vaccineId },
+      });
+    });
+
     res.status(204).end();
   } catch (error) {
+    console.error("Error deleting vaccine:", error);
+    console.error("Error details:", {
+      code: error.code,
+      message: error.message,
+      meta: error.meta,
+    });
+    
+    if (error.code === "P2025") {
+      return res.status(404).json({ message: "Vaccin non trouvé" });
+    }
+    
+    // Erreur de contrainte de clé étrangère
+    if (error.code === "P2003") {
+      return res.status(400).json({ 
+        message: "Impossible de supprimer ce vaccin car il est encore utilisé dans le système",
+        details: error.meta?.field_name || "Relation inconnue"
+      });
+    }
+    
     next(error);
   }
 };
@@ -528,7 +707,7 @@ const ScheduleVaccine = async (req, res, next) => {
     const result = await prisma.$transaction(async (tx) => {
       const child = await tx.children.findUnique({
         where: { id: childId },
-        select: { healthCenterId: true },
+        select: { healthCenterId: true, gender: true },
       });
 
       if (!child) {
@@ -541,11 +720,20 @@ const ScheduleVaccine = async (req, res, next) => {
 
       const vaccine = await tx.vaccine.findUnique({
         where: { id: vaccineId },
-        select: { dosesRequired: true },
+        select: { dosesRequired: true, gender: true },
       });
 
       if (!vaccine) {
         throw Object.assign(new Error("Vaccin introuvable"), { status: 404 });
+      }
+
+      // Vérifier si le vaccin correspond au genre de l'enfant
+      const isSuitable = !vaccine.gender || vaccine.gender === child.gender;
+      if (!isSuitable) {
+        throw Object.assign(
+          new Error("Ce vaccin n'est pas adapté au genre de l'enfant"),
+          { status: 400 }
+        );
       }
 
       const dosesRequired = Number.parseInt(vaccine.dosesRequired, 10);
@@ -564,15 +752,8 @@ const ScheduleVaccine = async (req, res, next) => {
         );
       }
 
-      const existingScheduled = await tx.childVaccineScheduled.findFirst({
-        where: { childId, vaccineId, dose },
-      });
-      if (existingScheduled) {
-        throw Object.assign(
-          new Error("Un rendez-vous existe déjà pour cette dose."),
-          { status: 409 },
-        );
-      }
+      // Permettre plusieurs rendez-vous simultanés pour le même enfant
+      // On ne vérifie plus s'il existe déjà un rendez-vous
 
       const reservation = await reserveDoseForHealthCenter(tx, {
         vaccineId,
@@ -625,10 +806,8 @@ const ScheduleVaccine = async (req, res, next) => {
       // Cela garantit que les vaccins restent visibles comme "à faire" ou "en retard"
       // jusqu'à ce qu'ils soient réellement administrés
 
-      await tx.children.update({
-        where: { id: childId },
-        data: { nextAppointment: scheduleDate },
-      });
+      // Mettre à jour nextAppointment avec le prochain rendez-vous le plus proche
+      await updateNextAppointment(tx, childId);
 
       return created;
     });
@@ -740,7 +919,6 @@ const listScheduledVaccines = async (req, res, next) => {
       },
       orderBy: [
         { scheduledFor: "asc" },
-        { dose: "asc" },
       ],
     });
 
@@ -761,7 +939,6 @@ const listScheduledVaccines = async (req, res, next) => {
       return {
         id: entry.id,
         scheduledFor: entry.scheduledFor,
-        dose: entry.dose ?? 1,
         region: regionName,
         district: districtName,
         healthCenter: healthCenterName,
@@ -821,7 +998,6 @@ const completeVaccine = async (req, res, next) => {
           vaccineCalendarId: true,
           vaccineId: true,
           plannerId: true,
-          dose: true,
           child: { select: { healthCenterId: true } },
         },
       });
@@ -843,7 +1019,6 @@ const completeVaccine = async (req, res, next) => {
           vaccineId: scheduled.vaccineId,
           notes: req.body.notes,
           administeredById: scheduled.plannerId,
-          dose: scheduled.dose ?? 1,
         },
       });
 
@@ -851,25 +1026,24 @@ const completeVaccine = async (req, res, next) => {
 
       await tx.childVaccineScheduled.delete({ where: { id: req.params.id } });
 
-      const dose = scheduled.dose ?? 1;
+      // Mettre à jour nextAppointment avec le prochain rendez-vous le plus proche
+      await updateNextAppointment(tx, scheduled.childId);
 
-      // Supprimer uniquement l'entrée correspondant à la dose complétée
-      // (pas toutes les doses du vaccin)
-      await tx.childVaccineDue.deleteMany({
-        where: {
-          childId: scheduled.childId,
-          vaccineId: scheduled.vaccineId,
-          dose,
-        },
-      });
-
-      // Supprimer l'entrée late pour cette dose spécifique
+      // Supprimer l'entrée due correspondant à ce calendrier vaccinal
       if (scheduled.vaccineCalendarId) {
+        await tx.childVaccineDue.deleteMany({
+          where: {
+            childId: scheduled.childId,
+            vaccineId: scheduled.vaccineId,
+            vaccineCalendarId: scheduled.vaccineCalendarId,
+          },
+        });
+
+        // Supprimer l'entrée late pour ce calendrier vaccinal
         await tx.childVaccineLate.deleteMany({
           where: {
             childId: scheduled.childId,
             vaccineId: scheduled.vaccineId,
-            dose,
             vaccineCalendarId: scheduled.vaccineCalendarId,
           },
         });
@@ -962,14 +1136,12 @@ const completeVaccine = async (req, res, next) => {
 };
 
 const moveScheduledToOverdue = async (tx, scheduled) => {
-  const dose = scheduled.dose ?? 1;
-
   const overdue = await tx.childVaccineOverdue.upsert({
     where: {
-      childId_vaccineId_dose: {
+      childId_vaccineCalendarId_vaccineId: {
         childId: scheduled.childId,
+        vaccineCalendarId: scheduled.vaccineCalendarId,
         vaccineId: scheduled.vaccineId,
-        dose,
       },
     },
     update: {
@@ -983,7 +1155,6 @@ const moveScheduledToOverdue = async (tx, scheduled) => {
       vaccineId: scheduled.vaccineId,
       escalatedToId: scheduled.plannerId,
       dueDate: scheduled.scheduledFor,
-      dose,
     },
   });
 
@@ -997,6 +1168,9 @@ const moveScheduledToOverdue = async (tx, scheduled) => {
   await tx.childVaccineScheduled.delete({
     where: { id: scheduled.id },
   });
+
+  // Mettre à jour nextAppointment avec le prochain rendez-vous le plus proche
+  await updateNextAppointment(tx, scheduled.childId);
 
   return overdue;
 };
@@ -1085,7 +1259,6 @@ const updateScheduledVaccine = async (req, res, next) => {
           childId: true,
           vaccineId: true,
           vaccineCalendarId: true,
-          dose: true,
           child: {
             select: {
               healthCenterId: true,
@@ -1177,10 +1350,8 @@ const updateScheduledVaccine = async (req, res, next) => {
         // NE PAS supprimer les entrées de due, late, overdue lors de la reprogrammation
         // On attend que le vaccin soit complété pour les supprimer
 
-        await tx.children.update({
-          where: { id: scheduled.childId },
-          data: { nextAppointment: scheduleDate },
-        });
+        // Mettre à jour nextAppointment avec le prochain rendez-vous le plus proche
+        await updateNextAppointment(tx, scheduled.childId);
 
         return recreated;
       }
@@ -1198,10 +1369,8 @@ const updateScheduledVaccine = async (req, res, next) => {
         },
       });
 
-      await tx.children.update({
-        where: { id: scheduled.childId },
-        data: { nextAppointment: scheduleDate },
-      });
+      // Mettre à jour nextAppointment avec le prochain rendez-vous le plus proche
+      await updateNextAppointment(tx, scheduled.childId);
 
       return updatedSchedule;
     });
@@ -1233,7 +1402,8 @@ const cancelScheduledVaccine = async (req, res, next) => {
         where: { id },
         select: {
           id: true,
-          child: { select: { healthCenterId: true } },
+          childId: true,
+          child: { select: { healthCenterId: true, id: true } },
         },
       });
 
@@ -1250,6 +1420,9 @@ const cancelScheduledVaccine = async (req, res, next) => {
       await releaseReservationForSchedule(tx, scheduled.id, { consume: false });
 
       await tx.childVaccineScheduled.delete({ where: { id } });
+
+      // Mettre à jour nextAppointment avec le prochain rendez-vous le plus proche
+      await updateNextAppointment(tx, scheduled.childId);
     });
 
     res.status(204).send();

@@ -43,69 +43,9 @@ const updateNearestExpiration = async (
   tx,
   { vaccineId, ownerType, ownerId },
 ) => {
-  const db = getDbClient(tx);
-  const normalizedOwnerId = normalizeOwnerId(ownerType, ownerId);
-
-  const nextLot = await db.stockLot.findFirst({
-    where: {
-      vaccineId,
-      ownerType,
-      ownerId: normalizedOwnerId,
-      remainingQuantity: { gt: 0 },
-    },
-    orderBy: {
-      expiration: "asc",
-    },
-  });
-
-  const nextExpiration = nextLot?.expiration ?? null;
-
-  switch (ownerType) {
-    case OWNER_TYPES.NATIONAL:
-      await db.stockNATIONAL.update({
-        where: { vaccineId },
-        data: { nearestExpiration: nextExpiration },
-      });
-      break;
-    case OWNER_TYPES.REGIONAL:
-      if (!normalizedOwnerId) return;
-      await db.stockREGIONAL.update({
-        where: {
-          vaccineId_regionId: {
-            vaccineId,
-            regionId: normalizedOwnerId,
-          },
-        },
-        data: { nearestExpiration: nextExpiration },
-      });
-      break;
-    case OWNER_TYPES.DISTRICT:
-      if (!normalizedOwnerId) return;
-      await db.stockDISTRICT.update({
-        where: {
-          vaccineId_districtId: {
-            vaccineId,
-            districtId: normalizedOwnerId,
-          },
-        },
-        data: { nearestExpiration: nextExpiration },
-      });
-      break;
-    case OWNER_TYPES.HEALTHCENTER:
-      if (!normalizedOwnerId) return;
-      await db.stockHEALTHCENTER.update({
-        where: {
-          vaccineId_healthCenterId: {
-            vaccineId,
-            healthCenterId: normalizedOwnerId,
-          },
-        },
-        data: { nearestExpiration: nextExpiration },
-      });
-      break;
-    default:
-      break;
-  }
+  // Le champ nearestExpiration a été supprimé du schéma
+  // Cette fonction est conservée pour la compatibilité mais ne fait rien
+  return;
 };
 
 const createLot = async (

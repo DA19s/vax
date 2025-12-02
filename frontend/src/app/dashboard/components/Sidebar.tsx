@@ -9,6 +9,7 @@ import {
   Package,
   CalendarCheck,
   Lightbulb,
+  FileText,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import LogoPreview from "@/app/components/LogoPreview";
@@ -39,6 +40,7 @@ const navItems: NavItem[] = [
   { label: "Calendrier vaccinal", href: "/dashboard/calendrier", icon: Calendar },
   { label: "Rendez-vous", href: "/dashboard/rendezvous", icon: CalendarCheck },
   { label: "Enfants", href: "/dashboard/enfants", icon: Users },
+  { label: "Rapports", href: "/dashboard/rapports", icon: FileText },
 ];
 
 export default function Sidebar({ active = "/dashboard" }: SidebarProps) {
@@ -62,6 +64,7 @@ export default function Sidebar({ active = "/dashboard" }: SidebarProps) {
         { label: "Calendrier vaccinal", href: "/dashboard/calendrier", icon: Calendar },
         { label: "Rendez-vous", href: "/dashboard/rendezvous", icon: CalendarCheck },
         { label: "Enfants", href: "/dashboard/enfants", icon: Users },
+        { label: "Rapports", href: "/dashboard/rapports", icon: FileText },
       ];
     }
 
@@ -76,6 +79,7 @@ export default function Sidebar({ active = "/dashboard" }: SidebarProps) {
         { label: "Calendrier vaccinal", href: "/dashboard/calendrier", icon: Calendar },
         { label: "Rendez-vous", href: "/dashboard/rendezvous", icon: CalendarCheck },
         { label: "Enfants", href: "/dashboard/enfants", icon: Users },
+        { label: "Rapports", href: "/dashboard/rapports", icon: FileText },
       ];
     }
 
@@ -89,10 +93,25 @@ export default function Sidebar({ active = "/dashboard" }: SidebarProps) {
         { label: "Calendrier vaccinal", href: "/dashboard/calendrier", icon: Calendar },
         { label: "Rendez-vous", href: "/dashboard/rendezvous", icon: CalendarCheck },
         { label: "Enfants", href: "/dashboard/enfants", icon: Users },
+        { label: "Rapports", href: "/dashboard/rapports", icon: FileText },
       ];
     }
 
     if (user.role === "AGENT") {
+      // Pour les agents STAFF, inclure les stocks en lecture seule
+      if (user.agentLevel === "STAFF") {
+        return [
+          { label: "Tableau de bord", href: "/dashboard", icon: LayoutDashboard },
+          { label: "Rendez-vous", href: "/dashboard/rendezvous", icon: CalendarCheck },
+          { label: "Campagnes", href: "/dashboard/campagnes", icon: Calendar },
+          { label: "Stocks & lots", href: "/dashboard/stocks", icon: Package },
+          { label: "Vaccins", href: "/dashboard/vaccins", icon: Syringe },
+          { label: "Calendrier vaccinal", href: "/dashboard/calendrier", icon: Calendar },
+          { label: "Enfants", href: "/dashboard/enfants", icon: Users },
+          { label: "Rapports", href: "/dashboard/rapports", icon: FileText },
+        ];
+      }
+      // Pour les autres agents (sans niveau spécifique)
       return [
         { label: "Tableau de bord", href: "/dashboard", icon: LayoutDashboard },
         { label: "Rendez-vous", href: "/dashboard/rendezvous", icon: CalendarCheck },
@@ -118,7 +137,7 @@ export default function Sidebar({ active = "/dashboard" }: SidebarProps) {
         <LogoPreview size="sm" className="!shadow-md" />
         <div>
           <p className="text-lg font-semibold">
-            {settings.appName ?? "VaxCare"}
+            {settings.appName ?? "Imunia"}
           </p>
           <p className="text-xs text-slate-300">Administration nationale</p>
         </div>

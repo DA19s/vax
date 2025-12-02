@@ -445,7 +445,7 @@ class _ChildDashboardScreenState extends State<ChildDashboardScreen> {
             ),
           ),
         ),
-        // Rendez-vous à venir (entre le header et les blocs de statistiques)
+        // Prochain rendez-vous (entre le header et les blocs de statistiques)
         if (_upcomingAppointments.isNotEmpty)
           SliverToBoxAdapter(
             child: Padding(
@@ -457,35 +457,47 @@ class _ChildDashboardScreenState extends State<ChildDashboardScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        'Rendez-vous à venir',
+                        'Prochain rendez-vous',
                         style: GoogleFonts.poppins(
                           fontSize: 18,
                           fontWeight: FontWeight.w600,
                           color: const Color(0xFF0A1A33),
                         ),
                       ),
-                      TextButton(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => AppointmentsScreen(childId: widget.childId),
+                      if (_upcomingAppointments.length > 1)
+                        TextButton(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => AppointmentsScreen(childId: widget.childId),
+                              ),
+                            );
+                          },
+                          child: Text(
+                            'Voir tout (${_upcomingAppointments.length})',
+                            style: GoogleFonts.poppins(
+                              fontSize: 14,
+                              color: const Color(0xFF3B760F),
+                              fontWeight: FontWeight.w600,
                             ),
-                          );
-                        },
-                        child: Text(
-                          'Voir tout',
-                          style: GoogleFonts.poppins(
-                            fontSize: 14,
-                            color: const Color(0xFF3B760F),
-                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                      ),
                     ],
                   ),
                   const SizedBox(height: 12),
-                  ..._upcomingAppointments.map((apt) => _buildAppointmentCard(apt)),
+                  // Afficher seulement le prochain rendez-vous (le premier de la liste)
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => AppointmentsScreen(childId: widget.childId),
+                        ),
+                      );
+                    },
+                    child: _buildAppointmentCard(_upcomingAppointments.first),
+                  ),
                 ],
               ),
             ),

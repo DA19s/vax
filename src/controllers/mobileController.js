@@ -241,32 +241,32 @@ const parentRegister = async (req, res, next) => {
 
         if (isWithinRange) {
           for (const vaccine of entry.vaccines) {
-            // Créer une entrée pour chaque dose requise
-            const dosesRequired = Number.parseInt(vaccine.dosesRequired ?? "1", 10) || 1;
-            for (let dose = 1; dose <= dosesRequired; dose++) {
-              duePayload.push({
-                childId: updatedChildId,
-                vaccineCalendarId: entry.id,
-                vaccineId: vaccine.id,
-                scheduledFor: dueDate,
-                dose,
-              });
+            // Vérifier si le vaccin correspond au genre de l'enfant
+            if (!isVaccineSuitableForGender(vaccine, child.gender)) {
+              continue; // Passer ce vaccin s'il ne correspond pas au genre
             }
+            // Chaque entrée du calendrier représente une dose unique
+            duePayload.push({
+              childId: updatedChildId,
+              vaccineCalendarId: entry.id,
+              vaccineId: vaccine.id,
+              scheduledFor: dueDate,
+            });
           }
         } else if (isPastRange) {
           hasLate = true;
           for (const vaccine of entry.vaccines) {
-            // Créer une entrée pour chaque dose requise
-            const dosesRequired = Number.parseInt(vaccine.dosesRequired ?? "1", 10) || 1;
-            for (let dose = 1; dose <= dosesRequired; dose++) {
-              latePayload.push({
-                childId: updatedChildId,
-                vaccineCalendarId: entry.id,
-                vaccineId: vaccine.id,
-                dueDate: dueDate,
-                dose,
-              });
+            // Vérifier si le vaccin correspond au genre de l'enfant
+            if (!isVaccineSuitableForGender(vaccine, child.gender)) {
+              continue; // Passer ce vaccin s'il ne correspond pas au genre
             }
+            // Chaque entrée du calendrier représente une dose unique
+            latePayload.push({
+              childId: updatedChildId,
+              vaccineCalendarId: entry.id,
+              vaccineId: vaccine.id,
+              dueDate: dueDate,
+            });
           }
         }
       }
@@ -808,8 +808,37 @@ const getHealthCenters = async (req, res, next) => {
  * GET /api/mobile/vaccine-calendar
  * Obtenir le calendrier vaccinal (pour les parents)
  */
+/**
+ * Vérifie si un vaccin correspond au genre d'un enfant
+ * @param {Object} vaccine - Le vaccin avec son champ gender (peut être null, 'M', ou 'F')
+ * @param {string} childGender - Le genre de l'enfant ('M' ou 'F')
+ * @returns {boolean} - true si le vaccin peut être administré à cet enfant
+ */
+const isVaccineSuitableForGender = (vaccine, childGender) => {
+  // Si le vaccin n'a pas de genre spécifié (null), il est pour tous
+  if (!vaccine.gender) {
+    return true;
+  }
+  // Si le vaccin a un genre, il doit correspondre au genre de l'enfant
+  return vaccine.gender === childGender;
+};
+
 const getVaccineCalendar = async (req, res, next) => {
   try {
+    const { childId } = req.query;
+    let childGender = null;
+
+    // Si un childId est fourni, récupérer le genre de l'enfant pour filtrer
+    if (childId) {
+      const child = await prisma.children.findUnique({
+        where: { id: childId },
+        select: { gender: true },
+      });
+      if (child) {
+        childGender = child.gender;
+      }
+    }
+
     const calendars = await prisma.vaccineCalendar.findMany({
       include: { vaccines: true },
       orderBy: [
@@ -819,19 +848,29 @@ const getVaccineCalendar = async (req, res, next) => {
       ],
     });
 
-    const formattedCalendars = calendars.map((calendar) => ({
-      id: calendar.id,
-      description: calendar.description,
-      ageUnit: calendar.ageUnit,
-      specificAge: calendar.specificAge,
-      minAge: calendar.minAge,
-      maxAge: calendar.maxAge,
-      vaccines: calendar.vaccines.map((vaccine) => ({
-        id: vaccine.id,
-        name: vaccine.name,
-        dosesRequired: vaccine.dosesRequired,
-      })),
-    }));
+    const formattedCalendars = calendars.map((calendar) => {
+      // Filtrer les vaccins selon le genre si un childId est fourni
+      let vaccines = calendar.vaccines;
+      if (childGender) {
+        vaccines = vaccines.filter((vaccine) =>
+          isVaccineSuitableForGender(vaccine, childGender)
+        );
+      }
+
+      return {
+        id: calendar.id,
+        description: calendar.description,
+        ageUnit: calendar.ageUnit,
+        specificAge: calendar.specificAge,
+        minAge: calendar.minAge,
+        maxAge: calendar.maxAge,
+        vaccines: vaccines.map((vaccine) => ({
+          id: vaccine.id,
+          name: vaccine.name,
+          dosesRequired: vaccine.dosesRequired,
+        })),
+      };
+    });
 
     res.json(formattedCalendars);
   } catch (error) {
@@ -869,10 +908,25 @@ const markVaccinesDone = async (req, res, next) => {
 
     await prisma.$transaction(async (tx) => {
       for (const vaccineData of vaccines) {
-        const { vaccineCalendarId, vaccineId, dose = 1 } = vaccineData;
+        const { vaccineCalendarId, vaccineId } = vaccineData;
 
         if (!vaccineId) {
           continue; // Ignorer si vaccineId manquant
+        }
+
+        // Vérifier que le vaccin existe et correspond au genre de l'enfant
+        const vaccine = await tx.vaccine.findUnique({
+          where: { id: vaccineId },
+          select: { gender: true },
+        });
+
+        if (!vaccine) {
+          continue; // Ignorer si le vaccin n'existe pas
+        }
+
+        // Vérifier si le vaccin correspond au genre de l'enfant
+        if (!isVaccineSuitableForGender(vaccine, child.gender)) {
+          continue; // Ignorer si le vaccin ne correspond pas au genre
         }
 
         // Vérifier si le vaccin est déjà marqué comme complété
@@ -880,7 +934,6 @@ const markVaccinesDone = async (req, res, next) => {
           where: {
             childId,
             vaccineId,
-            dose,
             ...(vaccineCalendarId ? { vaccineCalendarId } : {}),
           },
         });
@@ -895,7 +948,6 @@ const markVaccinesDone = async (req, res, next) => {
             childId,
             vaccineId,
             vaccineCalendarId: vaccineCalendarId || null,
-            dose,
             administeredAt: new Date(),
             // administeredById peut être null pour les vaccins marqués par les parents
             administeredById: null,
@@ -931,13 +983,13 @@ const markVaccinesDone = async (req, res, next) => {
         });
 
         // Vérifier si toutes les doses requises du vaccin sont complétées
-        const vaccine = await tx.vaccine.findUnique({
+        const vaccineData = await tx.vaccine.findUnique({
           where: { id: vaccineId },
           select: { dosesRequired: true },
         });
 
-        const dosesRequired = vaccine?.dosesRequired 
-          ? parseInt(vaccine.dosesRequired, 10) 
+        const dosesRequired = vaccineData?.dosesRequired 
+          ? parseInt(vaccineData.dosesRequired, 10) 
           : 1;
         const totalDoses = isFinite(dosesRequired) && dosesRequired > 0 ? dosesRequired : 1;
 
@@ -1174,7 +1226,6 @@ const getChildDashboard = async (req, res, next) => {
           specificAge: entry.vaccineCalendar?.specificAge ?? null,
           minAge: entry.vaccineCalendar?.minAge ?? null,
           maxAge: entry.vaccineCalendar?.maxAge ?? null,
-          dose: entry.dose ?? 1,
         })),
         scheduled: child.scheduledVaccines.map((entry) => ({
           id: entry.id,
@@ -1188,7 +1239,6 @@ const getChildDashboard = async (req, res, next) => {
             : null,
           calendarId: entry.vaccineCalendarId,
           calendarDescription: entry.vaccineCalendar?.description ?? null,
-          dose: entry.dose ?? 1,
         })),
         late: child.lateVaccines.map((entry) => ({
           id: entry.id,
@@ -1202,7 +1252,6 @@ const getChildDashboard = async (req, res, next) => {
           specificAge: entry.vaccineCalendar?.specificAge ?? null,
           minAge: entry.vaccineCalendar?.minAge ?? null,
           maxAge: entry.vaccineCalendar?.maxAge ?? null,
-          dose: entry.dose ?? 1,
         })),
         overdue: child.overdueVaccines.map((entry) => ({
           id: entry.id,
@@ -1212,7 +1261,6 @@ const getChildDashboard = async (req, res, next) => {
           dueDate: entry.dueDate,
           calendarId: entry.vaccineCalendarId,
           calendarDescription: entry.vaccineCalendar?.description ?? null,
-          dose: entry.dose ?? 1,
         })),
         completed: child.completedVaccines.map((entry) => ({
           id: entry.id,
@@ -1226,7 +1274,6 @@ const getChildDashboard = async (req, res, next) => {
             : null,
           calendarId: entry.vaccineCalendarId,
           calendarDescription: entry.vaccineCalendar?.description ?? null,
-          dose: entry.dose ?? 1,
         })),
       },
       stats: {
@@ -1323,6 +1370,7 @@ const getAdvice = async (req, res, next) => {
           ageUnit: "WEEKS",
           minAge: { lte: ageInWeeks },
           maxAge: { gte: ageInWeeks },
+          specificAge: null, // Exclure les conseils avec specificAge
         });
       }
       if (ageInMonths !== null) {
@@ -1330,6 +1378,7 @@ const getAdvice = async (req, res, next) => {
           ageUnit: "MONTHS",
           minAge: { lte: ageInMonths },
           maxAge: { gte: ageInMonths },
+          specificAge: null, // Exclure les conseils avec specificAge
         });
       }
       if (ageInYears !== null) {
@@ -1337,6 +1386,7 @@ const getAdvice = async (req, res, next) => {
           ageUnit: "YEARS",
           minAge: { lte: ageInYears },
           maxAge: { gte: ageInYears },
+          specificAge: null, // Exclure les conseils avec specificAge
         });
       }
     }
@@ -1451,7 +1501,6 @@ const getAppointments = async (req, res, next) => {
       vaccineId: scheduled.vaccineId,
       vaccineName: scheduled.vaccine.name,
       date: scheduled.scheduledFor,
-      dose: scheduled.dose,
       planner: scheduled.planner
         ? `${scheduled.planner.firstName} ${scheduled.planner.lastName}`
         : null,
@@ -1568,8 +1617,40 @@ const getCalendar = async (req, res, next) => {
   try {
     const { childId } = req.params;
 
-    // Récupérer tous les types de vaccins pour l'enfant
-    const [completed, scheduled, overdue, late, due] = await Promise.all([
+    // Récupérer l'enfant avec son centre de santé pour avoir les informations de localisation
+    const child = await prisma.children.findUnique({
+      where: { id: childId },
+      include: {
+        healthCenter: {
+          select: {
+            name: true,
+            district: {
+              select: {
+                name: true,
+                commune: {
+                  select: {
+                    region: { select: { name: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!child) {
+      return res.status(404).json({
+        success: false,
+        message: "Enfant non trouvé",
+      });
+    }
+
+    const healthCenterName = child.healthCenter?.name ?? "Centre inconnu";
+    const regionName = child.healthCenter?.district?.commune?.region?.name ?? "";
+
+    // Récupérer tous les types de vaccins pour l'enfant (sans les "late" - en retard mais pas encore ratés)
+    const [completed, scheduled, overdue, due] = await Promise.all([
       // Vaccins complétés
       prisma.childVaccineCompleted.findMany({
         where: { childId },
@@ -1621,23 +1702,6 @@ const getCalendar = async (req, res, next) => {
           },
         },
       }),
-      // Vaccins en retard (tardifs mais faisables)
-      prisma.childVaccineLate.findMany({
-        where: { childId },
-        include: {
-          vaccine: { select: { id: true, name: true } },
-          vaccineCalendar: {
-            select: {
-              id: true,
-              description: true,
-              ageUnit: true,
-              specificAge: true,
-              minAge: true,
-              maxAge: true,
-            },
-          },
-        },
-      }),
       // Vaccins à faire
       prisma.childVaccineDue.findMany({
         where: { childId },
@@ -1657,7 +1721,7 @@ const getCalendar = async (req, res, next) => {
       }),
     ]);
 
-    // Fusionner tous les vaccins avec leur statut
+    // Fusionner tous les vaccins avec leur statut (sans les "late" - en retard mais pas encore ratés)
     const merged = [];
 
     // Vaccins complétés
@@ -1665,9 +1729,8 @@ const getCalendar = async (req, res, next) => {
       merged.push({
         id: item.id,
         vaccineId: item.vaccineId,
-        vaccineName: item.vaccine.name,
-        date: item.completedAt,
-        dose: item.dose,
+        name: item.vaccine.name,
+        date: item.administeredAt,
         status: "done",
         calendarId: item.vaccineCalendarId,
         calendarDescription: item.vaccineCalendar?.description ?? null,
@@ -1675,6 +1738,8 @@ const getCalendar = async (req, res, next) => {
         specificAge: item.vaccineCalendar?.specificAge ?? null,
         minAge: item.vaccineCalendar?.minAge ?? null,
         maxAge: item.vaccineCalendar?.maxAge ?? null,
+        healthCenter: healthCenterName,
+        region: regionName,
       });
     });
 
@@ -1683,9 +1748,8 @@ const getCalendar = async (req, res, next) => {
       merged.push({
         id: item.id,
         vaccineId: item.vaccineId,
-        vaccineName: item.vaccine.name,
+        name: item.vaccine.name,
         date: item.scheduledFor,
-        dose: item.dose,
         status: "scheduled",
         calendarId: item.vaccineCalendarId,
         calendarDescription: item.vaccineCalendar?.description ?? null,
@@ -1693,6 +1757,8 @@ const getCalendar = async (req, res, next) => {
         specificAge: item.vaccineCalendar?.specificAge ?? null,
         minAge: item.vaccineCalendar?.minAge ?? null,
         maxAge: item.vaccineCalendar?.maxAge ?? null,
+        healthCenter: healthCenterName,
+        region: regionName,
       });
     });
 
@@ -1701,9 +1767,8 @@ const getCalendar = async (req, res, next) => {
       merged.push({
         id: item.id,
         vaccineId: item.vaccineId,
-        vaccineName: item.vaccine.name,
+        name: item.vaccine.name,
         date: item.dueDate,
-        dose: item.dose,
         status: "missed",
         calendarId: item.vaccineCalendarId,
         calendarDescription: item.vaccineCalendar?.description ?? null,
@@ -1711,24 +1776,8 @@ const getCalendar = async (req, res, next) => {
         specificAge: item.vaccineCalendar?.specificAge ?? null,
         minAge: item.vaccineCalendar?.minAge ?? null,
         maxAge: item.vaccineCalendar?.maxAge ?? null,
-      });
-    });
-
-    // Vaccins en retard (tardifs)
-    late.forEach((item) => {
-      merged.push({
-        id: item.id,
-        vaccineId: item.vaccineId,
-        vaccineName: item.vaccine.name,
-        date: item.dueDate,
-        dose: item.dose,
-        status: "late",
-        calendarId: item.vaccineCalendarId,
-        calendarDescription: item.vaccineCalendar?.description ?? null,
-        ageUnit: item.vaccineCalendar?.ageUnit ?? null,
-        specificAge: item.vaccineCalendar?.specificAge ?? null,
-        minAge: item.vaccineCalendar?.minAge ?? null,
-        maxAge: item.vaccineCalendar?.maxAge ?? null,
+        healthCenter: healthCenterName,
+        region: regionName,
       });
     });
 
@@ -1737,9 +1786,8 @@ const getCalendar = async (req, res, next) => {
       merged.push({
         id: item.id,
         vaccineId: item.vaccineId,
-        vaccineName: item.vaccine.name,
+        name: item.vaccine.name,
         date: item.scheduledFor,
-        dose: item.dose,
         status: "due",
         calendarId: item.vaccineCalendarId,
         calendarDescription: item.vaccineCalendar?.description ?? null,
@@ -1747,6 +1795,8 @@ const getCalendar = async (req, res, next) => {
         specificAge: item.vaccineCalendar?.specificAge ?? null,
         minAge: item.vaccineCalendar?.minAge ?? null,
         maxAge: item.vaccineCalendar?.maxAge ?? null,
+        healthCenter: healthCenterName,
+        region: regionName,
       });
     });
 

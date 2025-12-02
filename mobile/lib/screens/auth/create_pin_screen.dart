@@ -214,147 +214,168 @@ class _CreatePinScreenState extends State<CreatePinScreen> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        leading: _isConfirming
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back, color: Color(0xFF0A1A33)),
-                onPressed: () {
-                  setState(() {
-                    _isConfirming = false;
-                    _error = null;
-                    for (var controller in _confirmPinControllers) {
-                      controller.clear();
-                    }
-                  });
-                },
-              )
-            : null,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Color(0xFF0A1A33)),
+          onPressed: () {
+            if (_isConfirming) {
+              setState(() {
+                _isConfirming = false;
+                _error = null;
+                for (var controller in _confirmPinControllers) {
+                  controller.clear();
+                }
+              });
+            } else {
+              if (Navigator.canPop(context)) {
+                Navigator.pop(context);
+              }
+            }
+          },
+        ),
       ),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            children: [
-              const SizedBox(height: 20),
-              
-              // Logo
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF0A1A33).withOpacity(0.15),
-                      blurRadius: 30,
-                      spreadRadius: 5,
-                    ),
-                  ],
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.all(24.0),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: constraints.maxHeight - 48,
                 ),
-                child: Image.asset(
-                  "assets/images/logo_vacxcare.png",
-                  width: 80,
-                  height: 80,
-                ),
-              ),
-              
-              const SizedBox(height: 24),
-              
-              Text(
-                _isConfirming ? "Confirmez votre code PIN" : "Créez votre code PIN",
-                style: GoogleFonts.poppins(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF0A1A33),
-                ),
-                textAlign: TextAlign.center,
-              ),
-              
-              const SizedBox(height: 8),
-              
-              Text(
-                _isConfirming 
-                    ? "Saisissez à nouveau votre code PIN"
-                    : "Ce code vous permettra d'accéder rapidement à votre compte",
-                style: GoogleFonts.poppins(
-                  fontSize: 14,
-                  color: Colors.grey[600],
-                ),
-                textAlign: TextAlign.center,
-              ),
-              
-              const SizedBox(height: 48),
-              
-              // Champs PIN
-              _buildPinFields(
-                _isConfirming ? _confirmPinControllers : _pinControllers,
-                _isConfirming ? _confirmFocusNodes : _focusNodes,
-                _isConfirming,
-              ),
-              
-              const SizedBox(height: 24),
-              
-              if (_error != null)
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
+                child: IntrinsicHeight(
+                  child: Column(
                     children: [
-                      const Icon(Icons.error_outline, color: Colors.red, size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _error!,
-                          style: GoogleFonts.poppins(
-                            color: Colors.red,
-                            fontSize: 13,
-                          ),
+                      const SizedBox(height: 20),
+                      
+                      // Logo
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white,
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF0A1A33).withOpacity(0.15),
+                              blurRadius: 30,
+                              spreadRadius: 5,
+                            ),
+                          ],
+                        ),
+                        child: Image.asset(
+                          "assets/images/logo_vacxcare.png",
+                          width: 80,
+                          height: 80,
                         ),
                       ),
+                      
+                      const SizedBox(height: 24),
+                      
+                      Text(
+                        _isConfirming ? "Confirmez votre code PIN" : "Créez votre code PIN",
+                        style: GoogleFonts.poppins(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF0A1A33),
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      
+                      const SizedBox(height: 8),
+                      
+                      Text(
+                        _isConfirming 
+                            ? "Saisissez à nouveau votre code PIN"
+                            : "Ce code vous permettra d'accéder rapidement à votre compte",
+                        style: GoogleFonts.poppins(
+                          fontSize: 14,
+                          color: Colors.grey[600],
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      
+                      const SizedBox(height: 48),
+                      
+                      // Champs PIN
+                      _buildPinFields(
+                        _isConfirming ? _confirmPinControllers : _pinControllers,
+                        _isConfirming ? _confirmFocusNodes : _focusNodes,
+                        _isConfirming,
+                      ),
+                      
+                      const SizedBox(height: 24),
+                      
+                      if (_error != null)
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.red.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.error_outline, color: Colors.red, size: 20),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _error!,
+                                  style: GoogleFonts.poppins(
+                                    color: Colors.red,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      
+                      const Spacer(),
+                      
+                      if (_isLoading)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 20),
+                          child: CircularProgressIndicator(
+                            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF0A1A33)),
+                          ),
+                        ),
+                      
+                      const SizedBox(height: 20),
+                      
+                      // Info sécurité
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF3BA3E5).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.info_outline,
+                              color: Color(0xFF3BA3E5),
+                              size: 24,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                "Mémorisez bien ce code, il vous sera demandé à chaque connexion",
+                                style: GoogleFonts.poppins(
+                                  fontSize: 12,
+                                  color: const Color(0xFF0A1A33),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      
+                      const SizedBox(height: 20),
                     ],
                   ),
                 ),
-              
-              const Spacer(),
-              
-              if (_isLoading)
-                const CircularProgressIndicator(
-                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF0A1A33)),
-                ),
-              
-              const SizedBox(height: 20),
-              
-              // Info sécurité
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF3BA3E5).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.info_outline,
-                      color: Color(0xFF3BA3E5),
-                      size: 24,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        "Mémorisez bien ce code, il vous sera demandé à chaque connexion",
-                        style: GoogleFonts.poppins(
-                          fontSize: 12,
-                          color: const Color(0xFF0A1A33),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
               ),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );

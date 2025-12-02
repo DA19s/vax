@@ -305,6 +305,14 @@ Widget build(BuildContext context) {
       backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text('Conseils de santé'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Color(0xFF0A1A33)),
+          onPressed: () {
+            if (Navigator.canPop(context)) {
+              Navigator.pop(context);
+            }
+          },
+        ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(50),
           child: Container(

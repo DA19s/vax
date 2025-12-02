@@ -53,6 +53,18 @@ class _AuthOptionScreenState extends State<AuthOptionScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Color(0xFF0A1A33)),
+          onPressed: () {
+            if (Navigator.canPop(context)) {
+              Navigator.pop(context);
+            }
+          },
+        ),
+      ),
       body: SafeArea(
         child: FadeTransition(
           opacity: _fadeAnimation,
@@ -92,7 +104,7 @@ class _AuthOptionScreenState extends State<AuthOptionScreen>
 
                       // Titre
                       Text(
-                        "Bienvenue sur VaxCare",
+                        "Bienvenue sur Imunia",
                         style: GoogleFonts.poppins(
                           fontSize: 28,
                           fontWeight: FontWeight.bold,

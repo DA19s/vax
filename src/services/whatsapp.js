@@ -129,7 +129,7 @@ const sendVaccinationReminder = async (
 
 N'oubliez pas d'apporter le carnet !
 
-VaxCare`;
+Imunia`;
 
   return sendWhatsApp(to, message);
 };

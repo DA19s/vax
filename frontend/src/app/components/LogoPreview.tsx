@@ -33,7 +33,7 @@ export default function LogoPreview({
   const [hasError, setHasError] = useState(false);
 
   const finalLogo = logoUrl ?? settings.logoUrl ?? "/logo.png";
-  const finalName = appName ?? settings.appName ?? "VaxCare";
+  const finalName = appName ?? settings.appName ?? "Imunia";
 
   useEffect(() => {
     const img = new Image();

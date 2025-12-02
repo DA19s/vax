@@ -6,7 +6,7 @@ import { Providers } from "@/app/providers";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "VaxCare",
+  title: "Imunia",
   description: "Plateforme de gestion de vaccination",
 };
 

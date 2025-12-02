@@ -155,6 +155,14 @@ class _VaccinationListScreenState extends State<VaccinationListScreen> with Sing
       return Scaffold(
         appBar: AppBar(
           title: const Text('Vaccinations'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: Color(0xFF0A1A33)),
+            onPressed: () {
+              if (Navigator.canPop(context)) {
+                Navigator.pop(context);
+              }
+            },
+          ),
         ),
         body: const LoadingIndicator(message: 'Chargement des vaccins...'),
       );
@@ -164,6 +172,14 @@ class _VaccinationListScreenState extends State<VaccinationListScreen> with Sing
       return Scaffold(
         appBar: AppBar(
           title: const Text('Vaccinations'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: Color(0xFF0A1A33)),
+            onPressed: () {
+              if (Navigator.canPop(context)) {
+                Navigator.pop(context);
+              }
+            },
+          ),
         ),
         body: Center(
           child: Column(
@@ -211,6 +227,14 @@ class _VaccinationListScreenState extends State<VaccinationListScreen> with Sing
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Color(0xFF0A1A33)),
+          onPressed: () {
+            if (Navigator.canPop(context)) {
+              Navigator.pop(context);
+            }
+          },
+        ),
         title: Text(
           'Vaccinations',
           style: GoogleFonts.poppins(

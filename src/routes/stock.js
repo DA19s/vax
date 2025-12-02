@@ -62,4 +62,7 @@ router.get("/stats/health-center", requireAuth, stockController.getHealthCenterS
 
 router.get("/health-center/reservations", requireAuth, stockController.getHealthCenterReservations);
 
+router.get("/pending-transfers", requireAuth, stockController.getPendingTransfers);
+router.post("/pending-transfers/:transferId/confirm", requireAuth, stockController.confirmPendingTransfer);
+
 module.exports = router;

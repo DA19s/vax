@@ -210,6 +210,7 @@ export default function ManagedUsersPage() {
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [form, setForm] = useState<ManagedForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
 
   const [deleteTarget, setDeleteTarget] = useState<ManagedUser | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -397,17 +398,17 @@ export default function ManagedUsersPage() {
     if (showScopeSelect) {
       if (!targetScopeId) {
         const scopeLabelForErrors = scopeLabel ?? "élément";
-        setError(`Veuillez sélectionner un ${scopeLabelForErrors.toLowerCase()}.`);
+        setModalError(`Veuillez sélectionner un ${scopeLabelForErrors.toLowerCase()}.`);
         return;
       }
     } else if (!targetScopeId) {
-      setError("Votre compte n'est pas rattaché à un centre de santé.");
+      setModalError("Votre compte n'est pas rattaché à un centre de santé.");
       return;
     }
 
     if (!isEdit) {
       if (!form.email.trim() || !form.firstName.trim() || !form.lastName.trim()) {
-        setError("Veuillez renseigner le prénom, nom et email");
+        setModalError("Veuillez renseigner le prénom, nom et email");
         return;
       }
     }
@@ -431,7 +432,7 @@ export default function ManagedUsersPage() {
 
     try {
       setSaving(true);
-      setError(null);
+      setModalError(null);
 
       const res = await fetch(endpoint, {
         method,
@@ -443,15 +444,20 @@ export default function ManagedUsersPage() {
       });
 
       if (!res.ok) {
-        const message = await res.json().catch(() => null);
-        throw new Error(message?.message ?? `status ${res.status}`);
+        const errorData = await res.json().catch(() => null);
+        const errorMessage = errorData?.message ?? `Erreur ${res.status}`;
+        throw new Error(errorMessage);
       }
 
       closeFormModal();
       await fetchUsers();
     } catch (err) {
       console.error("Erreur sauvegarde utilisateur:", err);
-      setError("Impossible d'enregistrer l'utilisateur");
+      // Utiliser le message d'erreur du backend s'il existe, sinon message générique
+      const errorMessage = err instanceof Error && err.message 
+        ? err.message 
+        : "Impossible d'enregistrer l'utilisateur";
+      setModalError(errorMessage);
     } finally {
       setSaving(false);
     }
@@ -718,13 +724,25 @@ export default function ManagedUsersPage() {
             </div>
 
             <div className="space-y-4 px-6 py-4">
+              {modalError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4" />
+                    <span>{modalError}</span>
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
                   <label className="text-sm font-medium text-slate-600">Prénom</label>
                   <input
                     type="text"
                     value={form.firstName}
-                    onChange={(event) => setForm((prev) => ({ ...prev, firstName: event.target.value }))}
+                    onChange={(event) => {
+                      setForm((prev) => ({ ...prev, firstName: event.target.value }));
+                      setModalError(null);
+                    }}
                     disabled={disableIdentityFields}
                     className={`mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${
                       disableIdentityFields ? "bg-slate-100 text-slate-500" : ""
@@ -736,7 +754,10 @@ export default function ManagedUsersPage() {
                   <input
                     type="text"
                     value={form.lastName}
-                    onChange={(event) => setForm((prev) => ({ ...prev, lastName: event.target.value }))}
+                    onChange={(event) => {
+                      setForm((prev) => ({ ...prev, lastName: event.target.value }));
+                      setModalError(null);
+                    }}
                     disabled={disableIdentityFields}
                     className={`mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${
                       disableIdentityFields ? "bg-slate-100 text-slate-500" : ""
@@ -751,7 +772,10 @@ export default function ManagedUsersPage() {
                   <input
                     type="tel"
                     value={form.phone}
-                    onChange={(event) => setForm((prev) => ({ ...prev, phone: event.target.value }))}
+                    onChange={(event) => {
+                      setForm((prev) => ({ ...prev, phone: event.target.value }));
+                      setModalError(null);
+                    }}
                     disabled={disableIdentityFields}
                     className={`mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${
                       disableIdentityFields ? "bg-slate-100 text-slate-500" : ""
@@ -763,7 +787,10 @@ export default function ManagedUsersPage() {
                   <input
                     type="email"
                     value={form.email}
-                    onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
+                    onChange={(event) => {
+                      setForm((prev) => ({ ...prev, email: event.target.value }));
+                      setModalError(null);
+                    }}
                     disabled={disableIdentityFields}
                     className={`mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 ${
                       disableIdentityFields ? "bg-slate-100 text-slate-500" : ""
@@ -779,7 +806,10 @@ export default function ManagedUsersPage() {
                   </label>
                   <select
                     value={form.scopeId}
-                    onChange={(event) => setForm((prev) => ({ ...prev, scopeId: event.target.value }))}
+                    onChange={(event) => {
+                      setForm((prev) => ({ ...prev, scopeId: event.target.value }));
+                      setModalError(null);
+                    }}
                     className="mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
                   >
                     <option value="">— Sélectionner —</option>

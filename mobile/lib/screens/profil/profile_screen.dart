@@ -185,7 +185,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'VaxCare',
+              'Imunia',
               style: GoogleFonts.poppins(
                 fontSize: 20,
                 fontWeight: FontWeight.w700,
@@ -504,7 +504,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             
             // Version
             Text(
-              'VaxCare v1.0.0',
+              'Imunia v1.0.0',
               style: AppTextStyles.caption,
             ),
             

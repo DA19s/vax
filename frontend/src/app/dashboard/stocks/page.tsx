@@ -5,8 +5,10 @@ import {
   AlertTriangle,
   ArrowRightLeft,
   Calendar,
+  CheckCircle,
   Clock,
   Filter,
+  Loader2,
   PackageOpen,
   PenSquare,
   Plus,
@@ -1608,6 +1610,11 @@ function RegionalStocksPage() {
   const [lotLoading, setLotLoading] = useState(false);
   const [lotError, setLotError] = useState<string | null>(null);
   const [regionalDeletingId, setRegionalDeletingId] = useState<string | null>(null);
+  
+  // États pour les envois en attente
+  const [pendingTransfers, setPendingTransfers] = useState<any[]>([]);
+  const [pendingTransfersLoading, setPendingTransfersLoading] = useState(false);
+  const [confirmingTransferId, setConfirmingTransferId] = useState<string | null>(null);
 
   const fetchRegionalStats = useCallback(async () => {
     if (!accessToken) {
@@ -1776,10 +1783,82 @@ function RegionalStocksPage() {
     [accessToken],
   );
 
+  const fetchPendingTransfers = useCallback(async () => {
+    if (!accessToken) {
+      setPendingTransfers([]);
+      setPendingTransfersLoading(false);
+      return;
+    }
+    try {
+      setPendingTransfersLoading(true);
+      const response = await fetch(`${API_URL}/api/stock/pending-transfers`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      const payload = (await response.json()) as { transfers?: any[] };
+      setPendingTransfers(Array.isArray(payload?.transfers) ? payload.transfers : []);
+    } catch (err) {
+      console.error("Erreur chargement envois en attente:", err);
+      setPendingTransfers([]);
+    } finally {
+      setPendingTransfersLoading(false);
+    }
+  }, [accessToken]);
+
+  const handleConfirmTransfer = useCallback(
+    async (transferId: string) => {
+      if (!accessToken) return;
+      try {
+        setConfirmingTransferId(transferId);
+        const response = await fetch(
+          `${API_URL}/api/stock/pending-transfers/${transferId}/confirm`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        // Recharger les données
+        await Promise.all([
+          fetchPendingTransfers(),
+          fetchRegionalStocks(),
+          fetchRegionalStats(),
+        ]);
+      } catch (err) {
+        console.error("Erreur confirmation envoi:", err);
+        alert(
+          err instanceof Error
+            ? err.message
+            : "Impossible de confirmer la réception du stock.",
+        );
+      } finally {
+        setConfirmingTransferId(null);
+      }
+    },
+    [accessToken, fetchPendingTransfers, fetchRegionalStocks, fetchRegionalStats],
+  );
+
   useEffect(() => {
     fetchRegionalStocks();
     fetchRegionalStats();
-  }, [fetchRegionalStocks, fetchRegionalStats]);
+    fetchPendingTransfers();
+  }, [fetchRegionalStocks, fetchRegionalStats, fetchPendingTransfers]);
 
   const availableVaccinesForCreation = useMemo(() => {
     const existing = new Set(stocks.map((stock) => stock.vaccineId));
@@ -2024,6 +2103,88 @@ function RegionalStocksPage() {
         {error && (
           <div className="rounded-3xl border border-red-200 bg-red-50/80 p-4 text-sm text-red-700">
             {error}
+          </div>
+        )}
+
+        {/* Section Envois en attente */}
+        {pendingTransfers.length > 0 && (
+          <div className="overflow-hidden rounded-3xl border border-blue-200 bg-blue-50/50 shadow-sm">
+            <div className="bg-blue-100 px-6 py-4">
+              <h3 className="text-lg font-semibold text-blue-900">
+                Envois en attente de confirmation
+              </h3>
+              <p className="text-sm text-blue-700">
+                Confirmez la réception des stocks envoyés depuis le niveau national
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-blue-200">
+                <thead className="bg-blue-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
+                      Vaccin
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
+                      Quantité
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
+                      Date d'envoi
+                    </th>
+                    <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-blue-700">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-blue-100 bg-white">
+                  {pendingTransfers.map((transfer) => {
+                    const sentDate = new Date(transfer.createdAt);
+                    return (
+                      <tr key={transfer.id} className="hover:bg-blue-50/50">
+                        <td className="px-6 py-4">
+                          <div className="text-sm font-medium text-slate-900">
+                            {transfer.vaccine?.name ?? "Vaccin inconnu"}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-700">
+                          {transfer.quantity.toLocaleString("fr-FR")} doses
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-600">
+                          {sentDate.toLocaleDateString("fr-FR", {
+                            day: "2-digit",
+                            month: "2-digit",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => handleConfirmTransfer(transfer.id)}
+                              disabled={confirmingTransferId === transfer.id}
+                              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                            >
+                              {confirmingTransferId === transfer.id ? (
+                                <>
+                                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                  Confirmation...
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle className="h-4 w-4" />
+                                  Confirmer la réception
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
@@ -2471,6 +2632,11 @@ function DistrictStocksPage() {
   const [lotError, setLotError] = useState<string | null>(null);
   const [districtDeletingId, setDistrictDeletingId] = useState<string | null>(null);
 
+  // États pour les envois en attente
+  const [pendingTransfers, setPendingTransfers] = useState<any[]>([]);
+  const [pendingTransfersLoading, setPendingTransfersLoading] = useState(false);
+  const [confirmingTransferId, setConfirmingTransferId] = useState<string | null>(null);
+
   const fetchDistrictStats = useCallback(async () => {
     if (!accessToken) {
       setStats(emptyStats);
@@ -2612,10 +2778,82 @@ function DistrictStocksPage() {
     }
   }, [accessToken]);
 
+  const fetchPendingTransfers = useCallback(async () => {
+    if (!accessToken) {
+      setPendingTransfers([]);
+      setPendingTransfersLoading(false);
+      return;
+    }
+    try {
+      setPendingTransfersLoading(true);
+      const response = await fetch(`${API_URL}/api/stock/pending-transfers`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      const payload = (await response.json()) as { transfers?: any[] };
+      setPendingTransfers(Array.isArray(payload?.transfers) ? payload.transfers : []);
+    } catch (err) {
+      console.error("Erreur chargement envois en attente:", err);
+      setPendingTransfers([]);
+    } finally {
+      setPendingTransfersLoading(false);
+    }
+  }, [accessToken]);
+
+  const handleConfirmTransfer = useCallback(
+    async (transferId: string) => {
+      if (!accessToken) return;
+      try {
+        setConfirmingTransferId(transferId);
+        const response = await fetch(
+          `${API_URL}/api/stock/pending-transfers/${transferId}/confirm`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        // Recharger les données
+        await Promise.all([
+          fetchPendingTransfers(),
+          fetchDistrictStocks(),
+          fetchDistrictStats(),
+        ]);
+      } catch (err) {
+        console.error("Erreur confirmation envoi:", err);
+        alert(
+          err instanceof Error
+            ? err.message
+            : "Impossible de confirmer la réception du stock.",
+        );
+      } finally {
+        setConfirmingTransferId(null);
+      }
+    },
+    [accessToken, fetchPendingTransfers, fetchDistrictStocks, fetchDistrictStats],
+  );
+
   useEffect(() => {
     fetchDistrictStocks();
     fetchDistrictStats();
-  }, [fetchDistrictStocks, fetchDistrictStats]);
+    fetchPendingTransfers();
+  }, [fetchDistrictStocks, fetchDistrictStats, fetchPendingTransfers]);
 
   const availableVaccinesForCreation = useMemo(() => {
     const existing = new Set(stocks.map((stock) => stock.vaccineId));
@@ -2931,6 +3169,89 @@ function DistrictStocksPage() {
         {error && (
           <div className="rounded-3xl border border-red-200 bg-red-50/80 p-4 text-sm text-red-700">
             {error}
+          </div>
+        )}
+
+        {/* Section Envois en attente */}
+        {pendingTransfers.length > 0 && (
+          <div className="overflow-hidden rounded-3xl border border-blue-200 bg-blue-50/50 shadow-sm">
+            <div className="bg-blue-100 px-6 py-4">
+              <h3 className="text-lg font-semibold text-blue-900">
+                Envois en attente de confirmation
+              </h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-blue-100">
+                <thead className="bg-blue-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
+                      Vaccin
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
+                      Quantité
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
+                      Date d'envoi
+                    </th>
+                    <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-blue-700">
+                      Action
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-blue-100 bg-white">
+                  {pendingTransfers.map((transfer) => {
+                    const sentDate = new Date(transfer.createdAt);
+                    return (
+                      <tr key={transfer.id} className="hover:bg-blue-50/50">
+                        <td className="px-6 py-4">
+                          <div className="text-sm font-medium text-slate-900">
+                            {transfer.vaccine?.name ?? "Vaccin inconnu"}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="text-sm text-slate-600">
+                            {transfer.quantity.toLocaleString("fr-FR")} doses
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="text-sm text-slate-600">
+                            {sentDate.toLocaleDateString("fr-FR", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => handleConfirmTransfer(transfer.id)}
+                              disabled={confirmingTransferId === transfer.id}
+                              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                            >
+                              {confirmingTransferId === transfer.id ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  Confirmation...
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle className="h-4 w-4" />
+                                  Confirmer la réception
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
@@ -3361,7 +3682,8 @@ function DistrictStocksPage() {
 }
 
 function AgentAdminStocksPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
+  const isAgentAdmin = user?.role === "AGENT" && user?.agentLevel === "ADMIN";
 
   const [stocks, setStocks] = useState<HealthCenterStock[]>([]);
   const [vaccines, setVaccines] = useState<VaccineInfo[]>([]);
@@ -3389,6 +3711,11 @@ function AgentAdminStocksPage() {
   const [reservationSearch, setReservationSearch] = useState("");
   const [reservationVaccineFilter, setReservationVaccineFilter] = useState<string>("Tous");
   const [reservationStatusFilter, setReservationStatusFilter] = useState<string>("Tous");
+
+  // États pour les envois en attente
+  const [pendingTransfers, setPendingTransfers] = useState<any[]>([]);
+  const [pendingTransfersLoading, setPendingTransfersLoading] = useState(false);
+  const [confirmingTransferId, setConfirmingTransferId] = useState<string | null>(null);
 
   const fetchHealthCenterStats = useCallback(async () => {
     if (!accessToken) {
@@ -3529,6 +3856,83 @@ function AgentAdminStocksPage() {
     fetchHealthCenterStocks();
     fetchHealthCenterStats();
   }, [fetchHealthCenterStocks, fetchHealthCenterStats]);
+
+  const fetchPendingTransfers = useCallback(async () => {
+    if (!accessToken) {
+      setPendingTransfers([]);
+      setPendingTransfersLoading(false);
+      return;
+    }
+    try {
+      setPendingTransfersLoading(true);
+      const response = await fetch(`${API_URL}/api/stock/pending-transfers`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      const payload = (await response.json()) as { transfers?: any[] };
+      setPendingTransfers(Array.isArray(payload?.transfers) ? payload.transfers : []);
+    } catch (err) {
+      console.error("Erreur chargement envois en attente:", err);
+      setPendingTransfers([]);
+    } finally {
+      setPendingTransfersLoading(false);
+    }
+  }, [accessToken]);
+
+  const handleConfirmTransfer = useCallback(
+    async (transferId: string) => {
+      if (!accessToken) return;
+      try {
+        setConfirmingTransferId(transferId);
+        const response = await fetch(
+          `${API_URL}/api/stock/pending-transfers/${transferId}/confirm`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        // Recharger les données
+        await Promise.all([
+          fetchPendingTransfers(),
+          fetchHealthCenterStocks(),
+          fetchHealthCenterStats(),
+        ]);
+      } catch (err) {
+        console.error("Erreur confirmation envoi:", err);
+        alert(
+          err instanceof Error
+            ? err.message
+            : "Impossible de confirmer la réception du stock.",
+        );
+      } finally {
+        setConfirmingTransferId(null);
+      }
+    },
+    [accessToken, fetchPendingTransfers, fetchHealthCenterStocks, fetchHealthCenterStats],
+  );
+
+  useEffect(() => {
+    fetchHealthCenterStocks();
+    fetchHealthCenterStats();
+    fetchPendingTransfers();
+  }, [fetchHealthCenterStocks, fetchHealthCenterStats, fetchPendingTransfers]);
 
   const availableVaccinesForCreation = useMemo(() => {
     const existing = new Set(stocks.map((stock) => stock.vaccineId));
@@ -3704,15 +4108,17 @@ function AgentAdminStocksPage() {
               <Clock className="h-4 w-4" />
               Réservations
             </button>
-            <button
-              type="button"
-              onClick={() => setCreateModalOpen(true)}
-              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
-              disabled={availableVaccinesForCreation.length === 0}
-            >
-              <Plus className="h-4 w-4" />
-              Nouveau lot
-            </button>
+            {isAgentAdmin && (
+              <button
+                type="button"
+                onClick={() => setCreateModalOpen(true)}
+                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
+                disabled={availableVaccinesForCreation.length === 0}
+              >
+                <Plus className="h-4 w-4" />
+                Nouveau lot
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -3762,6 +4168,89 @@ function AgentAdminStocksPage() {
         {error && (
           <div className="rounded-3xl border border-red-200 bg-red-50/80 p-4 text-sm text-red-700">
             {error}
+          </div>
+        )}
+
+        {/* Section Envois en attente */}
+        {pendingTransfers.length > 0 && (
+          <div className="overflow-hidden rounded-3xl border border-blue-200 bg-blue-50/50 shadow-sm">
+            <div className="bg-blue-100 px-6 py-4">
+              <h3 className="text-lg font-semibold text-blue-900">
+                Envois en attente de confirmation
+              </h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-blue-100">
+                <thead className="bg-blue-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
+                      Vaccin
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
+                      Quantité
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
+                      Date d'envoi
+                    </th>
+                    <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-blue-700">
+                      Action
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-blue-100 bg-white">
+                  {pendingTransfers.map((transfer) => {
+                    const sentDate = new Date(transfer.createdAt);
+                    return (
+                      <tr key={transfer.id} className="hover:bg-blue-50/50">
+                        <td className="px-6 py-4">
+                          <div className="text-sm font-medium text-slate-900">
+                            {transfer.vaccine?.name ?? "Vaccin inconnu"}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="text-sm text-slate-600">
+                            {transfer.quantity.toLocaleString("fr-FR")} doses
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="text-sm text-slate-600">
+                            {sentDate.toLocaleDateString("fr-FR", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => handleConfirmTransfer(transfer.id)}
+                              disabled={confirmingTransferId === transfer.id}
+                              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                            >
+                              {confirmingTransferId === transfer.id ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  Confirmation...
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle className="h-4 w-4" />
+                                  Confirmer la réception
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
@@ -3884,15 +4373,17 @@ function AgentAdminStocksPage() {
                             <PackageOpen className="h-4 w-4" />
                             Lots
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteHealthCenterStock(stock)}
-                            disabled={healthDeletingId === stock.id}
-                            className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                            {healthDeletingId === stock.id ? "Suppression…" : "Supprimer"}
-                          </button>
+                          {isAgentAdmin && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteHealthCenterStock(stock)}
+                              disabled={healthDeletingId === stock.id}
+                              className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              {healthDeletingId === stock.id ? "Suppression…" : "Supprimer"}
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -3904,7 +4395,7 @@ function AgentAdminStocksPage() {
         </div>
       </div>
 
-      {createModalOpen && (
+      {isAgentAdmin && createModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
           <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl">
             <form onSubmit={handleCreateStock} className="space-y-4 p-6">
@@ -4338,7 +4829,7 @@ export default function StocksPage() {
     return <DistrictStocksPage />;
   }
 
-  if (user.role === "AGENT" && user.agentLevel === "ADMIN") {
+  if (user.role === "AGENT" && (user.agentLevel === "ADMIN" || user.agentLevel === "STAFF")) {
     return <AgentAdminStocksPage />;
   }
 

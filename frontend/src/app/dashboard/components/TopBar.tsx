@@ -27,7 +27,11 @@ export default function TopBar() {
           style={{ color: "var(--header-text-color)" }}
         >
           {user
-            ? `${user.email ?? "national@test.com"} - ${user.role.toLowerCase()}`
+            ? `${user.email ?? "national@test.com"} - ${
+                user.role === "AGENT" && user.agentLevel === "ADMIN"
+                  ? "agent admin"
+                  : user.role.toLowerCase()
+              }`
             : "national@test.com - national"}
         </p>
       </div>

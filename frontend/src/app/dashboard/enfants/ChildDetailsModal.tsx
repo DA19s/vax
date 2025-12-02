@@ -449,31 +449,29 @@ export default function ChildDetailsModal({
                       {currentNextAppointment ? (
                         <p>{formatDate(currentNextAppointment, true)}</p>
                       ) : (
-                        <div className="space-y-2">
-                          <p className="text-sm text-slate-500">Non planifié</p>
-                          {canSchedule && (
-                            <>
-                              {scheduleOptions.length > 0 ? (
-                                <button
-                                  type="button"
-                                  onClick={handleOpenSchedule}
-                                  className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-semibold text-amber-700 transition hover:bg-amber-100"
-                                >
-                                  <CalendarPlus className="h-4 w-4" />
-                                  Programmer un rendez-vous
-                                </button>
-                              ) : (
-                                <p className="text-xs text-slate-400">
-                                  Aucun vaccin à programmer pour le moment
-                                </p>
-                              )}
-                              {scheduleError && scheduleOptions.length === 0 && (
-                                <div className="mt-2 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
-                                  <AlertCircle className="h-4 w-4" />
-                                  {scheduleError}
-                                </div>
-                              )}
-                            </>
+                        <p className="text-sm text-slate-500">Non planifié</p>
+                      )}
+                      {canSchedule && (
+                        <div className="mt-2">
+                          {scheduleOptions.length > 0 ? (
+                            <button
+                              type="button"
+                              onClick={handleOpenSchedule}
+                              className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-semibold text-amber-700 transition hover:bg-amber-100"
+                            >
+                              <CalendarPlus className="h-4 w-4" />
+                              Programmer un rendez-vous
+                            </button>
+                          ) : (
+                            <p className="text-xs text-slate-400">
+                              Aucun vaccin à programmer pour le moment
+                            </p>
+                          )}
+                          {scheduleError && scheduleOptions.length === 0 && (
+                            <div className="mt-2 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+                              <AlertCircle className="h-4 w-4" />
+                              {scheduleError}
+                            </div>
                           )}
                         </div>
                       )}

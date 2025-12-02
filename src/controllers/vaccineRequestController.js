@@ -3,13 +3,28 @@ const { sendVaccineRequestEmail } = require("../services/emailService");
 const { notifyVaccineScheduled } = require("../services/notificationService");
 
 /**
+ * Vérifie si un vaccin correspond au genre d'un enfant
+ * @param {Object} vaccine - Le vaccin avec son champ gender (peut être null, 'M', ou 'F')
+ * @param {string} childGender - Le genre de l'enfant ('M' ou 'F')
+ * @returns {boolean} - true si le vaccin peut être administré à cet enfant
+ */
+const isVaccineSuitableForGender = (vaccine, childGender) => {
+  // Si le vaccin n'a pas de genre spécifié (null), il est pour tous
+  if (!vaccine.gender) {
+    return true;
+  }
+  // Si le vaccin a un genre, il doit correspondre au genre de l'enfant
+  return vaccine.gender === childGender;
+};
+
+/**
  * POST /api/mobile/children/:childId/vaccine-requests
  * Créer une demande de vaccin (pour les parents)
  */
 const createVaccineRequest = async (req, res, next) => {
   try {
     const { childId } = req.params;
-    const { vaccineId, vaccineCalendarId, dose = 1 } = req.body;
+    const { vaccineId, vaccineCalendarId } = req.body;
 
     if (!vaccineId) {
       return res.status(400).json({
@@ -58,80 +73,30 @@ const createVaccineRequest = async (req, res, next) => {
       });
     }
 
-    // Vérifier si toutes les doses précédentes sont complétées
-    if (dose > 1) {
-      const missingDoses = [];
-      for (let previousDose = 1; previousDose < dose; previousDose++) {
-        const previousCompleted = await prisma.childVaccineCompleted.findFirst({
-          where: {
-            childId,
-            vaccineId,
-            dose: previousDose,
-          },
-        });
-
-        if (!previousCompleted) {
-          missingDoses.push(previousDose);
-        }
-      }
-
-      if (missingDoses.length > 0) {
-        const dosesText = missingDoses.length === 1 
-          ? `la dose ${missingDoses[0]}`
-          : `les doses ${missingDoses.join(", ")}`;
-        return res.status(400).json({
-          success: false,
-          message: `Vous devez d'abord compléter ${dosesText} avant de demander la dose ${dose}`,
-        });
-      }
-    }
-
-    // Vérifier si une demande existe déjà pour cette dose (PENDING ou SCHEDULED)
-    const existingRequest = await prisma.vaccineRequest.findFirst({
-      where: {
-        childId,
-        vaccineId,
-        dose,
-        status: {
-          in: ["PENDING", "SCHEDULED"],
-        },
-      },
-    });
-
-    if (existingRequest) {
+    // Vérifier si le vaccin correspond au genre de l'enfant
+    if (!isVaccineSuitableForGender(vaccine, child.gender)) {
       return res.status(400).json({
         success: false,
-        message: existingRequest.status === "PENDING"
-          ? "Une demande est déjà en attente pour cette dose"
-          : "Un rendez-vous a déjà été programmé pour cette dose",
+        message: "Ce vaccin n'est pas adapté au genre de l'enfant",
       });
     }
 
-    // Vérifier si un rendez-vous est déjà programmé pour cette dose (non complété)
-    const existingScheduled = await prisma.childVaccineScheduled.findFirst({
+    // Vérifier uniquement si une demande PENDING existe déjà pour exactement le même vaccin et calendrier
+    // On permet plusieurs rendez-vous simultanés pour le même enfant
+    const existingPendingRequest = await prisma.vaccineRequest.findFirst({
       where: {
         childId,
         vaccineId,
-        dose,
+        vaccineCalendarId: vaccineCalendarId || null,
+        status: "PENDING",
       },
     });
 
-    if (existingScheduled) {
-      // Vérifier si le rendez-vous a déjà été complété
-      const isCompleted = await prisma.childVaccineCompleted.findFirst({
-        where: {
-          childId,
-          vaccineId,
-          dose,
-        },
+    if (existingPendingRequest) {
+      return res.status(400).json({
+        success: false,
+        message: "Une demande est déjà en attente pour ce vaccin",
       });
-
-      if (!isCompleted) {
-        return res.status(400).json({
-          success: false,
-          message: "Un rendez-vous est déjà programmé pour cette dose",
-        });
-      }
     }
 
     // Créer la demande
@@ -140,7 +105,6 @@ const createVaccineRequest = async (req, res, next) => {
         childId,
         vaccineId,
         vaccineCalendarId: vaccineCalendarId || null,
-        dose,
         status: "PENDING",
       },
       include: {
@@ -308,6 +272,7 @@ const scheduleVaccineRequest = async (req, res, next) => {
           select: {
             id: true,
             healthCenterId: true,
+            gender: true,
           },
         },
         vaccine: {
@@ -315,6 +280,7 @@ const scheduleVaccineRequest = async (req, res, next) => {
             id: true,
             name: true,
             dosesRequired: true,
+            gender: true,
           },
         },
       },
@@ -324,6 +290,14 @@ const scheduleVaccineRequest = async (req, res, next) => {
       return res.status(404).json({
         success: false,
         message: "Demande non trouvée",
+      });
+    }
+
+    // Vérifier si le vaccin correspond au genre de l'enfant
+    if (!isVaccineSuitableForGender(request.vaccine, request.child.gender)) {
+      return res.status(400).json({
+        success: false,
+        message: "Ce vaccin n'est pas adapté au genre de l'enfant",
       });
     }
 
@@ -352,7 +326,6 @@ const scheduleVaccineRequest = async (req, res, next) => {
           vaccineCalendarId: request.vaccineCalendarId,
           scheduledFor: scheduledDate,
           plannerId: req.user.id,
-          dose: request.dose,
         },
       });
 
@@ -387,6 +360,22 @@ const scheduleVaccineRequest = async (req, res, next) => {
               lastName: true,
             },
           },
+        },
+      });
+
+      // Mettre à jour nextAppointment avec le prochain rendez-vous le plus proche
+      const nextScheduled = await tx.childVaccineScheduled.findFirst({
+        where: { childId: request.childId },
+        orderBy: { scheduledFor: "asc" },
+        select: { scheduledFor: true, vaccineId: true, plannerId: true },
+      });
+
+      await tx.children.update({
+        where: { id: request.childId },
+        data: {
+          nextAppointment: nextScheduled?.scheduledFor || null,
+          nextVaccineId: nextScheduled?.vaccineId || null,
+          nextAgentId: nextScheduled?.plannerId || null,
         },
       });
 
