@@ -23,7 +23,7 @@ type RoleOption = {
   healthCenter?: { id: string; name: string } | null;
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:6000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5050";
 
 export default function LoginPage() {
   const router = useRouter();
