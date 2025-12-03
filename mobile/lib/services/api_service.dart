@@ -90,6 +90,26 @@ class ApiService {
       return false;
     }
   }
+
+  /// Récupérer le nombre de notifications non lues
+  static Future<int> getUnreadNotificationsCount(String childId) async {
+    try {
+      final headers = await _getHeaders();
+      final response = await http.get(
+        Uri.parse('$_baseUrl/mobile/children/$childId/notifications/unread-count'),
+        headers: headers,
+      );
+      _handleHttpError(response);
+      final data = json.decode(response.body);
+      if (data is Map && data['count'] != null) {
+        return data['count'] as int;
+      }
+      return 0;
+    } catch (e) {
+      print('❌ Erreur getUnreadNotificationsCount: $e');
+      return 0;
+    }
+  }
   
   // ==================== STATISTIQUES ====================
   

@@ -3101,6 +3101,57 @@ function DistrictStocksPage() {
     }
   };
 
+  const handleDeleteDistrictStock = useCallback(
+    async (stock: DistrictStock) => {
+      if (!accessToken) {
+        return;
+      }
+
+      const confirmed = window.confirm(
+        `Supprimer le stock du district ${stock.district?.name ?? ""} pour le vaccin ${stock.vaccine.name} ?`,
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      try {
+        setDistrictDeletingId(stock.id);
+        setError(null);
+
+        const payload: Record<string, string> = { vaccineId: stock.vaccineId };
+        if (stock.districtId) {
+          payload.districtId = stock.districtId;
+        }
+
+        const response = await fetch(`${API_URL}/api/stock/district`, {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => null);
+          throw new Error(data?.message ?? `status ${response.status}`);
+        }
+
+        await Promise.all([fetchDistrictStocks(), fetchDistrictStats()]);
+      } catch (err) {
+        console.error("Erreur suppression stock district:", err);
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Impossible de supprimer ce stock district.",
+        );
+      } finally {
+        setDistrictDeletingId(null);
+      }
+    },
+    [accessToken, fetchDistrictStats, fetchDistrictStocks],
+  );
+
   return (
     <DashboardShell active="/dashboard/stocks">
       <div className="space-y-8">

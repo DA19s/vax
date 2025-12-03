@@ -24,7 +24,7 @@ const isVaccineSuitableForGender = (vaccine, childGender) => {
 const createVaccineRequest = async (req, res, next) => {
   try {
     const { childId } = req.params;
-    const { vaccineId, vaccineCalendarId } = req.body;
+    const { vaccineId, vaccineCalendarId, dose: requestedDose } = req.body;
 
     if (!vaccineId) {
       return res.status(400).json({
@@ -61,9 +61,98 @@ const createVaccineRequest = async (req, res, next) => {
       });
     }
 
+    const normalizedCalendarId =
+      typeof vaccineCalendarId === "string" && vaccineCalendarId.trim().length
+        ? vaccineCalendarId
+        : null;
+
+    const parsePositiveInt = (value) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return null;
+      }
+      return Math.floor(parsed);
+    };
+
+    const findDoseInBuckets = async () => {
+      if (!normalizedCalendarId) {
+        return null;
+      }
+
+      const bucketWhere = {
+        childId,
+        vaccineId,
+        vaccineCalendarId: normalizedCalendarId,
+      };
+
+      const lookups = [
+        prisma.childVaccineDue.findFirst({
+          where: bucketWhere,
+          orderBy: { dose: "asc" },
+          select: { dose: true },
+        }),
+        prisma.childVaccineLate.findFirst({
+          where: bucketWhere,
+          orderBy: { dose: "asc" },
+          select: { dose: true },
+        }),
+        prisma.childVaccineOverdue.findFirst({
+          where: bucketWhere,
+          orderBy: { dose: "asc" },
+          select: { dose: true },
+        }),
+        prisma.childVaccineScheduled.findFirst({
+          where: bucketWhere,
+          orderBy: { dose: "asc" },
+          select: { dose: true },
+        }),
+      ];
+
+      for (const resolver of lookups) {
+        const record = await resolver;
+        if (record?.dose) {
+          return record.dose;
+        }
+      }
+
+      return null;
+    };
+
+    const determineNextDose = async () => {
+      const filters = {
+        childId,
+        vaccineId,
+        ...(normalizedCalendarId ? { vaccineCalendarId: normalizedCalendarId } : {}),
+      };
+
+      const [completedMax, scheduledMax, pendingMax] = await Promise.all([
+        prisma.childVaccineCompleted.aggregate({
+          where: filters,
+          _max: { dose: true },
+        }),
+        prisma.childVaccineScheduled.aggregate({
+          where: filters,
+          _max: { dose: true },
+        }),
+        prisma.vaccineRequest.aggregate({
+          where: { ...filters, status: "PENDING" },
+          _max: { dose: true },
+        }),
+      ]);
+
+      const highestExisting = Math.max(
+        completedMax._max.dose ?? 0,
+        scheduledMax._max.dose ?? 0,
+        pendingMax._max.dose ?? 0,
+      );
+
+      return highestExisting + 1;
+    };
+
     // Vérifier que le vaccin existe
     const vaccine = await prisma.vaccine.findUnique({
       where: { id: vaccineId },
+      select: { name: true, dosesRequired: true, gender: true },
     });
 
     if (!vaccine) {
@@ -73,7 +162,6 @@ const createVaccineRequest = async (req, res, next) => {
       });
     }
 
-    // Vérifier si le vaccin correspond au genre de l'enfant
     if (!isVaccineSuitableForGender(vaccine, child.gender)) {
       return res.status(400).json({
         success: false,
@@ -81,13 +169,35 @@ const createVaccineRequest = async (req, res, next) => {
       });
     }
 
-    // Vérifier uniquement si une demande PENDING existe déjà pour exactement le même vaccin et calendrier
-    // On permet plusieurs rendez-vous simultanés pour le même enfant
+    const totalDoses = parsePositiveInt(vaccine.dosesRequired) ?? 1;
+    let resolvedDose = parsePositiveInt(requestedDose);
+
+    if (!resolvedDose) {
+      resolvedDose = await findDoseInBuckets();
+    }
+
+    if (!resolvedDose) {
+      resolvedDose = await determineNextDose();
+    }
+
+    if (!resolvedDose) {
+      resolvedDose = 1;
+    }
+
+    if (resolvedDose > totalDoses) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Toutes les doses de ce vaccin ont déjà été administrées ou programmées.",
+      });
+    }
+
     const existingPendingRequest = await prisma.vaccineRequest.findFirst({
       where: {
         childId,
         vaccineId,
-        vaccineCalendarId: vaccineCalendarId || null,
+        vaccineCalendarId: normalizedCalendarId,
+        dose: resolvedDose,
         status: "PENDING",
       },
     });
@@ -95,7 +205,8 @@ const createVaccineRequest = async (req, res, next) => {
     if (existingPendingRequest) {
       return res.status(400).json({
         success: false,
-        message: "Une demande est déjà en attente pour ce vaccin",
+        message:
+          "Une demande est déjà en attente pour cette dose de ce vaccin.",
       });
     }
 
@@ -104,7 +215,8 @@ const createVaccineRequest = async (req, res, next) => {
       data: {
         childId,
         vaccineId,
-        vaccineCalendarId: vaccineCalendarId || null,
+        vaccineCalendarId: normalizedCalendarId,
+        dose: resolvedDose,
         status: "PENDING",
       },
       include: {
@@ -148,7 +260,7 @@ const createVaccineRequest = async (req, res, next) => {
         agentName: `${agent.firstName} ${agent.lastName}`.trim(),
         childName: `${child.firstName} ${child.lastName}`.trim(),
         vaccineName: vaccine.name,
-        dose,
+        dose: resolvedDose,
         healthCenter: child.healthCenter?.name || "Non spécifié",
       })
     );
@@ -179,14 +291,31 @@ const getVaccineRequests = async (req, res, next) => {
       where.status = status;
     }
 
-    // Si l'utilisateur est un agent, filtrer par son centre de santé
+    // Restreindre l'accès en fonction du rôle
     if (req.user.role === "AGENT" && req.user.healthCenterId) {
       where.child = {
         healthCenterId: req.user.healthCenterId,
       };
+    } else if (req.user.role === "DISTRICT" && req.user.districtId) {
+      where.child = {
+        healthCenter: {
+          districtId: req.user.districtId,
+        },
+      };
+    } else if (req.user.role === "REGIONAL" && req.user.regionId) {
+      where.child = {
+        healthCenter: {
+          district: {
+            commune: {
+              regionId: req.user.regionId,
+            },
+          },
+        },
+      };
     }
 
-    const requests = await prisma.vaccineRequest.findMany({
+    const [requests, total] = await Promise.all([
+      prisma.vaccineRequest.findMany({
       where,
       include: {
         child: {
@@ -230,10 +359,13 @@ const getVaccineRequests = async (req, res, next) => {
       orderBy: {
         requestedAt: "desc",
       },
-    });
+      }),
+      prisma.vaccineRequest.count({ where }),
+    ]);
 
     res.json({
       success: true,
+      total,
       requests,
     });
   } catch (error) {
@@ -326,6 +458,7 @@ const scheduleVaccineRequest = async (req, res, next) => {
           vaccineCalendarId: request.vaccineCalendarId,
           scheduledFor: scheduledDate,
           plannerId: req.user.id,
+          dose: request.dose ?? 1,
         },
       });
 

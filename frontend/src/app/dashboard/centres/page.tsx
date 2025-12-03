@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import DashboardShell from "../components/DashboardShell";
 import StatCard from "../components/StatCard";
-import { AlertCircle, Building2, MapPin, Plus, RefreshCw, Trash2, X, Pencil } from "lucide-react";
+import { AlertCircle, Building2, MapPin, Plus, RefreshCw, Trash2, X, Pencil, Loader2 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5050";
 
@@ -28,6 +28,29 @@ type HealthCenterResponse = {
   items?: HealthCenter[];
 } | HealthCenter[];
 
+type HealthCenterDeletionTotals = {
+  children: number;
+  users: number;
+  stockLots: number;
+  pendingTransfers: number;
+  stockReservations: number;
+  records: number;
+  scheduledVaccines: number;
+  dueVaccines: number;
+  lateVaccines: number;
+  overdueVaccines: number;
+  completedVaccines: number;
+};
+
+type HealthCenterDeletionSummary = {
+  success: boolean;
+  healthCenter: {
+    id: string;
+    name: string;
+    district?: { id: string; name: string } | null;
+  };
+  totals: HealthCenterDeletionTotals;
+};
 export default function CentresPage() {
   const { accessToken, user } = useAuth();
 
@@ -44,6 +67,12 @@ export default function CentresPage() {
 
   const [deleteTarget, setDeleteTarget] = useState<HealthCenter | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [deleteSummary, setDeleteSummary] =
+    useState<HealthCenterDeletionSummary | null>(null);
+  const [deleteSummaryLoading, setDeleteSummaryLoading] = useState(false);
+  const [deleteSummaryError, setDeleteSummaryError] = useState<string | null>(
+    null,
+  );
 
   const isDistrict = user?.role === "DISTRICT";
 
@@ -87,6 +116,62 @@ export default function CentresPage() {
   useEffect(() => {
     fetchHealthCenters();
   }, [fetchHealthCenters]);
+
+  const clearDeleteState = useCallback(() => {
+    setDeleteSummary(null);
+    setDeleteSummaryError(null);
+    setDeleteSummaryLoading(false);
+  }, []);
+
+  const loadDeleteSummary = useCallback(
+    async (centerId: string) => {
+      if (!accessToken) {
+        return;
+      }
+
+      try {
+        setDeleteSummaryLoading(true);
+        setDeleteSummaryError(null);
+        setDeleteSummary(null);
+
+        const res = await fetch(
+          `${API_URL}/api/healthCenter/${centerId}/delete-summary`,
+          {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        );
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data) {
+          throw new Error(
+            data?.message ? String(data.message) : `status ${res.status}`,
+          );
+        }
+
+        setDeleteSummary(data as HealthCenterDeletionSummary);
+      } catch (err) {
+        console.error("Erreur résumé suppression centre:", err);
+        setDeleteSummaryError(
+          "Impossible de charger le détail de la suppression.",
+        );
+      } finally {
+        setDeleteSummaryLoading(false);
+      }
+    },
+    [accessToken],
+  );
+
+  const openDeleteModal = (center: HealthCenter) => {
+    setDeleteTarget(center);
+    clearDeleteState();
+    loadDeleteSummary(center.id);
+  };
+
+  const closeDeleteModal = () => {
+    setDeleteTarget(null);
+    clearDeleteState();
+  };
 
   const resetModal = () => {
     setShowModal(false);
@@ -177,7 +262,7 @@ export default function CentresPage() {
         throw new Error(message?.message ?? `status ${res.status}`);
       }
 
-      setDeleteTarget(null);
+      closeDeleteModal();
       await fetchHealthCenters();
     } catch (err) {
       console.error("Erreur suppression centre:", err);
@@ -260,7 +345,7 @@ export default function CentresPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setDeleteTarget(center)}
+              onClick={() => openDeleteModal(center)}
                 className="rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100"
               >
                 <span className="flex items-center gap-2">
@@ -273,6 +358,27 @@ export default function CentresPage() {
       </div>
     ));
   }, [centers, loading, error, isDistrict]);
+
+  const healthCenterDeleteSummaryItems = useMemo(() => {
+    if (!deleteSummary) {
+      return [];
+    }
+
+    const totals = deleteSummary.totals;
+    return [
+      { label: "Enfants", value: totals.children },
+      { label: "Utilisateurs", value: totals.users },
+      { label: "Stocks", value: totals.stockLots },
+      { label: "Transferts en attente", value: totals.pendingTransfers },
+      { label: "Réservations", value: totals.stockReservations },
+      { label: "Dossiers", value: totals.records },
+      { label: "Vaccins programmés", value: totals.scheduledVaccines },
+      { label: "Vaccins à faire", value: totals.dueVaccines },
+      { label: "Vaccins en retard", value: totals.lateVaccines },
+      { label: "Vaccins manqués", value: totals.overdueVaccines },
+      { label: "Vaccins faits", value: totals.completedVaccines },
+    ];
+  }, [deleteSummary]);
 
   return (
     <>
@@ -363,6 +469,48 @@ export default function CentresPage() {
               </div>
             </div>
 
+            <div className="px-6 pb-4">
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-left text-sm text-slate-600">
+                {deleteSummaryLoading ? (
+                  <div className="flex items-center gap-2 text-slate-500">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Chargement des éléments impactés…
+                  </div>
+                ) : deleteSummaryError ? (
+                  <div className="space-y-3">
+                    <p className="text-red-600">{deleteSummaryError}</p>
+                    <button
+                      type="button"
+                      onClick={() => deleteTarget && loadDeleteSummary(deleteTarget.id)}
+                      className="text-sm font-semibold text-blue-600 transition hover:text-blue-700"
+                    >
+                      Réessayer
+                    </button>
+                  </div>
+                ) : deleteSummary ? (
+                  <>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Éléments impactés
+                    </p>
+                    <ul className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                      {healthCenterDeleteSummaryItems.map((item) => (
+                        <li
+                          key={item.label}
+                          className="flex items-center justify-between rounded-lg bg-white px-3 py-2"
+                        >
+                          <span className="text-slate-500">{item.label}</span>
+                          <span className="font-semibold text-slate-900">
+                            {item.value}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : (
+                  <p>Aucun détail supplémentaire à afficher.</p>
+                )}
+              </div>
+            </div>
             <div className="flex justify-end gap-3 border-t border-slate-100 bg-slate-50 px-6 py-4">
               <button
                 type="button"
@@ -398,10 +546,52 @@ export default function CentresPage() {
                 Êtes-vous sûr de vouloir supprimer <span className="font-medium text-slate-800">{deleteTarget.name}</span> ?
               </p>
             </div>
+            <div className="px-6 pb-4">
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-left text-sm text-slate-600">
+                {deleteSummaryLoading ? (
+                  <div className="flex items-center gap-2 text-slate-500">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Chargement des éléments impactés…
+                  </div>
+                ) : deleteSummaryError ? (
+                  <div className="space-y-3">
+                    <p className="text-red-600">{deleteSummaryError}</p>
+                    <button
+                      type="button"
+                      onClick={() => deleteTarget && loadDeleteSummary(deleteTarget.id)}
+                      className="text-sm font-semibold text-blue-600 transition hover:text-blue-700"
+                    >
+                      Réessayer
+                    </button>
+                  </div>
+                ) : deleteSummary ? (
+                  <>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Éléments impactés
+                    </p>
+                    <ul className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                      {healthCenterDeleteSummaryItems.map((item) => (
+                        <li
+                          key={item.label}
+                          className="flex items-center justify-between rounded-lg bg-white px-3 py-2"
+                        >
+                          <span className="text-slate-500">{item.label}</span>
+                          <span className="font-semibold text-slate-900">
+                            {item.value}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : (
+                  <p>Aucun détail supplémentaire à afficher.</p>
+                )}
+              </div>
+            </div>
             <div className="flex justify-end gap-3 border-t border-slate-100 bg-slate-50 px-6 py-4">
               <button
                 type="button"
-                onClick={() => setDeleteTarget(null)}
+                onClick={closeDeleteModal}
                 className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
               >
                 Annuler

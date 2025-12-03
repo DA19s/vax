@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { MapPin, Plus, RefreshCw, Trash2, Pencil, X } from "lucide-react";
+import { MapPin, Plus, RefreshCw, Trash2, Pencil, X, Loader2 } from "lucide-react";
 import DashboardShell from "@/app/dashboard/components/DashboardShell";
 import StatCard from "@/app/dashboard/components/StatCard";
 import { useAuth } from "@/context/AuthContext";
@@ -20,6 +20,29 @@ type RegionsResponse =
     }
   | { id: string; name: string }[];
 
+type RegionDeletionTotals = {
+  communes: number;
+  districts: number;
+  healthCenters: number;
+  children: number;
+  users: number;
+  stockLots: number;
+  pendingTransfers: number;
+  stockReservations: number;
+  records: number;
+  scheduledVaccines: number;
+  dueVaccines: number;
+  lateVaccines: number;
+  overdueVaccines: number;
+  completedVaccines: number;
+};
+
+type RegionDeletionSummary = {
+  success: boolean;
+  region: Region;
+  totals: RegionDeletionTotals;
+};
+
 export default function RegionsPage() {
   const { accessToken, user } = useAuth();
   const [regions, setRegions] = useState<Region[]>([]);
@@ -34,6 +57,12 @@ export default function RegionsPage() {
 
   const [deleteTarget, setDeleteTarget] = useState<Region | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [deleteSummary, setDeleteSummary] =
+    useState<RegionDeletionSummary | null>(null);
+  const [deleteSummaryLoading, setDeleteSummaryLoading] = useState(false);
+  const [deleteSummaryError, setDeleteSummaryError] = useState<string | null>(
+    null,
+  );
 
   const fetchRegions = useCallback(async () => {
     if (!accessToken) {
@@ -74,6 +103,63 @@ export default function RegionsPage() {
   useEffect(() => {
     fetchRegions();
   }, [fetchRegions]);
+
+  const clearDeleteState = useCallback(() => {
+    setDeleteSummary(null);
+    setDeleteSummaryError(null);
+    setDeleteSummaryLoading(false);
+  }, []);
+
+  const loadDeleteSummary = useCallback(
+    async (regionId: string) => {
+      if (!accessToken) {
+        return;
+      }
+
+      try {
+        setDeleteSummaryLoading(true);
+        setDeleteSummaryError(null);
+        setDeleteSummary(null);
+
+        const res = await fetch(
+          `${API_URL}/api/region/${regionId}/delete-summary`,
+          {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        );
+
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data) {
+          throw new Error(
+            data?.message ? String(data.message) : `status ${res.status}`,
+          );
+        }
+
+        setDeleteSummary(data as RegionDeletionSummary);
+      } catch (err) {
+        console.error("Erreur chargement résumé suppression région:", err);
+        setDeleteSummaryError(
+          "Impossible de charger le détail de la suppression.",
+        );
+      } finally {
+        setDeleteSummaryLoading(false);
+      }
+    },
+    [accessToken],
+  );
+
+  const openDeleteModal = (region: Region) => {
+    setDeleteTarget(region);
+    clearDeleteState();
+    loadDeleteSummary(region.id);
+  };
+
+  const closeDeleteModal = () => {
+    setDeleteTarget(null);
+    clearDeleteState();
+  };
 
   const resetModal = () => {
     setShowModal(false);
@@ -156,7 +242,7 @@ export default function RegionsPage() {
         throw new Error(payload?.message ?? `status ${res.status}`);
       }
 
-      setDeleteTarget(null);
+      closeDeleteModal();
       await fetchRegions();
     } catch (err) {
       console.error("Erreur suppression région:", err);
@@ -219,7 +305,7 @@ export default function RegionsPage() {
             </button>
             <button
               type="button"
-              onClick={() => setDeleteTarget(region)}
+              onClick={() => openDeleteModal(region)}
               className="flex-1 rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100"
             >
               <span className="flex items-center justify-center gap-2">
@@ -232,6 +318,30 @@ export default function RegionsPage() {
       </div>
     ));
   }, [regions, loading, user]);
+
+  const regionDeleteSummaryItems = useMemo(() => {
+    if (!deleteSummary) {
+      return [];
+    }
+
+    const totals = deleteSummary.totals;
+    return [
+      { label: "Communes", value: totals.communes },
+      { label: "Districts", value: totals.districts },
+      { label: "Centres", value: totals.healthCenters },
+      { label: "Enfants", value: totals.children },
+      { label: "Utilisateurs", value: totals.users },
+      { label: "Stocks", value: totals.stockLots },
+      { label: "Transferts en attente", value: totals.pendingTransfers },
+      { label: "Réservations", value: totals.stockReservations },
+      { label: "Dossiers", value: totals.records },
+      { label: "Vaccins programmés", value: totals.scheduledVaccines },
+      { label: "Vaccins à faire", value: totals.dueVaccines },
+      { label: "Vaccins en retard", value: totals.lateVaccines },
+      { label: "Vaccins manqués", value: totals.overdueVaccines },
+      { label: "Vaccins faits", value: totals.completedVaccines },
+    ];
+  }, [deleteSummary]);
 
   return (
     <>
@@ -358,10 +468,54 @@ export default function RegionsPage() {
                 ? Cette action est irréversible.
               </p>
             </div>
+            <div className="px-6 pb-4">
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-left text-sm text-slate-600">
+                {deleteSummaryLoading ? (
+                  <div className="flex items-center gap-2 text-slate-500">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Chargement des éléments impactés…
+                  </div>
+                ) : deleteSummaryError ? (
+                  <div className="space-y-3">
+                    <p className="text-red-600">{deleteSummaryError}</p>
+                    <button
+                      type="button"
+                      onClick={() => deleteTarget && loadDeleteSummary(deleteTarget.id)}
+                      className="text-sm font-semibold text-emerald-600 transition hover:text-emerald-700"
+                    >
+                      Réessayer
+                    </button>
+                  </div>
+                ) : deleteSummary ? (
+                  <>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Éléments impactés
+                    </p>
+                    <ul className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                      {regionDeleteSummaryItems.map((item) => (
+                        <li
+                          key={item.label}
+                          className="flex items-center justify-between rounded-lg bg-white px-3 py-2"
+                        >
+                          <span className="text-slate-500">{item.label}</span>
+                          <span className="font-semibold text-slate-900">
+                            {item.value}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : (
+                  <p className="text-sm text-slate-500">
+                    Aucun détail supplémentaire à afficher.
+                  </p>
+                )}
+              </div>
+            </div>
             <div className="flex justify-end gap-3 border-t border-slate-100 bg-slate-50 px-6 py-4">
               <button
                 type="button"
-                onClick={() => setDeleteTarget(null)}
+                onClick={closeDeleteModal}
                 className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
               >
                 Annuler

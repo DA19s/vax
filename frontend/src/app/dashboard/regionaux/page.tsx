@@ -12,6 +12,7 @@ import {
   Users,
   X,
   Pencil,
+  Loader2,
 } from "lucide-react";
 import DashboardShell from "../components/DashboardShell";
 import StatCard from "../components/StatCard";
@@ -61,6 +62,28 @@ const EMPTY_FORM: ManagedForm = {
   email: "",
   phone: "",
   scopeId: "",
+};
+
+type UserDeletionTotals = {
+  recordsDeleted: number;
+  scheduledPlannerCleared: number;
+  completedAdminCleared: number;
+  overdueEscalationCleared: number;
+  childrenNextAgentCleared: number;
+  vaccineRequestsCleared: number;
+  pendingTransfersCleared: number;
+};
+
+type UserDeletionSummary = {
+  success: boolean;
+  user: {
+    id: string;
+    firstName?: string | null;
+    lastName?: string | null;
+    email: string;
+    role: string;
+  };
+  totals: UserDeletionTotals;
 };
 
 export default function ManagedUsersPage() {
@@ -214,6 +237,12 @@ export default function ManagedUsersPage() {
 
   const [deleteTarget, setDeleteTarget] = useState<ManagedUser | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [deleteSummary, setDeleteSummary] =
+    useState<UserDeletionSummary | null>(null);
+  const [deleteSummaryLoading, setDeleteSummaryLoading] = useState(false);
+  const [deleteSummaryError, setDeleteSummaryError] = useState<string | null>(
+    null,
+  );
 
   const fallbackScopeName = defaultScopeName || "Votre centre de santé";
 
@@ -358,6 +387,61 @@ export default function ManagedUsersPage() {
     fetchUsers();
   }, [fetchScopes, fetchUsers]);
 
+  const clearDeleteState = useCallback(() => {
+    setDeleteSummary(null);
+    setDeleteSummaryError(null);
+    setDeleteSummaryLoading(false);
+  }, []);
+
+  const loadDeleteSummary = useCallback(
+    async (userId: string) => {
+      if (!accessToken) {
+        return;
+      }
+
+      try {
+        setDeleteSummaryLoading(true);
+        setDeleteSummaryError(null);
+        setDeleteSummary(null);
+
+        const res = await fetch(
+          `${API_URL}/api/users/${userId}/delete-summary`,
+          {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        );
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data) {
+          throw new Error(
+            data?.message ? String(data.message) : `status ${res.status}`,
+          );
+        }
+        setDeleteSummary(data as UserDeletionSummary);
+      } catch (err) {
+        console.error("Erreur résumé suppression utilisateur:", err);
+        setDeleteSummaryError(
+          "Impossible de charger le détail de la suppression.",
+        );
+      } finally {
+        setDeleteSummaryLoading(false);
+      }
+    },
+    [accessToken],
+  );
+
+  const openDeleteModal = (userToDelete: ManagedUser) => {
+    setDeleteTarget(userToDelete);
+    clearDeleteState();
+    loadDeleteSummary(userToDelete.id);
+  };
+
+  const closeDeleteModal = () => {
+    setDeleteTarget(null);
+    clearDeleteState();
+  };
+
   const openCreateModal = () => {
     setFormMode("create");
     setCurrentId(null);
@@ -484,7 +568,7 @@ export default function ManagedUsersPage() {
         throw new Error(message?.message ?? `status ${res.status}`);
       }
 
-      setDeleteTarget(null);
+      closeDeleteModal();
       await fetchUsers();
     } catch (err) {
       console.error("Erreur suppression utilisateur:", err);
@@ -622,7 +706,7 @@ export default function ManagedUsersPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setDeleteTarget(item)}
+                onClick={() => openDeleteModal(item)}
                 className="flex-1 rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100"
               >
                 <span className="flex items-center justify-center gap-2">
@@ -646,6 +730,45 @@ export default function ManagedUsersPage() {
     displayScopeLabel,
     fallbackScopeName,
   ]);
+
+  const userDeleteSummaryItems = useMemo(() => {
+    if (!deleteSummary) {
+      return [];
+    }
+
+    const totals = deleteSummary.totals;
+    return [
+      { label: "Dossiers enregistrés", value: totals.recordsDeleted },
+      {
+        label: "Rendez-vous planifiés",
+        value: totals.scheduledPlannerCleared,
+        hint: "Le planificateur sera retiré",
+      },
+      {
+        label: "Vaccins administrés",
+        value: totals.completedAdminCleared,
+        hint: "L'agent sera retiré des fiches",
+      },
+      {
+        label: "Vaccins manqués",
+        value: totals.overdueEscalationCleared,
+        hint: "L'agent escaladé sera retiré",
+      },
+      {
+        label: "Enfants suivis",
+        value: totals.childrenNextAgentCleared,
+        hint: "L'agent référent sera retiré",
+      },
+      {
+        label: "Demandes vaccins planifiées",
+        value: totals.vaccineRequestsCleared,
+      },
+      {
+        label: "Transferts en attente confirmés",
+        value: totals.pendingTransfersCleared,
+      },
+    ];
+  }, [deleteSummary]);
 
   if (isUnsupported) {
     return (
@@ -865,10 +988,57 @@ export default function ManagedUsersPage() {
                 Êtes-vous sûr de vouloir supprimer {deleteTarget.firstName || deleteTarget.lastName ? `${deleteTarget.firstName} ${deleteTarget.lastName}`.trim() : deleteTarget.email} ?
               </p>
             </div>
+            <div className="px-6 pb-4">
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-left text-sm text-slate-600">
+                {deleteSummaryLoading ? (
+                  <div className="flex items-center gap-2 text-slate-500">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Chargement des éléments impactés…
+                  </div>
+                ) : deleteSummaryError ? (
+                  <div className="space-y-3">
+                    <p className="text-red-600">{deleteSummaryError}</p>
+                    <button
+                      type="button"
+                      onClick={() => loadDeleteSummary(deleteTarget.id)}
+                      className="text-sm font-semibold text-blue-600 transition hover:text-blue-700"
+                    >
+                      Réessayer
+                    </button>
+                  </div>
+                ) : deleteSummary ? (
+                  <>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Éléments impactés
+                    </p>
+                    <ul className="mt-2 space-y-2 text-sm">
+                      {userDeleteSummaryItems.map((item) => (
+                        <li
+                          key={item.label}
+                          className="flex flex-col rounded-lg bg-white px-3 py-2"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-500">{item.label}</span>
+                            <span className="font-semibold text-slate-900">
+                              {item.value}
+                            </span>
+                          </div>
+                          {item.hint && (
+                            <span className="text-xs text-slate-400">{item.hint}</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : (
+                  <p>Aucun détail supplémentaire à afficher.</p>
+                )}
+              </div>
+            </div>
             <div className="flex justify-end gap-3 border-t border-slate-100 bg-slate-50 px-6 py-4">
               <button
                 type="button"
-                onClick={() => setDeleteTarget(null)}
+                onClick={closeDeleteModal}
                 className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
               >
                 Annuler

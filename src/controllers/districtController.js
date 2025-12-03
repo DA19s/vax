@@ -1,4 +1,5 @@
 const prisma = require("../config/prismaClient");
+const { OWNER_TYPES } = require("../services/stockLotService");
 
 const ensureRegional = (user) => {
   if (user.role !== "REGIONAL") {
@@ -52,6 +53,213 @@ const ensureCommuneBelongsToRegion = async (communeId, regionId) => {
     throw error;
   }
 };
+
+const collectDistrictCascadeData = async (tx, districtId) => {
+  const district = await tx.district.findUnique({
+    where: { id: districtId },
+    select: {
+      id: true,
+      name: true,
+      commune: {
+        select: {
+          id: true,
+          name: true,
+          regionId: true,
+        },
+      },
+    },
+  });
+
+  if (!district) {
+    const error = new Error("District introuvable");
+    error.status = 404;
+    throw error;
+  }
+
+  const healthCenters = await tx.healthCenter.findMany({
+    where: { districtId },
+    select: { id: true, name: true },
+  });
+  const healthCenterIds = healthCenters.map((item) => item.id);
+
+  const children =
+    healthCenterIds.length > 0
+      ? await tx.children.findMany({
+          where: { healthCenterId: { in: healthCenterIds } },
+          select: { id: true, firstName: true, lastName: true },
+        })
+      : [];
+  const childIds = children.map((item) => item.id);
+
+  const users = await tx.user.findMany({
+    where: {
+      OR: [
+        { districtId },
+        ...(healthCenterIds.length
+          ? [{ healthCenterId: { in: healthCenterIds } }]
+          : []),
+      ],
+    },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      role: true,
+      healthCenterId: true,
+    },
+  });
+
+  const childVaccinationCounts = {
+    scheduled:
+      childIds.length > 0
+        ? await tx.childVaccineScheduled.count({
+            where: { childId: { in: childIds } },
+          })
+        : 0,
+    due:
+      childIds.length > 0
+        ? await tx.childVaccineDue.count({
+            where: { childId: { in: childIds } },
+          })
+        : 0,
+    late:
+      childIds.length > 0
+        ? await tx.childVaccineLate.count({
+            where: { childId: { in: childIds } },
+          })
+        : 0,
+    overdue:
+      childIds.length > 0
+        ? await tx.childVaccineOverdue.count({
+            where: { childId: { in: childIds } },
+          })
+        : 0,
+    completed:
+      childIds.length > 0
+        ? await tx.childVaccineCompleted.count({
+            where: { childId: { in: childIds } },
+          })
+        : 0,
+  };
+
+  const stockReservationsCount =
+    childIds.length > 0
+      ? await tx.stockReservation.count({
+          where: { schedule: { childId: { in: childIds } } },
+        })
+      : 0;
+
+  const recordConditions = [];
+  if (childIds.length) {
+    recordConditions.push({ childrenId: { in: childIds } });
+  }
+  if (healthCenterIds.length) {
+    recordConditions.push({ healthCenterId: { in: healthCenterIds } });
+  }
+
+  const recordCount =
+    recordConditions.length > 0
+      ? await tx.record.count({ where: { OR: recordConditions } })
+      : 0;
+
+  const lotConditions = [
+    { ownerType: OWNER_TYPES.DISTRICT, ownerId: districtId },
+  ];
+  if (healthCenterIds.length) {
+    lotConditions.push({
+      ownerType: OWNER_TYPES.HEALTHCENTER,
+      ownerId: { in: healthCenterIds },
+    });
+  }
+
+  const stockLots =
+    lotConditions.length > 0
+      ? await tx.stockLot.findMany({
+          where: { OR: lotConditions },
+          select: { id: true, ownerType: true, ownerId: true, vaccineId: true },
+        })
+      : [];
+  const lotIds = stockLots.map((lot) => lot.id);
+
+  const pendingTransferConditions = [
+    { fromType: OWNER_TYPES.DISTRICT, fromId: districtId },
+    { toType: OWNER_TYPES.DISTRICT, toId: districtId },
+  ];
+  if (healthCenterIds.length) {
+    pendingTransferConditions.push(
+      { fromType: OWNER_TYPES.HEALTHCENTER, fromId: { in: healthCenterIds } },
+      { toType: OWNER_TYPES.HEALTHCENTER, toId: { in: healthCenterIds } },
+    );
+  }
+  if (lotIds.length) {
+    pendingTransferConditions.push({
+      lots: { some: { lotId: { in: lotIds } } },
+    });
+  }
+
+  const pendingTransfers =
+    pendingTransferConditions.length > 0
+      ? await tx.pendingStockTransfer.findMany({
+          where: { OR: pendingTransferConditions },
+          select: {
+            id: true,
+            vaccineId: true,
+            fromType: true,
+            fromId: true,
+            toType: true,
+            toId: true,
+            status: true,
+          },
+        })
+      : [];
+  const pendingTransferIds = pendingTransfers.map((transfer) => transfer.id);
+
+  return {
+    district,
+    healthCenters,
+    children,
+    users,
+    stockLots,
+    pendingTransfers,
+    childVaccinationCounts,
+    stockReservationsCount,
+    recordCount,
+    healthCenterIds,
+    childIds,
+    lotIds,
+    pendingTransferIds,
+  };
+};
+
+const formatDistrictDeletionSummary = (data) => ({
+  success: true,
+  district: {
+    id: data.district.id,
+    name: data.district.name,
+    commune: data.district.commune,
+  },
+  totals: {
+    healthCenters: data.healthCenters.length,
+    children: data.children.length,
+    users: data.users.length,
+    stockLots: data.stockLots.length,
+    pendingTransfers: data.pendingTransfers.length,
+    stockReservations: data.stockReservationsCount,
+    records: data.recordCount,
+    scheduledVaccines: data.childVaccinationCounts.scheduled,
+    dueVaccines: data.childVaccinationCounts.due,
+    lateVaccines: data.childVaccinationCounts.late,
+    overdueVaccines: data.childVaccinationCounts.overdue,
+    completedVaccines: data.childVaccinationCounts.completed,
+  },
+  details: {
+    healthCenters: data.healthCenters,
+    children: data.children,
+    users: data.users,
+    stockLots: data.stockLots,
+    pendingTransfers: data.pendingTransfers,
+  },
+});
 
 const listDistricts = async (req, res, next) => {
   try {
@@ -227,9 +435,146 @@ const deleteDistrict = async (req, res, next) => {
     const { id } = req.params;
     await ensureDistrictBelongsToRegion(id, req.user.regionId);
 
-    await prisma.district.delete({ where: { id } });
+    await prisma.$transaction(async (tx) => {
+      const cascadeData = await collectDistrictCascadeData(tx, id);
+      const {
+        childIds,
+        healthCenterIds,
+        lotIds,
+        pendingTransferIds,
+      } = cascadeData;
+
+      if (childIds.length) {
+        await tx.stockReservation.deleteMany({
+          where: { schedule: { childId: { in: childIds } } },
+        });
+
+        await tx.childVaccineScheduled.deleteMany({
+          where: { childId: { in: childIds } },
+        });
+        await tx.childVaccineCompleted.deleteMany({
+          where: { childId: { in: childIds } },
+        });
+        await tx.childVaccineDue.deleteMany({
+          where: { childId: { in: childIds } },
+        });
+        await tx.childVaccineLate.deleteMany({
+          where: { childId: { in: childIds } },
+        });
+        await tx.childVaccineOverdue.deleteMany({
+          where: { childId: { in: childIds } },
+        });
+      }
+
+      const recordConditions = [];
+      if (childIds.length) {
+        recordConditions.push({ childrenId: { in: childIds } });
+      }
+      if (healthCenterIds.length) {
+        recordConditions.push({ healthCenterId: { in: healthCenterIds } });
+      }
+      if (recordConditions.length) {
+        await tx.record.deleteMany({ where: { OR: recordConditions } });
+      }
+
+      if (childIds.length) {
+        await tx.children.deleteMany({
+          where: { id: { in: childIds } },
+        });
+      }
+
+      if (lotIds.length || pendingTransferIds.length) {
+        const pendingLotConditions = [];
+        if (lotIds.length) {
+          pendingLotConditions.push({ lotId: { in: lotIds } });
+        }
+        if (pendingTransferIds.length) {
+          pendingLotConditions.push({
+            pendingTransferId: { in: pendingTransferIds },
+          });
+        }
+        if (pendingLotConditions.length) {
+          await tx.pendingStockTransferLot.deleteMany({
+            where: { OR: pendingLotConditions },
+          });
+        }
+
+        if (lotIds.length) {
+          await tx.stockTransferLot.deleteMany({
+            where: { lotId: { in: lotIds } },
+          });
+        }
+
+        if (pendingTransferIds.length) {
+          await tx.pendingStockTransfer.deleteMany({
+            where: { id: { in: pendingTransferIds } },
+          });
+        }
+      }
+
+      const lotConditions = [{ ownerType: OWNER_TYPES.DISTRICT, ownerId: id }];
+      if (healthCenterIds.length) {
+        lotConditions.push({
+          ownerType: OWNER_TYPES.HEALTHCENTER,
+          ownerId: { in: healthCenterIds },
+        });
+      }
+
+      await tx.stockLot.deleteMany({
+        where: { OR: lotConditions },
+      });
+
+      if (healthCenterIds.length) {
+        await tx.stockHEALTHCENTER.deleteMany({
+          where: { healthCenterId: { in: healthCenterIds } },
+        });
+      }
+
+      await tx.stockDISTRICT.deleteMany({
+        where: { districtId: id },
+      });
+
+      await tx.user.deleteMany({
+        where: {
+          OR: [
+            { districtId: id },
+            ...(healthCenterIds.length
+              ? [{ healthCenterId: { in: healthCenterIds } }]
+              : []),
+          ],
+        },
+      });
+
+      if (healthCenterIds.length) {
+        await tx.healthCenter.deleteMany({
+          where: { id: { in: healthCenterIds } },
+        });
+      }
+
+      await tx.district.delete({ where: { id } });
+    });
+
     res.status(204).send();
   } catch (error) {
+    next(error);
+  }
+};
+
+const getDistrictDeletionSummary = async (req, res, next) => {
+  try {
+    ensureRegional(req.user);
+    const { id } = req.params;
+    await ensureDistrictBelongsToRegion(id, req.user.regionId);
+
+    const summary = await prisma.$transaction((tx) =>
+      collectDistrictCascadeData(tx, id),
+    );
+
+    res.json(formatDistrictDeletionSummary(summary));
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
     next(error);
   }
 };
@@ -239,4 +584,5 @@ module.exports = {
   createDistrict,
   updateDistrict,
   deleteDistrict,
+  getDistrictDeletionSummary,
 };

@@ -130,8 +130,10 @@ export default function RendezvousPage() {
   const [editOptionsLoading, setEditOptionsLoading] = useState(false);
   const [editOptions, setEditOptions] = useState<ScheduleOption[]>([]);
   const [editLoading, setEditLoading] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
   const [cancelTarget, setCancelTarget] = useState<ScheduledEntry | null>(null);
   const [cancelLoading, setCancelLoading] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const [scheduleRequestId, setScheduleRequestId] = useState<string | null>(null);
   const [scheduleRequestDate, setScheduleRequestDate] = useState<string>("");
   const [scheduleRequestLoading, setScheduleRequestLoading] = useState(false);
@@ -503,12 +505,16 @@ export default function RendezvousPage() {
   const openEditModal = useCallback(
     async (entry: ScheduledEntry) => {
       if (!canManage || !accessToken || !entry.child?.id) {
-        setError("Impossible de récupérer les informations de ce rendez-vous.");
+        setEditError("Impossible de récupérer les informations de ce rendez-vous.");
+        setEditTarget(null);
+        setEditDate("");
+        setEditVaccineId("");
         return;
       }
 
       try {
         setEditOptionsLoading(true);
+        setEditError(null);
         const response = await fetch(
           `${API_URL}/api/children/${entry.child.id}/vaccinations`,
           {
@@ -669,7 +675,7 @@ export default function RendezvousPage() {
         setEditTarget(entry);
       } catch (err) {
         console.error("Erreur chargement options rendez-vous:", err);
-        setError(
+        setEditError(
           err instanceof Error
             ? err.message
             : "Impossible de charger les vaccins disponibles.",
@@ -794,7 +800,10 @@ export default function RendezvousPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setCancelTarget(entry)}
+                      onClick={() => {
+                        setCancelError(null);
+                        setCancelTarget(entry);
+                      }}
                       className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-100"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -1094,28 +1103,28 @@ export default function RendezvousPage() {
                 event.preventDefault();
                 if (!accessToken || !editTarget) return;
                 if (!editDate) {
-                  setError("Choisissez une date et une heure.");
+                  setEditError("Choisissez une date et une heure.");
                   return;
                 }
                 const date = new Date(editDate);
                 if (Number.isNaN(date.getTime())) {
-                  setError("Date invalide.");
+                  setEditError("Date invalide.");
                   return;
                 }
                 if (!editVaccineId) {
-                  setError("Sélectionnez un vaccin.");
+                  setEditError("Sélectionnez un vaccin.");
                   return;
                 }
                 const selectedOption = editOptions.find(
                   (option) => option.vaccineId === editVaccineId,
                 );
                 if (!selectedOption) {
-                  setError("Sélectionnez un vaccin valide.");
+                  setEditError("Sélectionnez un vaccin valide.");
                   return;
                 }
                 try {
                   setEditLoading(true);
-                  setError(null);
+                  setEditError(null);
                   const response = await fetch(
                     `${API_URL}/api/vaccine/scheduled/${editTarget.id}`,
                     {
@@ -1141,9 +1150,10 @@ export default function RendezvousPage() {
                   setEditTarget(null);
                   setEditDate("");
                   setEditVaccineId("");
+                  setEditError(null);
                 } catch (err) {
                   console.error("Erreur modification rendez-vous:", err);
-                  setError(
+                  setEditError(
                     err instanceof Error
                       ? err.message
                       : "Impossible de modifier le rendez-vous.",
@@ -1196,6 +1206,12 @@ export default function RendezvousPage() {
                   required
                 />
               </div>
+              {editError && (
+                <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <p>{editError}</p>
+                </div>
+              )}
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
@@ -1203,6 +1219,7 @@ export default function RendezvousPage() {
                     setEditTarget(null);
                     setEditDate("");
                     setEditVaccineId("");
+                    setEditError(null);
                   }}
                   className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-100"
                 >
@@ -1245,10 +1262,19 @@ export default function RendezvousPage() {
               Voulez-vous vraiment annuler ce rendez-vous prévu le{" "}
               {formatDateTime(cancelTarget.scheduledFor)} ?
             </p>
+            {cancelError && (
+              <div className="mt-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <p>{cancelError}</p>
+              </div>
+            )}
             <div className="mt-6 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setCancelTarget(null)}
+                onClick={() => {
+                  setCancelTarget(null);
+                  setCancelError(null);
+                }}
                 className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-100"
               >
                 Retour
@@ -1260,7 +1286,7 @@ export default function RendezvousPage() {
                   if (!accessToken || !cancelTarget) return;
                   try {
                     setCancelLoading(true);
-                    setError(null);
+                    setCancelError(null);
                     const response = await fetch(
                       `${API_URL}/api/vaccine/scheduled/${cancelTarget.id}`,
                       {
@@ -1278,9 +1304,10 @@ export default function RendezvousPage() {
                     }
                     await fetchScheduled();
                     setCancelTarget(null);
+                    setCancelError(null);
                   } catch (err) {
                     console.error("Erreur annulation rendez-vous:", err);
-                    setError(
+                    setCancelError(
                       err instanceof Error
                         ? err.message
                         : "Impossible d'annuler le rendez-vous.",

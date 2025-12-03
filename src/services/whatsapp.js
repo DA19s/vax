@@ -84,21 +84,21 @@ const sendAccessCodeWhatsApp = async (
   childName,
   accessCode
 ) => {
-  const message = `👶 *Bienvenue sur VacxCare !*
+  const message = `👶 *Bienvenue sur Imunia !*
 Bonjour ${parentName}, votre enfant *${childName}* a été enregistré.
 
 🔐 *Code d'accès :* ${accessCode}
 
-Utilisez ce code avec votre numéro de téléphone pour activer votre espace parent dans l'application VacxCare.
+Utilisez ce code avec votre numéro de téléphone pour activer votre espace parent dans l'application Imunia.
 
 💬 Besoin d'aide ? Répondez à ce message.
-_VacxCare - Protéger la santé de nos enfants_`;
+_Imunia - Protéger la santé de nos enfants_`;
 
   return sendWhatsApp(to, message);
 };
 
 const sendVerificationCodeWhatsApp = async (to, parentName, verificationCode) => {
-  const message = `🔐 *Code de vérification VacxCare*
+  const message = `🔐 *Code de vérification Imunia*
 
 Bonjour ${parentName},
 
@@ -106,10 +106,10 @@ Votre code de vérification est : *${verificationCode}*
 
 Ce code expire dans 10 minutes.
 
-Utilisez ce code pour finaliser votre inscription dans l'application VacxCare.
+Utilisez ce code pour finaliser votre inscription dans l'application Imunia.
 
 💬 Besoin d'aide ? Répondez à ce message.
-_VacxCare - Protéger la santé de nos enfants_`;
+_Imunia - Protéger la santé de nos enfants_`;
 
   return sendWhatsApp(to, message);
 };

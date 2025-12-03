@@ -348,6 +348,7 @@ const deleteLotCascade = async (tx, lotId) => {
   const stack = [{ id: lotId, depth: 0 }];
   const visited = new Set();
   const collected = [];
+  const pendingTransfersToCheck = new Set();
 
   while (stack.length) {
     const { id, depth } = stack.pop();
@@ -365,6 +366,27 @@ const deleteLotCascade = async (tx, lotId) => {
     if (!lot) continue;
     visited.add(id);
     collected.push({ lot, depth });
+
+    const relatedPendingLots = await db.pendingStockTransferLot.findMany({
+      where: { lotId: lot.id },
+      select: { pendingTransferId: true },
+    });
+
+    if (relatedPendingLots.length) {
+      relatedPendingLots.forEach(({ pendingTransferId }) => {
+        if (pendingTransferId) {
+          pendingTransfersToCheck.add(pendingTransferId);
+        }
+      });
+
+      await db.pendingStockTransferLot.deleteMany({
+        where: { lotId: lot.id },
+      });
+    }
+
+    await db.stockReservation.deleteMany({
+      where: { stockLotId: lot.id },
+    });
 
     for (const child of lot.derivedLots) {
       stack.push({ id: child.id, depth: depth + 1 });
@@ -413,6 +435,20 @@ const deleteLotCascade = async (tx, lotId) => {
 
   for (const combo of combos.values()) {
     await updateNearestExpiration(db, combo);
+  }
+
+  if (pendingTransfersToCheck.size) {
+    for (const pendingTransferId of pendingTransfersToCheck) {
+      const remainingLots = await db.pendingStockTransferLot.count({
+        where: { pendingTransferId },
+      });
+
+      if (remainingLots === 0) {
+        await db.pendingStockTransfer.delete({
+          where: { id: pendingTransferId },
+        });
+      }
+    }
   }
 
   return collected.map(({ lot }) => lot.id);

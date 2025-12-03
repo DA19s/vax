@@ -3,6 +3,9 @@ const { generateAccessCode } = require("../utils/accessCode");
 const { sendParentAccessCode, sendVerificationCode } = require("../services/notification");
 const tokenService = require("../services/tokenService");
 const bcrypt = require("bcryptjs");
+const {
+  rebuildChildVaccinationBuckets,
+} = require("../services/vaccineBucketService");
 
 /**
  * POST /api/mobile/request-verification-code
@@ -907,6 +910,60 @@ const markVaccinesDone = async (req, res, next) => {
     }
 
     await prisma.$transaction(async (tx) => {
+      const fetchDoseFromBuckets = async (lookup) => {
+        if (!lookup.vaccineCalendarId) {
+          return null;
+        }
+
+        const bucketLookups = [
+          () =>
+            tx.childVaccineDue.findFirst({
+              where: {
+                childId: lookup.childId,
+                vaccineId: lookup.vaccineId,
+                vaccineCalendarId: lookup.vaccineCalendarId,
+              },
+              select: { dose: true },
+            }),
+          () =>
+            tx.childVaccineLate.findFirst({
+              where: {
+                childId: lookup.childId,
+                vaccineId: lookup.vaccineId,
+                vaccineCalendarId: lookup.vaccineCalendarId,
+              },
+              select: { dose: true },
+            }),
+          () =>
+            tx.childVaccineOverdue.findFirst({
+              where: {
+                childId: lookup.childId,
+                vaccineId: lookup.vaccineId,
+                vaccineCalendarId: lookup.vaccineCalendarId,
+              },
+              select: { dose: true },
+            }),
+          () =>
+            tx.childVaccineScheduled.findFirst({
+              where: {
+                childId: lookup.childId,
+                vaccineId: lookup.vaccineId,
+                vaccineCalendarId: lookup.vaccineCalendarId,
+              },
+              select: { dose: true },
+            }),
+        ];
+
+        for (const resolver of bucketLookups) {
+          const record = await resolver();
+          if (record?.dose) {
+            return record.dose;
+          }
+        }
+
+        return null;
+      };
+
       for (const vaccinePayload of vaccines) {
         const { vaccineCalendarId, vaccineId } = vaccinePayload;
 
@@ -915,25 +972,47 @@ const markVaccinesDone = async (req, res, next) => {
         }
 
         // Vérifier que le vaccin existe et correspond au genre de l'enfant
-        const vaccine = await tx.vaccine.findUnique({
+        const vaccineInfo = await tx.vaccine.findUnique({
           where: { id: vaccineId },
-          select: { gender: true },
+          select: { gender: true, dosesRequired: true },
         });
 
-        if (!vaccine) {
+        if (!vaccineInfo) {
           continue; // Ignorer si le vaccin n'existe pas
         }
 
         // Vérifier si le vaccin correspond au genre de l'enfant
-        if (!isVaccineSuitableForGender(vaccine, child.gender)) {
+        if (!isVaccineSuitableForGender(vaccineInfo, child.gender)) {
           continue; // Ignorer si le vaccin ne correspond pas au genre
         }
 
-        // Vérifier si le vaccin est déjà marqué comme complété
+        const dosesRequired = vaccineInfo?.dosesRequired
+          ? parseInt(vaccineInfo.dosesRequired, 10)
+          : 1;
+        const totalDoses =
+          Number.isFinite(dosesRequired) && dosesRequired > 0 ? dosesRequired : 1;
+
+        const bucketDose = await fetchDoseFromBuckets({
+          childId,
+          vaccineId,
+          vaccineCalendarId,
+        });
+
+        const completedCount = await tx.childVaccineCompleted.count({
+          where: { childId, vaccineId },
+        });
+        const targetDose = bucketDose ?? completedCount + 1;
+
+        if (targetDose > totalDoses) {
+          continue; // Impossible d'ajouter une dose supplémentaire
+        }
+
+        // Vérifier si le vaccin est déjà marqué comme complété pour cette dose
         const existing = await tx.childVaccineCompleted.findFirst({
           where: {
             childId,
             vaccineId,
+            dose: targetDose,
             ...(vaccineCalendarId ? { vaccineCalendarId } : {}),
           },
         });
@@ -949,17 +1028,17 @@ const markVaccinesDone = async (req, res, next) => {
             vaccineId,
             vaccineCalendarId: vaccineCalendarId || null,
             administeredAt: new Date(),
-            // administeredById peut être null pour les vaccins marqués par les parents
-            administeredById: null,
+            administeredById: null, // vaccins marqués par les parents
+            dose: targetDose,
           },
         });
 
         // Supprimer uniquement l'entrée correspondant à la dose complétée
-        // (pas toutes les doses du vaccin)
         await tx.childVaccineDue.deleteMany({
           where: {
             childId,
             vaccineId,
+            dose: targetDose,
             ...(vaccineCalendarId ? { vaccineCalendarId } : {}),
           },
         });
@@ -968,6 +1047,7 @@ const markVaccinesDone = async (req, res, next) => {
           where: {
             childId,
             vaccineId,
+            dose: targetDose,
             ...(vaccineCalendarId ? { vaccineCalendarId } : {}),
           },
         });
@@ -976,31 +1056,15 @@ const markVaccinesDone = async (req, res, next) => {
           where: {
             childId,
             vaccineId,
+            dose: targetDose,
+            ...(vaccineCalendarId ? { vaccineCalendarId } : {}),
           },
         });
 
-        // Vérifier si toutes les doses requises du vaccin sont complétées
-        const vaccineInfo = await tx.vaccine.findUnique({
-          where: { id: vaccineId },
-          select: { dosesRequired: true },
-        });
-
-        const dosesRequired = vaccineInfo?.dosesRequired
-          ? parseInt(vaccineInfo.dosesRequired, 10)
-          : 1;
-        const totalDoses = isFinite(dosesRequired) && dosesRequired > 0 ? dosesRequired : 1;
-
-        // Compter les doses complétées pour ce vaccin
-        const completedCount = await tx.childVaccineCompleted.count({
-          where: {
-            childId,
-            vaccineId,
-          },
-        });
+        const completedCountAfter = completedCount + 1;
 
         // Si toutes les doses sont complétées, supprimer toutes les entrées restantes
-        // (au cas où il y aurait des entrées pour d'autres doses qui n'ont pas été supprimées)
-        if (completedCount >= totalDoses) {
+        if (completedCountAfter >= totalDoses) {
           await tx.childVaccineDue.deleteMany({
             where: {
               childId,
@@ -1024,19 +1088,7 @@ const markVaccinesDone = async (req, res, next) => {
         }
       }
 
-      // Mettre à jour le statut de l'enfant si nécessaire
-      const hasLateOrOverdue = await tx.childVaccineLate.count({
-        where: { childId },
-      }) > 0 || await tx.childVaccineOverdue.count({
-        where: { childId },
-      }) > 0;
-
-      await tx.children.update({
-        where: { id: childId },
-        data: {
-          status: hasLateOrOverdue ? "PAS_A_JOUR" : "A_JOUR",
-        },
-      });
+      await rebuildChildVaccinationBuckets(childId, tx);
     });
 
     res.json({
@@ -1223,6 +1275,7 @@ const getChildDashboard = async (req, res, next) => {
           specificAge: entry.vaccineCalendar?.specificAge ?? null,
           minAge: entry.vaccineCalendar?.minAge ?? null,
           maxAge: entry.vaccineCalendar?.maxAge ?? null,
+          dose: entry.dose ?? 1,
         })),
         scheduled: child.scheduledVaccines.map((entry) => ({
           id: entry.id,
@@ -1236,6 +1289,7 @@ const getChildDashboard = async (req, res, next) => {
             : null,
           calendarId: entry.vaccineCalendarId,
           calendarDescription: entry.vaccineCalendar?.description ?? null,
+          dose: entry.dose ?? 1,
         })),
         late: child.lateVaccines.map((entry) => ({
           id: entry.id,
@@ -1249,6 +1303,7 @@ const getChildDashboard = async (req, res, next) => {
           specificAge: entry.vaccineCalendar?.specificAge ?? null,
           minAge: entry.vaccineCalendar?.minAge ?? null,
           maxAge: entry.vaccineCalendar?.maxAge ?? null,
+          dose: entry.dose ?? 1,
         })),
         overdue: child.overdueVaccines.map((entry) => ({
           id: entry.id,
@@ -1258,6 +1313,7 @@ const getChildDashboard = async (req, res, next) => {
           dueDate: entry.dueDate,
           calendarId: entry.vaccineCalendarId,
           calendarDescription: entry.vaccineCalendar?.description ?? null,
+          dose: entry.dose ?? 1,
         })),
         completed: child.completedVaccines.map((entry) => ({
           id: entry.id,
@@ -1271,6 +1327,7 @@ const getChildDashboard = async (req, res, next) => {
             : null,
           calendarId: entry.vaccineCalendarId,
           calendarDescription: entry.vaccineCalendar?.description ?? null,
+          dose: entry.dose ?? 1,
         })),
       },
       stats: {
@@ -1498,6 +1555,7 @@ const getAppointments = async (req, res, next) => {
       vaccineId: scheduled.vaccineId,
       vaccineName: scheduled.vaccine.name,
       date: scheduled.scheduledFor,
+      dose: scheduled.dose ?? 1,
       planner: scheduled.planner
         ? `${scheduled.planner.firstName} ${scheduled.planner.lastName}`
         : null,
@@ -1566,6 +1624,36 @@ const getNotifications = async (req, res, next) => {
       message: "Erreur lors de la récupération des notifications",
       error: process.env.NODE_ENV !== "production" ? error.message : undefined,
     });
+  }
+};
+
+/**
+ * GET /api/mobile/children/:childId/notifications/unread-count
+ */
+const getUnreadNotificationCount = async (req, res, next) => {
+  try {
+    const childId = req.childId || req.params.childId;
+
+    if (!childId) {
+      return res.status(400).json({
+        success: false,
+        message: "childId requis",
+      });
+    }
+
+    const count = await prisma.notification.count({
+      where: {
+        childId,
+        isRead: false,
+      },
+    });
+
+    return res.json({
+      success: true,
+      count,
+    });
+  } catch (error) {
+    next(error);
   }
 };
 
@@ -1985,6 +2073,7 @@ module.exports = {
   getAppointments,
   getCalendar,
   getNotifications,
+  getUnreadNotificationCount,
   markAllNotificationsAsRead,
 };
 

@@ -73,6 +73,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
                       final date = apt['date'] != null
                           ? DateTime.tryParse(apt['date'])
                           : null;
+                      final dose = apt['dose'];
                       return Card(
                         margin: const EdgeInsets.only(bottom: 12),
                         child: ListTile(
@@ -85,6 +86,14 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              if (dose != null)
+                                Text(
+                                  'Dose ${dose.toString()}',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 12,
+                                    color: Colors.grey.shade700,
+                                  ),
+                                ),
                               if (date != null)
                                 Text(
                                   DateFormat('dd MMM yyyy HH:mm', 'fr_FR').format(date),

@@ -17,6 +17,7 @@ router.get("/me", requireAuth, userController.getSelf);
 router.patch("/me", requireAuth, userController.updateSelf);
 router.post("/me/verify-email", requireAuth, userController.verifyEmail);
 
+router.get("/:id/delete-summary", requireAuth, userController.getUserDeletionSummary);
 router.delete("/:id", requireAuth, userController.deleteUser);
 
 router.put("/regional/:id", requireAuth, userController.updateRegional);

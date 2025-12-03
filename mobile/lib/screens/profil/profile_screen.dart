@@ -7,7 +7,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_card.dart';
 import '../../core/widgets/section_header.dart';
 import '../../services/api_service.dart';
-import '../auth/pin_login_screen.dart';
+import '../onboarding/onboarding_screen.dart';
 import 'children_selector_screen.dart';
 import 'change_pin_screen.dart';
 import 'help_faq_screen.dart';
@@ -160,7 +160,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               Navigator.pushAndRemoveUntil(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => const PinLoginScreen(),
+                  builder: (_) => const OnboardingScreen(),
                 ),
                 (route) => false,
               );

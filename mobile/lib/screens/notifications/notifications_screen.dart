@@ -28,9 +28,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   @override
   void initState() {
     super.initState();
-    _loadNotifications();
-    // Marquer toutes les notifications comme lues quand l'écran est ouvert
-    _markAllAsRead();
+    _initNotifications();
+  }
+
+  Future<void> _initNotifications() async {
+    await _loadNotifications();
+    await _markAllAsRead();
   }
 
   Future<void> _markAllAsRead() async {
@@ -48,10 +51,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  Future<void> _loadNotifications() async {
-    setState(() {
-      _isLoading = true;
-    });
+  Future<void> _loadNotifications({bool showLoader = true}) async {
+    if (showLoader) {
+      setState(() {
+        _isLoading = true;
+      });
+    }
 
     try {
       final childId = widget.child['id'] ?? widget.child['_id'] ?? '';
@@ -69,12 +74,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             'read': n['read'] ?? n['isRead'] ?? false,
           };
         }).toList();
-        _isLoading = false;
+        if (showLoader) {
+          _isLoading = false;
+        }
       });
     } catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
+      if (showLoader) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -103,27 +112,72 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   ),
                 )
               : RefreshIndicator(
-                  onRefresh: _loadNotifications,
+                  onRefresh: () async {
+                    await _loadNotifications(showLoader: false);
+                    await _markAllAsRead();
+                  },
                   child: ListView.builder(
                     padding: const EdgeInsets.all(16),
                     itemCount: _notifications.length,
                     itemBuilder: (context, index) {
                       final notif = _notifications[index];
+                      final isUnread = !(notif['read'] as bool? ?? false);
                       return Card(
+                        color: isUnread ? const Color(0xFFFFF4F4) : Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          side: isUnread
+                              ? const BorderSide(color: Color(0xFFE57373), width: 1)
+                              : BorderSide.none,
+                        ),
                         margin: const EdgeInsets.only(bottom: 12),
                         child: ListTile(
+                          contentPadding: const EdgeInsets.all(16),
+                          leading: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              CircleAvatar(
+                                backgroundColor: isUnread
+                                    ? const Color(0xFFFFCDD2)
+                                    : const Color(0xFFE0E0E0),
+                                child: const Icon(
+                                  Icons.notifications,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              if (isUnread)
+                                Positioned(
+                                  right: -2,
+                                  top: -2,
+                                  child: Container(
+                                    width: 10,
+                                    height: 10,
+                                    decoration: const BoxDecoration(
+                                      color: Color(0xFFD32F2F),
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
                           title: Text(
                             notif['title'],
                             style: GoogleFonts.poppins(
                               fontWeight: FontWeight.w600,
+                              color: const Color(0xFF0A1A33),
                             ),
                           ),
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const SizedBox(height: 4),
-                              Text(notif['message']),
-                              const SizedBox(height: 4),
+                              const SizedBox(height: 6),
+                              Text(
+                                notif['message'],
+                                style: GoogleFonts.poppins(
+                                  color: const Color(0xFF475569),
+                                ),
+                              ),
+                              const SizedBox(height: 6),
                               Text(
                                 notif['date'],
                                 style: GoogleFonts.poppins(
@@ -133,7 +187,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                               ),
                             ],
                           ),
-                          leading: const Icon(Icons.notifications),
                         ),
                       );
                     },

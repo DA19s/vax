@@ -138,6 +138,16 @@ class _ChildDashboardScreenState extends State<ChildDashboardScreen> {
     }
   }
 
+  Future<void> _refreshNotificationCount() async {
+    try {
+      final count = await ApiService.getUnreadNotificationsCount(widget.childId);
+      if (!mounted) return;
+      setState(() {
+        _notificationCount = count;
+      });
+    } catch (_) {}
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -871,6 +881,7 @@ class _ChildDashboardScreenState extends State<ChildDashboardScreen> {
     final dateStr = appointment['appointmentDate'] ?? appointment['date'] ?? '';
     final vaccineName = appointment['vaccineName'] ?? appointment['vaccine'] ?? 'Vaccination';
     final status = appointment['status'] ?? 'scheduled';
+    final dose = appointment['dose'];
     
     DateTime? appointmentDate;
     try {
@@ -974,6 +985,17 @@ class _ChildDashboardScreenState extends State<ChildDashboardScreen> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+                if (dose != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    'Dose ${dose.toString()}',
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      color: Colors.grey.shade600,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 4),
                 Row(
                   children: [
@@ -996,31 +1018,39 @@ class _ChildDashboardScreenState extends State<ChildDashboardScreen> {
               ],
             ),
           ),
-          // Badge de statut
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: statusColor.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  statusIcon,
-                  size: 14,
-                  color: statusColor,
+          const SizedBox(width: 12),
+          Flexible(
+            child: Align(
+              alignment: Alignment.topRight,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                const SizedBox(width: 4),
-                Text(
-                  statusText,
-                  style: GoogleFonts.poppins(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: statusColor,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        statusIcon,
+                        size: 14,
+                        color: statusColor,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        statusText,
+                        style: GoogleFonts.poppins(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: statusColor,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
+              ),
             ),
           ),
         ],
@@ -1063,11 +1093,12 @@ class _ChildDashboardScreenState extends State<ChildDashboardScreen> {
       _socket!.on('newNotification', (data) async {
         try {
           if (data is Map && data['title'] != null) {
-            if (mounted) {
-              setState(() {
-                _notificationCount++;
-              });
+            final targetChildId = data['childId']?.toString();
+            if (targetChildId != null && targetChildId != widget.childId) {
+              return;
             }
+
+            await _refreshNotificationCount();
 
             try {
               await _playNotificationSound();

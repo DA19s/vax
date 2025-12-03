@@ -48,9 +48,9 @@ const url = `${process.env.FRONTEND_URL}/activate?id=${user.id}&token=${token}`;
 
   const html = `
     <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
-      <h2 style="color:#2c7be5;">Bienvenue sur VacxCare 🎉</h2>
+      <h2 style="color:#2c7be5;">Bienvenue sur Imunia 🎉</h2>
       <p>Bonjour,</p>
-      <p>Vous avez été invité à rejoindre la plateforme VacxCare ${roleDescription}.</p>
+      <p>Vous avez été invité à rejoindre la plateforme Imunia ${roleDescription}.</p>
       <p>Pour activer votre compte et définir votre mot de passe, cliquez sur le bouton ci-dessous :</p>
       <p style="text-align:center; margin:20px 0;">
         <a href="${url}" style="background:#2c7be5; color:#fff; padding:12px 24px; text-decoration:none; border-radius:5px; font-size:16px;">
@@ -65,9 +65,9 @@ const url = `${process.env.FRONTEND_URL}/activate?id=${user.id}&token=${token}`;
 
   try {
     const info = await transporter.sendMail({
-      from: `"VacxCare" <${process.env.SMTP_USER}>`,
+      from: `"Imunia" <${process.env.SMTP_USER}>`,
       to: email,
-      subject: "Invitation à rejoindre VacxCare",
+      subject: "Invitation à rejoindre Imunia",
       html,
     });
     console.log("Email d'invitation envoyé :", info.response);
@@ -95,7 +95,7 @@ const sendPasswordResetEmail = async ({ email, resetLink }) => {
 
   try {
     const info = await transporter.sendMail({
-      from: `"VacxCare" <${process.env.SMTP_USER}>`,
+      from: `"Imunia" <${process.env.SMTP_USER}>`,
       to: email,
       subject: "Réinitialisation de mot de passe",
       html,
@@ -119,7 +119,7 @@ const sendTwoFactorCode = async ({ email, code }) => {
 
   try {
     const info = await transporter.sendMail({
-      from: `"VacxCare" <${process.env.SMTP_USER}>`,
+      from: `"Imunia" <${process.env.SMTP_USER}>`,
       to: email,
       subject: "Votre code de vérification",
       html,
@@ -141,7 +141,7 @@ const sendInvitationParentEmail = async ({
 
   const html = `
     <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
-      <h2 style="color:#2c7be5;">Bienvenue sur VacxCare 🎉</h2>
+      <h2 style="color:#2c7be5;">Bienvenue sur Imunia 🎉</h2>
       <p>Bonjour chers parents,</p>
       <p>Votre enfant: ${firstName} ${lastName} a été enregistré .</p>
       <p>Pour activer votre compte et définir votre mot de passe, cliquez sur le bouton ci-dessous :</p>
@@ -158,9 +158,9 @@ const sendInvitationParentEmail = async ({
 
   try {
     const info = await transporter.sendMail({
-      from: `"VacxCare" <${process.env.SMTP_USER}>`,
+      from: `"Imunia" <${process.env.SMTP_USER}>`,
       to: email,
-      subject: "Invitation à rejoindre VacxCare",
+      subject: "Invitation à rejoindre Imunia",
       html,
     });
     console.log("Email d'invitation envoyé :", info.response);
@@ -202,7 +202,7 @@ const sendVaccineRequestEmail = async ({
 
   try {
     const info = await transporter.sendMail({
-      from: `"VacxCare" <${process.env.SMTP_USER}>`,
+      from: `"Imunia" <${process.env.SMTP_USER}>`,
       to: agentEmail,
       subject: `Nouvelle demande de vaccination - ${vaccineName}`,
       html,

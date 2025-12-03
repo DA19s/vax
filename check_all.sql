@@ -12,3 +12,4 @@ SELECT id, email, role, "createdAt" FROM "User" WHERE email = 'daibra2005@gmail.
 SELECT email, COUNT(*) as count FROM "User" WHERE email IS NOT NULL GROUP BY email ORDER BY count DESC;
 
 
+

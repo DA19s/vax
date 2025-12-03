@@ -52,6 +52,13 @@ router.get("/children/:childId/calendar", requireMobileAuth, mobileController.ge
 // Obtenir les notifications d'un enfant (nécessite authentification)
 router.get("/children/:childId/notifications", requireMobileAuth, mobileController.getNotifications);
 
+// Obtenir le nombre de notifications non lues (nécessite authentification)
+router.get(
+  "/children/:childId/notifications/unread-count",
+  requireMobileAuth,
+  mobileController.getUnreadNotificationCount,
+);
+
 // Marquer toutes les notifications comme lues (nécessite authentification)
 router.put("/children/:childId/notifications/mark-all-read", requireMobileAuth, mobileController.markAllNotificationsAsRead);
 

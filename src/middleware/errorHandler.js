@@ -13,10 +13,20 @@ const errorHandler = (error, _req, res, _next) => {
         const target = error.meta?.target;
         const constraintName = error.meta?.constraint;
         const metaField = error.meta?.target?.[0] ?? error.meta?.field_name;
+        const modelName = error.meta?.modelName;
         
         message = null; // On va déterminer le message
         
-        if (Array.isArray(target)) {
+        // Messages spécifiques pour les rendez-vous
+        if (modelName === "ChildVaccineScheduled") {
+          message = "Un rendez-vous existe déjà pour cet enfant avec ce vaccin et cette dose. Veuillez modifier la date ou choisir un autre vaccin.";
+        } else if (modelName === "ChildVaccineCompleted") {
+          message = "Cette dose a déjà été administrée à cet enfant. Veuillez vérifier les informations.";
+        } else if (modelName === "ChildVaccineDue" || modelName === "ChildVaccineLate" || modelName === "ChildVaccineOverdue") {
+          message = "Un enregistrement existe déjà pour cette combinaison. Veuillez vérifier les informations.";
+        }
+        
+        if (!message && Array.isArray(target)) {
           if (target.includes("email")) {
             message = "Cet email est déjà utilisé. Veuillez utiliser un autre email.";
           } else if (target.includes("phone")) {

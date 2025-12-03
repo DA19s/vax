@@ -41,6 +41,7 @@ const createAndSendNotification = async ({
         message: notification.message,
         type: notification.type,
         createdAt: notification.createdAt,
+        childId,
       };
 
       // Envoyer à l'enfant spécifique (room childId) - PRIORITAIRE
@@ -138,6 +139,35 @@ const notifyAppointment = async ({ childId, vaccineName, appointmentDate }) => {
   });
 };
 
+const notifyAppointmentUpdated = async ({ childId, updates }) => {
+  if (!childId || !Array.isArray(updates) || updates.length === 0) {
+    return null;
+  }
+
+  return Promise.all(
+    updates.map((update) =>
+      createAndSendNotification({
+        childId,
+        title: update.title ?? "Rendez-vous modifié",
+        message: update.message ?? "Un rendez-vous a été modifié.",
+        type: "appointment",
+      }),
+    ),
+  );
+};
+
+/**
+ * Créer une notification pour un rendez-vous annulé
+ */
+const notifyAppointmentCancelled = async ({ childId, vaccineName, scheduledDate }) => {
+  return createAndSendNotification({
+    childId,
+    title: "Rendez-vous annulé",
+    message: `Le rendez-vous pour le vaccin ${vaccineName} prévu le ${new Date(scheduledDate).toLocaleDateString("fr-FR")} a été annulé.`,
+    type: "appointment",
+  });
+};
+
 module.exports = {
   createAndSendNotification,
   notifyVaccineScheduled,
@@ -146,5 +176,7 @@ module.exports = {
   notifyNewAdvice,
   notifyNewCampaign,
   notifyAppointment,
+  notifyAppointmentUpdated,
+  notifyAppointmentCancelled,
 };
 

@@ -729,12 +729,84 @@ const verifyEmail = async (req, res, next) => {
 /**
  * DELETE /api/users/:id — suppression avec contrôle hiérarchique.
  */
-const deleteUser = async (req, res, next) => {
+const collectUserDeletionData = async (tx, userId, existingUser = null) => {
+  let userInfo = existingUser;
+  if (!userInfo) {
+    userInfo = await tx.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        role: true,
+      },
+    });
+  }
+
+  if (!userInfo) {
+    const error = new Error("Utilisateur introuvable.");
+    error.status = 404;
+    throw error;
+  }
+
+  const [
+    recordCount,
+    scheduledCount,
+    completedCount,
+    overdueCount,
+    childrenCount,
+    vaccineRequestsCount,
+    pendingTransfersCount,
+  ] = await Promise.all([
+    tx.record.count({ where: { agentId: userId } }),
+    tx.childVaccineScheduled.count({ where: { plannerId: userId } }),
+    tx.childVaccineCompleted.count({ where: { administeredById: userId } }),
+    tx.childVaccineOverdue.count({ where: { escalatedToId: userId } }),
+    tx.children.count({ where: { nextAgentId: userId } }),
+    tx.vaccineRequest.count({ where: { scheduledById: userId } }),
+    tx.pendingStockTransfer.count({ where: { confirmedById: userId } }),
+  ]);
+
+  return {
+    user: {
+      id: userInfo.id,
+      firstName: userInfo.firstName,
+      lastName: userInfo.lastName,
+      email: userInfo.email,
+      role: userInfo.role,
+    },
+    totals: {
+      recordsDeleted: recordCount,
+      scheduledPlannerCleared: scheduledCount,
+      completedAdminCleared: completedCount,
+      overdueEscalationCleared: overdueCount,
+      childrenNextAgentCleared: childrenCount,
+      vaccineRequestsCleared: vaccineRequestsCount,
+      pendingTransfersCleared: pendingTransfersCount,
+    },
+  };
+};
+
+const getUserDeletionSummary = async (req, res, next) => {
   try {
     const requester = req.user;
     const { id } = req.params;
 
-    const target = await prisma.user.findUnique({ where: { id } });
+    const target = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        role: true,
+        regionId: true,
+        districtId: true,
+        healthCenterId: true,
+        agentLevel: true,
+      },
+    });
 
     if (!target) {
       return res.status(404).json({ message: "Utilisateur introuvable." });
@@ -744,7 +816,76 @@ const deleteUser = async (req, res, next) => {
       return res.status(403).json({ message: "Action non autorisée." });
     }
 
-    await prisma.user.delete({ where: { id } });
+    const summary = await prisma.$transaction((tx) =>
+      collectUserDeletionData(tx, id, target),
+    );
+
+    res.json(summary);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const deleteUser = async (req, res, next) => {
+  try {
+    const requester = req.user;
+    const { id } = req.params;
+
+    const target = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        role: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        regionId: true,
+        districtId: true,
+        healthCenterId: true,
+        agentLevel: true,
+      },
+    });
+
+    if (!target) {
+      return res.status(404).json({ message: "Utilisateur introuvable." });
+    }
+
+    if (!canDelete(requester, target)) {
+      return res.status(403).json({ message: "Action non autorisée." });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await collectUserDeletionData(tx, id, target);
+
+      await tx.record.deleteMany({ where: { agentId: id } });
+      await tx.childVaccineScheduled.updateMany({
+        where: { plannerId: id },
+        data: { plannerId: null },
+      });
+      await tx.childVaccineCompleted.updateMany({
+        where: { administeredById: id },
+        data: { administeredById: null },
+      });
+      await tx.childVaccineOverdue.updateMany({
+        where: { escalatedToId: id },
+        data: { escalatedToId: null },
+      });
+      await tx.children.updateMany({
+        where: { nextAgentId: id },
+        data: { nextAgentId: null },
+      });
+      await tx.vaccineRequest.updateMany({
+        where: { scheduledById: id },
+        data: { scheduledById: null },
+      });
+      await tx.pendingStockTransfer.updateMany({
+        where: { confirmedById: id },
+        data: { confirmedById: null },
+      });
+
+      await tx.user.delete({ where: { id } });
+    });
+
     res.status(204).send();
   } catch (error) {
     next(error);
@@ -1183,6 +1324,7 @@ module.exports = {
   listUsers,
   updateSelf,
   verifyEmail,
+  getUserDeletionSummary,
   deleteUser,
   createRegional,
   createDistricit,

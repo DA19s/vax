@@ -1,6 +1,13 @@
 const prisma = require("../config/prismaClient");
 const { sendParentAccessCode } = require("../services/notification");
 const { generateAccessCode } = require("../utils/accessCode");
+const {
+  rebuildChildVaccinationBuckets,
+} = require("../services/vaccineBucketService");
+const {
+  buildVaccineDoseMap,
+  getDoseForEntry,
+} = require("../utils/vaccineDose");
 
 /**
  * Vérifie si un vaccin correspond au genre d'un enfant
@@ -22,6 +29,7 @@ const mapChildrenForResponse = (child) => {
     child.dueVaccines?.map((entry) => ({
       name: entry.vaccine.name,
       scheduledFor: entry.scheduledFor,
+      dose: entry.dose ?? 1,
       ageWindow: {
         unit: entry.vaccineCalendar?.ageUnit ?? null,
         specificAge: entry.vaccineCalendar?.specificAge ?? null,
@@ -38,18 +46,21 @@ const mapChildrenForResponse = (child) => {
       plannerName: entry.planner
         ? `${entry.planner.firstName ?? ""} ${entry.planner.lastName ?? ""}`.trim()
         : null,
+      dose: entry.dose ?? 1,
     })) ?? [];
 
   const lateVaccines =
     child.lateVaccines?.map((entry) => ({
       name: entry.vaccine.name,
       dueDate: entry.dueDate,
+      dose: entry.dose ?? 1,
     })) ?? [];
 
   const overdueVaccines =
     child.overdueVaccines?.map((entry) => ({
       name: entry.vaccine.name,
       dueDate: entry.dueDate,
+      dose: entry.dose ?? 1,
     })) ?? [];
 
   const completedVaccines =
@@ -60,6 +71,7 @@ const mapChildrenForResponse = (child) => {
       administeredByName: entry.administeredBy
         ? `${entry.administeredBy.firstName ?? ""} ${entry.administeredBy.lastName ?? ""}`.trim()
         : null,
+      dose: entry.dose ?? 1,
     })) ?? [];
 
   return {
@@ -153,6 +165,8 @@ const createChildren = async (req, res, next) => {
       include: { vaccines: true },
     });
 
+    const doseMap = buildVaccineDoseMap(calendarEntries);
+
     let createdChild;
 
     await prisma.$transaction(async (tx) => {
@@ -199,11 +213,13 @@ const createChildren = async (req, res, next) => {
               continue; // Passer ce vaccin s'il ne correspond pas au genre
             }
             // Chaque entrée du calendrier représente une dose unique
+            const dose = getDoseForEntry(doseMap, vaccine.id, entry.id);
             duePayload.push({
               childId: createdChild.id,
               vaccineCalendarId: entry.id,
               vaccineId: vaccine.id,
               scheduledFor: dueDate,
+              dose,
             });
           }
         } else if (isPastRange) {
@@ -213,11 +229,13 @@ const createChildren = async (req, res, next) => {
               continue; // Passer ce vaccin s'il ne correspond pas au genre
             }
             // Chaque entrée du calendrier représente une dose unique
+            const dose = getDoseForEntry(doseMap, vaccine.id, entry.id);
             latePayload.push({
               childId: createdChild.id,
               vaccineCalendarId: entry.id,
               vaccineId: vaccine.id,
               dueDate,
+              dose,
             });
             hasLate = true;
           }
@@ -245,6 +263,8 @@ const createChildren = async (req, res, next) => {
         });
       }
     });
+
+    await rebuildChildVaccinationBuckets(createdChild.id);
 
     const fullChild = await prisma.children.findUnique({
       where: { id: createdChild.id },
@@ -617,6 +637,7 @@ const getChildVaccinations = async (req, res, next) => {
             ? `${entry.planner.firstName ?? ""} ${entry.planner.lastName ?? ""}`.trim()
             : null,
           calendarId: entry.vaccineCalendarId,
+          dose: entry.dose ?? 1,
         })),
         late: child.lateVaccines.map((entry) => ({
           id: entry.id,
@@ -625,6 +646,7 @@ const getChildVaccinations = async (req, res, next) => {
           dueDate: entry.dueDate,
           calendarId: entry.vaccineCalendarId,
           calendarDescription: entry.vaccineCalendar?.description,
+          dose: entry.dose ?? 1,
         })),
         overdue: child.overdueVaccines.map((entry) => ({
           id: entry.id,
@@ -633,6 +655,7 @@ const getChildVaccinations = async (req, res, next) => {
           dueDate: entry.dueDate,
           calendarId: entry.vaccineCalendarId,
           calendarDescription: entry.vaccineCalendar?.description,
+          dose: entry.dose ?? 1,
         })),
         completed: child.completedVaccines.map((entry) => ({
           id: entry.id,
@@ -644,6 +667,7 @@ const getChildVaccinations = async (req, res, next) => {
             ? `${entry.administeredBy.firstName ?? ""} ${entry.administeredBy.lastName ?? ""}`.trim()
             : null,
           calendarId: entry.vaccineCalendarId,
+          dose: entry.dose ?? 1,
         })),
       },
     });

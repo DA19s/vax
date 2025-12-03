@@ -1,6 +1,233 @@
 const prisma = require("../config/prismaClient");
 const { OWNER_TYPES } = require("../services/stockLotService");
 
+const collectRegionCascadeData = async (tx, regionId) => {
+  const region = await tx.region.findUnique({
+    where: { id: regionId },
+    select: { id: true, name: true },
+  });
+
+  if (!region) {
+    const error = new Error("Région non trouvée");
+    error.status = 404;
+    throw error;
+  }
+
+  const [communes, districts, healthCenters, children] = await Promise.all([
+    tx.commune.findMany({
+      where: { regionId },
+      select: { id: true, name: true },
+    }),
+    tx.district.findMany({
+      where: { commune: { regionId } },
+      select: { id: true, name: true },
+    }),
+    tx.healthCenter.findMany({
+      where: { district: { commune: { regionId } } },
+      select: { id: true, name: true },
+    }),
+    tx.children.findMany({
+      where: { healthCenter: { district: { commune: { regionId } } } },
+      select: { id: true, firstName: true, lastName: true },
+    }),
+  ]);
+
+  const communeIds = communes.map((item) => item.id);
+  const districtIds = districts.map((item) => item.id);
+  const healthCenterIds = healthCenters.map((item) => item.id);
+  const childIds = children.map((item) => item.id);
+
+  const userConditions = [{ regionId }];
+  if (districtIds.length) {
+    userConditions.push({ districtId: { in: districtIds } });
+  }
+  if (healthCenterIds.length) {
+    userConditions.push({ healthCenterId: { in: healthCenterIds } });
+  }
+
+  const users =
+    userConditions.length > 0
+      ? await tx.user.findMany({
+          where: { OR: userConditions },
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            role: true,
+            districtId: true,
+            healthCenterId: true,
+          },
+        })
+      : [];
+
+  const childVaccinationCounts = {
+    scheduled:
+      childIds.length > 0
+        ? await tx.childVaccineScheduled.count({
+            where: { childId: { in: childIds } },
+          })
+        : 0,
+    due:
+      childIds.length > 0
+        ? await tx.childVaccineDue.count({
+            where: { childId: { in: childIds } },
+          })
+        : 0,
+    late:
+      childIds.length > 0
+        ? await tx.childVaccineLate.count({
+            where: { childId: { in: childIds } },
+          })
+        : 0,
+    overdue:
+      childIds.length > 0
+        ? await tx.childVaccineOverdue.count({
+            where: { childId: { in: childIds } },
+          })
+        : 0,
+    completed:
+      childIds.length > 0
+        ? await tx.childVaccineCompleted.count({
+            where: { childId: { in: childIds } },
+          })
+        : 0,
+  };
+
+  const stockReservationsCount =
+    childIds.length > 0
+      ? await tx.stockReservation.count({
+          where: { schedule: { childId: { in: childIds } } },
+        })
+      : 0;
+
+  const recordConditions = [];
+  if (childIds.length) {
+    recordConditions.push({ childrenId: { in: childIds } });
+  }
+  if (healthCenterIds.length) {
+    recordConditions.push({ healthCenterId: { in: healthCenterIds } });
+  }
+
+  const recordCount =
+    recordConditions.length > 0
+      ? await tx.record.count({ where: { OR: recordConditions } })
+      : 0;
+
+  const lotConditions = [{ ownerType: OWNER_TYPES.REGIONAL, ownerId: regionId }];
+  if (districtIds.length) {
+    lotConditions.push({
+      ownerType: OWNER_TYPES.DISTRICT,
+      ownerId: { in: districtIds },
+    });
+  }
+  if (healthCenterIds.length) {
+    lotConditions.push({
+      ownerType: OWNER_TYPES.HEALTHCENTER,
+      ownerId: { in: healthCenterIds },
+    });
+  }
+
+  const stockLots =
+    lotConditions.length > 0
+      ? await tx.stockLot.findMany({
+          where: { OR: lotConditions },
+          select: { id: true, ownerType: true, ownerId: true, vaccineId: true },
+        })
+      : [];
+  const lotIds = stockLots.map((lot) => lot.id);
+
+  const pendingTransferConditions = [];
+  pendingTransferConditions.push(
+    { fromType: OWNER_TYPES.REGIONAL, fromId: regionId },
+    { toType: OWNER_TYPES.REGIONAL, toId: regionId },
+  );
+  if (districtIds.length) {
+    pendingTransferConditions.push(
+      { fromType: OWNER_TYPES.DISTRICT, fromId: { in: districtIds } },
+      { toType: OWNER_TYPES.DISTRICT, toId: { in: districtIds } },
+    );
+  }
+  if (healthCenterIds.length) {
+    pendingTransferConditions.push(
+      { fromType: OWNER_TYPES.HEALTHCENTER, fromId: { in: healthCenterIds } },
+      { toType: OWNER_TYPES.HEALTHCENTER, toId: { in: healthCenterIds } },
+    );
+  }
+  if (lotIds.length) {
+    pendingTransferConditions.push({
+      lots: { some: { lotId: { in: lotIds } } },
+    });
+  }
+
+  const pendingTransfers =
+    pendingTransferConditions.length > 0
+      ? await tx.pendingStockTransfer.findMany({
+          where: { OR: pendingTransferConditions },
+          select: {
+            id: true,
+            vaccineId: true,
+            fromType: true,
+            fromId: true,
+            toType: true,
+            toId: true,
+            status: true,
+          },
+        })
+      : [];
+  const pendingTransferIds = pendingTransfers.map((transfer) => transfer.id);
+
+  return {
+    region,
+    communes,
+    districts,
+    healthCenters,
+    children,
+    users,
+    childIds,
+    healthCenterIds,
+    districtIds,
+    communeIds,
+    childVaccinationCounts,
+    stockReservationsCount,
+    recordCount,
+    stockLots,
+    lotIds,
+    lotConditions,
+    pendingTransfers,
+    pendingTransferIds,
+  };
+};
+
+const formatRegionDeletionSummary = (data) => ({
+  success: true,
+  region: data.region,
+  totals: {
+    communes: data.communes.length,
+    districts: data.districts.length,
+    healthCenters: data.healthCenters.length,
+    children: data.children.length,
+    users: data.users.length,
+    stockLots: data.stockLots.length,
+    pendingTransfers: data.pendingTransfers.length,
+    stockReservations: data.stockReservationsCount,
+    records: data.recordCount,
+    scheduledVaccines: data.childVaccinationCounts.scheduled,
+    dueVaccines: data.childVaccinationCounts.due,
+    lateVaccines: data.childVaccinationCounts.late,
+    overdueVaccines: data.childVaccinationCounts.overdue,
+    completedVaccines: data.childVaccinationCounts.completed,
+  },
+  details: {
+    communes: data.communes,
+    districts: data.districts,
+    healthCenters: data.healthCenters,
+    children: data.children,
+    users: data.users,
+    stockLots: data.stockLots,
+    pendingTransfers: data.pendingTransfers,
+  },
+});
+
 const createRegion = async (req, res, next) => {
 
   if (req.user.role !== "NATIONAL") {
@@ -77,38 +304,18 @@ const deleteRegion = async (req, res, next) => {
 
   try {
     const regionId = req.params.id;
-    const region = await prisma.region.findUnique({
-      where: { id: regionId },
-    });
-
-    if (!region) {
-      return res.status(404).json({ message: "Région non trouvée" });
-    }
 
     await prisma.$transaction(async (tx) => {
-      const [communes, districts, healthCenters, children] = await Promise.all([
-        tx.commune.findMany({
-          where: { regionId },
-          select: { id: true },
-        }),
-        tx.district.findMany({
-          where: { commune: { regionId } },
-          select: { id: true },
-        }),
-        tx.healthCenter.findMany({
-          where: { district: { commune: { regionId } } },
-          select: { id: true },
-        }),
-        tx.children.findMany({
-          where: { healthCenter: { district: { commune: { regionId } } } },
-          select: { id: true },
-        }),
-      ]);
-
-      const communeIds = communes.map((item) => item.id);
-      const districtIds = districts.map((item) => item.id);
-      const healthCenterIds = healthCenters.map((item) => item.id);
-      const childIds = children.map((item) => item.id);
+      const cascadeData = await collectRegionCascadeData(tx, regionId);
+      const {
+        communeIds,
+        districtIds,
+        healthCenterIds,
+        childIds,
+        lotConditions,
+        lotIds,
+        pendingTransferIds,
+      } = cascadeData;
 
       if (childIds.length) {
         await tx.stockReservation.deleteMany({
@@ -149,33 +356,31 @@ const deleteRegion = async (req, res, next) => {
         });
       }
 
-      const lotConditions = [
-        { ownerType: OWNER_TYPES.REGIONAL, ownerId: regionId },
-      ];
-      if (districtIds.length) {
-        lotConditions.push({
-          ownerType: OWNER_TYPES.DISTRICT,
-          ownerId: { in: districtIds },
-        });
-      }
-      if (healthCenterIds.length) {
-        lotConditions.push({
-          ownerType: OWNER_TYPES.HEALTHCENTER,
-          ownerId: { in: healthCenterIds },
-        });
-      }
-
-      // Récupérer les lots avant de les supprimer pour supprimer les StockTransferLot associés
-      const lots = await tx.stockLot.findMany({
-        where: { OR: lotConditions },
-        select: { id: true },
-      });
-
-      const lotIds = lots.map((lot) => lot.id);
       if (lotIds.length > 0) {
-        // Supprimer d'abord les StockTransferLot (ils ont une FK vers StockLot)
+        const pendingLotConditions = [];
+        pendingLotConditions.push({ lotId: { in: lotIds } });
+        if (pendingTransferIds.length) {
+          pendingLotConditions.push({
+            pendingTransferId: { in: pendingTransferIds },
+          });
+        }
+
+        await tx.pendingStockTransferLot.deleteMany({
+          where: { OR: pendingLotConditions },
+        });
+
         await tx.stockTransferLot.deleteMany({
           where: { lotId: { in: lotIds } },
+        });
+      }
+
+      if (pendingTransferIds.length) {
+        await tx.pendingStockTransferLot.deleteMany({
+          where: { pendingTransferId: { in: pendingTransferIds } },
+        });
+
+        await tx.pendingStockTransfer.deleteMany({
+          where: { id: { in: pendingTransferIds } },
         });
       }
 
@@ -239,9 +444,29 @@ const deleteRegion = async (req, res, next) => {
   }
 };
 
+const getRegionDeletionSummary = async (req, res, next) => {
+  if (req.user.role !== "NATIONAL") {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  try {
+    const regionId = req.params.id;
+    const cascadeData = await prisma.$transaction((tx) =>
+      collectRegionCascadeData(tx, regionId),
+    );
+    res.json(formatRegionDeletionSummary(cascadeData));
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    next(error);
+  }
+};
+
 module.exports = {
   createRegion,
   getRegions,
   updateRegion,
   deleteRegion,
+  getRegionDeletionSummary,
 };
