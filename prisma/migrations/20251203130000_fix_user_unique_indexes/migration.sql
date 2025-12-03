@@ -29,3 +29,4 @@ DROP INDEX IF EXISTS "User_phone_role_key";
 -- Recreate the single-column unique index on email if it is missing
 CREATE UNIQUE INDEX IF NOT EXISTS "User_email_key" ON "User"("email");
 
+

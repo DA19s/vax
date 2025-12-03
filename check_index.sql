@@ -6,3 +6,4 @@ WHERE tablename = 'User' AND indexname LIKE '%email%';
 
 
 
+

@@ -107,17 +107,12 @@ type AgentDashboardStats = {
   lowStocks: AgentStockAlert[];
   expiringLots: AgentLotAlert[];
   dosesPerDay: AgentDosePoint[];
-};
-
-type AgentAlert = {
-  title: string;
-  message: string;
-  createdAt: string;
-  icon?: string;
+  monthlyVaccinations?: MonthlyVaccinationPoint[];
+  coverageByVaccine?: VaccineCoverageSlice[];
+  topLateChildren?: LaggingEntry[];
 };
 
 type AgentPeriod = "week" | "month" | "year";
-type DoseFilter = "day" | "month" | "year";
 
 type HealthCenterMonthlySeries = {
   name: string;
@@ -165,43 +160,6 @@ const normalizeMonthLabel = (label?: string | null) => {
   return MONTH_LABEL_NORMALIZER[normalizedKey] ?? label;
 };
 
-const AGENT_DAY_DISPLAY_ORDER = [
-  "Lun",
-  "Mar",
-  "Mer",
-  "Jeu",
-  "Ven",
-  "Sam",
-  "Dim",
-];
-
-const FRENCH_DAY_LOOKUP = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"];
-
-const FRENCH_MONTH_ORDER = [
-  "Jan",
-  "Fév",
-  "Mar",
-  "Avr",
-  "Mai",
-  "Jun",
-  "Jul",
-  "Aoû",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Déc",
-];
-
-const dayLabelFromDate = (dateString: string) => {
-  const date = new Date(dateString);
-  return FRENCH_DAY_LOOKUP[date.getDay()] ?? "Jour";
-};
-
-const monthLabelFromDate = (dateString: string) => {
-  const date = new Date(dateString);
-  return FRENCH_MONTH_ORDER[date.getMonth()] ?? "Mois";
-};
-
 export default function DashboardPage() {
   const { accessToken, user } = useAuth();
   const [totalChildren, setTotalChildren] = useState<number | null>(null);
@@ -222,11 +180,8 @@ export default function DashboardPage() {
     useState<AgentDashboardStats | null>(null);
   const [agentLoading, setAgentLoading] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
-  const [agentAlerts, setAgentAlerts] = useState<AgentAlert[]>([]);
-  const [currentAgentAlertIndex, setCurrentAgentAlertIndex] = useState(0);
   const [globalFilter, setGlobalFilter] = useState<AgentPeriod>("week");
   const [selectedDate, setSelectedDate] = useState("");
-  const [doseFilter, setDoseFilter] = useState<DoseFilter>("day");
   const role = user?.role?.toUpperCase() ?? "";
   const isRegional = role === "REGIONAL";
   const isNational = role === "NATIONAL";
@@ -236,8 +191,6 @@ export default function DashboardPage() {
   const regionName = (user?.regionName ?? "").trim();
   const districtName = (user?.districtName ?? "").trim();
   const centerLabel = (user?.healthCenterName ?? "").trim();
-
-  useInjectSlideAnimation();
 
   useEffect(() => {
     const loadChildrenStats = async () => {
@@ -451,60 +404,19 @@ export default function DashboardPage() {
     fetchAgentStats();
   }, [accessToken, globalFilter, isAgent, selectedDate]);
 
-  useEffect(() => {
-    if (agentAlerts.length <= 1) {
-      return undefined;
-    }
-
-    const interval = setInterval(() => {
-      setCurrentAgentAlertIndex(
-        (prev) => (prev + 1) % agentAlerts.length,
-      );
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [agentAlerts.length]);
-
-  const agentGraphData = useMemo(() => {
-    if (!isAgent || !agentStats?.dosesPerDay) {
+  const agentLineData = useMemo(() => {
+    if (!isAgent || !agentStats?.monthlyVaccinations) {
       return [];
     }
 
-    if (doseFilter === "day") {
-      const counts = new Map<string, number>();
-      for (const point of agentStats.dosesPerDay) {
-        const label = dayLabelFromDate(point.date);
-        counts.set(label, (counts.get(label) ?? 0) + point.value);
-      }
-      return AGENT_DAY_DISPLAY_ORDER.map((label) => ({
-        label,
-        value: counts.get(label) ?? 0,
-      }));
-    }
+    return (agentStats.monthlyVaccinations ?? []).map((point) => ({
+      month: normalizeMonthLabel(point.month) || point.month,
+      value: point.value,
+    }));
+  }, [agentStats?.monthlyVaccinations, isAgent]);
 
-    if (doseFilter === "month") {
-      const counts = new Map<string, number>();
-      for (const point of agentStats.dosesPerDay) {
-        const label = monthLabelFromDate(point.date);
-        counts.set(label, (counts.get(label) ?? 0) + point.value);
-      }
-
-      return FRENCH_MONTH_ORDER.map((label) => ({
-        label,
-        value: counts.get(label) ?? 0,
-      })).filter((entry) => entry.value > 0);
-    }
-
-    const counts = new Map<string, number>();
-    for (const point of agentStats.dosesPerDay) {
-      const year = new Date(point.date).getFullYear().toString();
-      counts.set(year, (counts.get(year) ?? 0) + point.value);
-    }
-
-    return Array.from(counts.entries())
-      .sort(([a], [b]) => Number(a) - Number(b))
-      .map(([label, value]) => ({ label, value }));
-  }, [agentStats?.dosesPerDay, doseFilter, isAgent]);
+  const agentCoverageData = agentStats?.coverageByVaccine ?? [];
+  const agentTopLateChildren = agentStats?.topLateChildren ?? [];
 
   if (isNational) {
     if (nationalLoading) {
@@ -1286,17 +1198,8 @@ export default function DashboardPage() {
       { title: "Vaccinations saisies", value: agentStats.vaccinationsSaisies },
     ];
 
-    const currentAlert = agentAlerts[currentAgentAlertIndex];
     const lowStocks = agentStats.lowStocks ?? [];
     const expiringLots = agentStats.expiringLots ?? [];
-    const maxGraphValue = agentGraphData.reduce(
-      (max, entry) => Math.max(max, entry.value),
-      0,
-    );
-    const graphScale = maxGraphValue > 0 ? maxGraphValue : 5;
-    const graphTicks = Array.from({ length: 6 }, (_, index) =>
-      Math.round((graphScale / 5) * (5 - index)),
-    );
 
     return (
       <DashboardShell active="/dashboard">
@@ -1343,92 +1246,85 @@ export default function DashboardPage() {
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-              <h3 className="mb-3 text-lg font-semibold text-slate-900">
-                ⚡ Alertes récentes
-              </h3>
-              {agentAlerts.length === 0 ? (
-                <p className="text-sm text-slate-500">
-                  Aucune alerte récente
-                </p>
-              ) : (
-                <div
-                  key={currentAgentAlertIndex}
-                  className="animate-slide rounded-lg border border-blue-100 bg-blue-50 p-4"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-blue-700">
-                      {currentAlert.icon ?? "🔔"} {currentAlert.title}
-                    </span>
-                    <span className="text-xs text-slate-400">
-                      {new Date(currentAlert.createdAt).toLocaleTimeString(
-                        "fr-FR",
-                        { hour: "2-digit", minute: "2-digit" },
-                      )}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-sm text-slate-700">
-                    {currentAlert.message}
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-slate-900">
-                  Couverture — Doses
+                  Évolution des vaccinations du centre
                 </h3>
-                <select
-                  value={doseFilter}
-                  onChange={(event) =>
-                    setDoseFilter(event.target.value as DoseFilter)
-                  }
-                  className="rounded-md border border-slate-200 px-3 py-1 text-sm"
-                >
-                  <option value="day">Jour</option>
-                  <option value="month">Mois</option>
-                  <option value="year">Année</option>
-                </select>
+                <span className="text-xs text-slate-400">6 derniers mois</span>
               </div>
-              {agentGraphData.length === 0 ? (
+              {agentLineData.length === 0 ? (
                 <p className="text-sm text-slate-500">
                   Aucune donnée disponible
                 </p>
               ) : (
-                <div className="flex flex-col gap-4 md:flex-row">
-                  <div className="flex flex-col justify-between text-xs text-slate-400">
-                    {graphTicks.map((value, index) => (
-                      <span key={`tick-${index}`}>{value}</span>
-                    ))}
-                  </div>
-                  <div className="flex flex-1 items-end gap-3 overflow-x-auto">
-                    {agentGraphData.map((entry) => {
-                      const heightPercent =
-                        graphScale === 0
-                          ? 0
-                          : Math.round((entry.value / graphScale) * 100);
-                      return (
-                        <div
-                          key={entry.label}
-                          className="group flex flex-col items-center"
-                        >
-                          <div
-                            className="relative w-6 rounded bg-blue-600 transition-all duration-300 md:w-8"
-                            style={{ height: `${heightPercent}%` }}
-                          >
-                            <div className="pointer-events-none absolute bottom-full left-1/2 hidden -translate-x-1/2 translate-y-1 rounded bg-slate-900 px-2 py-1 text-xs text-white group-hover:flex">
-                              {entry.value} dose
-                              {entry.value > 1 ? "s" : ""}
-                            </div>
-                          </div>
-                          <span className="mt-2 text-xs font-medium text-slate-600">
-                            {entry.label}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+                <ResponsiveContainer width="100%" height={280}>
+                  <LineChart data={agentLineData}>
+                    <CartesianGrid stroke="#f0f0f0" strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="month"
+                      stroke="#94A3B8"
+                      style={{ fontSize: "12px" }}
+                    />
+                    <YAxis stroke="#94A3B8" style={{ fontSize: "12px" }} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "white",
+                        border: "1px solid #E5E7EB",
+                        borderRadius: "8px",
+                        boxShadow: "0 4px 6px rgba(0,0,0,0.05)",
+                      }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="value"
+                      stroke="#2563EB"
+                      strokeWidth={3}
+                      dot={{ r: 4 }}
+                      activeDot={{ r: 6 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
+              <h3 className="mb-3 text-lg font-semibold text-slate-900">
+                Répartition par vaccin
+              </h3>
+              {agentCoverageData.length === 0 ? (
+                <p className="text-sm text-slate-500">
+                  Aucune donnée de vaccination disponible
+                </p>
+              ) : (
+                <ResponsiveContainer width="100%" height={280}>
+                  <PieChart>
+                    <Pie
+                      data={agentCoverageData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={90}
+                      label={({ name }) => (typeof name === "string" ? name : "")}
+                      labelLine
+                    >
+                      {agentCoverageData.map((entry, index) => (
+                        <Cell
+                          key={`${entry.name}-${index}`}
+                          fill={CHART_COLORS[index % CHART_COLORS.length]}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "white",
+                        border: "1px solid #E5E7EB",
+                        borderRadius: "8px",
+                        boxShadow: "0 4px 6px rgba(0,0,0,0.05)",
+                      }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
               )}
             </div>
           </div>
@@ -1503,6 +1399,47 @@ export default function DashboardPage() {
                 </ul>
               )}
             </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-slate-900">
+                Top 5 enfants en retard
+              </h3>
+              <span className="text-xs text-slate-400">
+                Basé sur les retards dans votre centre
+              </span>
+            </div>
+            {agentTopLateChildren.length === 0 ? (
+              <p className="text-sm text-slate-500">
+                Aucun enfant en retard pour le moment.
+              </p>
+            ) : (
+              <ResponsiveContainer width="100%" height={320}>
+                <BarChart data={agentTopLateChildren}>
+                  <CartesianGrid stroke="#f0f0f0" strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="name"
+                    stroke="#94A3B8"
+                    style={{ fontSize: "12px" }}
+                  />
+                  <YAxis stroke="#94A3B8" style={{ fontSize: "12px" }} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "white",
+                      border: "1px solid #E5E7EB",
+                      borderRadius: "8px",
+                      boxShadow: "0 4px 6px rgba(0,0,0,0.05)",
+                    }}
+                    formatter={(value: number) => [
+                      `${value} retard${value > 1 ? "s" : ""}`,
+                      "Cas",
+                    ]}
+                  />
+                  <Bar dataKey="retard" fill="#EF4444" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
       </DashboardShell>
@@ -1597,41 +1534,4 @@ function AgentStatCard({ title, value }: AgentStatCardProps) {
       </p>
     </div>
   );
-}
-
-function useInjectSlideAnimation() {
-  useEffect(() => {
-    if (typeof document === "undefined") {
-      return undefined;
-    }
-
-    const marker = document.querySelector(
-      'style[data-agent-slide-style="true"]',
-    );
-    if (marker) {
-      return undefined;
-    }
-
-    const styleElement = document.createElement("style");
-    styleElement.setAttribute("data-agent-slide-style", "true");
-    styleElement.innerHTML = `
-@keyframes agent-slide {
-  0% { opacity: 0; transform: translateY(20px); }
-  10% { opacity: 1; transform: translateY(0); }
-  90% { opacity: 1; transform: translateY(0); }
-  100% { opacity: 0; transform: translateY(-20px); }
-}
-.animate-slide {
-  animation: agent-slide 5s ease-in-out;
-}`;
-    document.head.appendChild(styleElement);
-
-    return () => {
-      try {
-        document.head.removeChild(styleElement);
-      } catch {
-        /* noop */
-      }
-    };
-  }, []);
 }

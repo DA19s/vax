@@ -142,3 +142,4 @@ CREATE UNIQUE INDEX "ChildVaccineLate_childId_vaccineCalendarId_vaccineId_dose_k
 CREATE UNIQUE INDEX "ChildVaccineOverdue_childId_vaccineCalendarId_vaccineId_dose_key"
   ON "ChildVaccineOverdue"("childId", "vaccineCalendarId", "vaccineId", "dose");
 
+

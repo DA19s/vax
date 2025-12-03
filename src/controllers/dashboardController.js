@@ -242,6 +242,12 @@ const getAgentDashboardStats = async (req, res, next) => {
     const graphStart = startOfDay(
       addDays(today, -(AGENT_GRAPH_WINDOW_DAYS - 1)),
     );
+    const earliestMonth = new Date(today);
+    earliestMonth.setDate(1);
+    earliestMonth.setHours(0, 0, 0, 0);
+    earliestMonth.setMonth(
+      earliestMonth.getMonth() - (MONTHS_TO_DISPLAY - 1),
+    );
 
     const [
       totalChildren,
@@ -252,6 +258,9 @@ const getAgentDashboardStats = async (req, res, next) => {
       lowStocksRaw,
       expiringLotsRaw,
       dosesRaw,
+      monthlyVaccinationsRaw,
+      coverageByVaccineGroup,
+      topLateChildrenGroup,
     ] = await Promise.all([
       prisma.children.count({
         where: { healthCenterId },
@@ -334,6 +343,47 @@ const getAgentDashboardStats = async (req, res, next) => {
           administeredAt: true,
         },
       }),
+      prisma.childVaccineCompleted.findMany({
+        where: {
+          child: { healthCenterId },
+          administeredAt: {
+            gte: earliestMonth,
+          },
+        },
+        select: {
+          administeredAt: true,
+        },
+      }),
+      prisma.childVaccineCompleted.groupBy({
+        by: ["vaccineId"],
+        where: {
+          child: { healthCenterId },
+        },
+        _count: {
+          _all: true,
+        },
+        orderBy: {
+          _count: {
+            vaccineId: "desc",
+          },
+        },
+        take: 5,
+      }),
+      prisma.childVaccineLate.groupBy({
+        by: ["childId"],
+        where: {
+          child: { healthCenterId },
+        },
+        _count: {
+          _all: true,
+        },
+        orderBy: {
+          _count: {
+            childId: "desc",
+          },
+        },
+        take: 5,
+      }),
     ]);
 
     const lowStocks = lowStocksRaw.map((entry) => ({
@@ -363,6 +413,54 @@ const getAgentDashboardStats = async (req, res, next) => {
       });
     }
 
+    const monthlyVaccinations =
+      buildMonthlyVaccinationSeries(monthlyVaccinationsRaw);
+
+    const vaccineIds = coverageByVaccineGroup.map(
+      (entry) => entry.vaccineId,
+    );
+    const childIds = topLateChildrenGroup.map((entry) => entry.childId);
+
+    const [vaccineNameList, childNameList] = await Promise.all([
+      vaccineIds.length
+        ? prisma.vaccine.findMany({
+            where: { id: { in: vaccineIds } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+      childIds.length
+        ? prisma.children.findMany({
+            where: { id: { in: childIds } },
+            select: { id: true, firstName: true, lastName: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const vaccineNameMap = new Map(
+      vaccineNameList.map((vaccine) => [vaccine.id, vaccine.name]),
+    );
+    const childNameMap = new Map(
+      childNameList.map((child) => [
+        child.id,
+        `${child.firstName ?? ""} ${child.lastName ?? ""}`.trim() ||
+          "Enfant",
+      ]),
+    );
+
+    const coverageEntries = coverageByVaccineGroup.map((entry) => ({
+      name: vaccineNameMap.get(entry.vaccineId) ?? "Vaccin",
+      _count: {
+        completedByChildren: entry._count?._all ?? 0,
+      },
+    }));
+
+    const coverageByVaccine = buildCoverageByVaccine(coverageEntries);
+
+    const topLateChildren = topLateChildrenGroup.map((entry) => ({
+      name: childNameMap.get(entry.childId) ?? "Enfant",
+      retard: entry._count?._all ?? 0,
+    }));
+
     res.json({
       totalChildren,
       appointmentsToday,
@@ -372,6 +470,9 @@ const getAgentDashboardStats = async (req, res, next) => {
       lowStocks,
       expiringLots,
       dosesPerDay,
+      monthlyVaccinations,
+      coverageByVaccine,
+      topLateChildren,
     });
   } catch (error) {
     next(error);
