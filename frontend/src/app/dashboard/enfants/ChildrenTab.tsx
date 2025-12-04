@@ -81,6 +81,7 @@ type Props = {
   token: string | null;
   regionOptions?: string[];
   role?: string | null;
+  agentLevel?: string | null;
 };
 
 export default function ChildrenTab({
@@ -92,6 +93,7 @@ export default function ChildrenTab({
   token,
   regionOptions,
   role,
+  agentLevel,
 }: Props) {
   const [selectedChild, setSelectedChild] = useState<Child | null>(null);
   const [search, setSearch] = useState("");
@@ -122,6 +124,9 @@ export default function ChildrenTab({
   });
 
   const normalizedRole = role?.toUpperCase() ?? "NATIONAL";
+  const normalizedAgentLevel = agentLevel?.toUpperCase() ?? null;
+  const canEditVaccinations =
+    normalizedRole === "AGENT" && normalizedAgentLevel === "ADMIN";
   const showRegionFilter = normalizedRole === "NATIONAL" || normalizedRole === "REGIONAL";
   const showDistrictFilter =
     normalizedRole === "NATIONAL" || normalizedRole === "REGIONAL";
@@ -671,6 +676,7 @@ export default function ChildrenTab({
           onClose={() => setSelectedChild(null)}
           onRefresh={onRefresh}
           canSchedule={normalizedRole === "AGENT"}
+          canEditVaccinations={canEditVaccinations}
         />
       )}
 

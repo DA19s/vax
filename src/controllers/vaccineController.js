@@ -123,6 +123,354 @@ const updateNextAppointment = async (tx, childId) => {
   });
 };
 
+const DAYS_PER_WEEK = 7;
+const DAYS_PER_MONTH = 30.4375;
+const DAYS_PER_YEAR = 365.25;
+
+const normalizeAgeToDays = (value, unit) => {
+  if (value == null || Number.isNaN(Number(value))) {
+    return null;
+  }
+  const numeric = Number(value);
+  switch (unit) {
+    case "WEEKS":
+      return numeric * DAYS_PER_WEEK;
+    case "MONTHS":
+      return numeric * DAYS_PER_MONTH;
+    case "YEARS":
+      return numeric * DAYS_PER_YEAR;
+    default:
+      return numeric;
+  }
+};
+
+const formatDaysLabel = (days) => {
+  if (days == null) {
+    return null;
+  }
+  let remaining = Math.max(0, Math.round(days));
+  const years = Math.floor(remaining / DAYS_PER_YEAR);
+  remaining -= years * DAYS_PER_YEAR;
+  const months = Math.floor(remaining / DAYS_PER_MONTH);
+  remaining -= months * DAYS_PER_MONTH;
+  const weeks = Math.floor(remaining / DAYS_PER_WEEK);
+  const parts = [];
+  if (years) {
+    parts.push(`${years} an${years > 1 ? "s" : ""}`);
+  }
+  if (months) {
+    parts.push(`${months} mois`);
+  }
+  if (weeks) {
+    parts.push(`${weeks} semaine${weeks > 1 ? "s" : ""}`);
+  }
+  if (!parts.length) {
+    return "0 semaine";
+  }
+  return parts.join(" ");
+};
+
+const buildCalendarTargetLabel = (calendar) => {
+  const days = normalizeAgeToDays(calendar.specificAge, calendar.ageUnit);
+  return formatDaysLabel(days);
+};
+
+const buildCalendarRangeLabel = (calendar) => {
+  const minDays = normalizeAgeToDays(calendar.minAge, calendar.ageUnit);
+  const maxDays = normalizeAgeToDays(calendar.maxAge, calendar.ageUnit);
+  const minLabel = formatDaysLabel(minDays);
+  const maxLabel = formatDaysLabel(maxDays);
+  if (minLabel && maxLabel) {
+    return `${minLabel} - ${maxLabel}`;
+  }
+  if (minLabel) {
+    return `À partir de ${minLabel}`;
+  }
+  if (maxLabel) {
+    return `Jusqu'à ${maxLabel}`;
+  }
+  return null;
+};
+
+const computeCalendarAgeWeight = (calendar) => {
+  if (!calendar) {
+    return 0;
+  }
+  const specific = normalizeAgeToDays(
+    calendar.specificAge,
+    calendar.ageUnit,
+  );
+  if (specific != null) {
+    return specific;
+  }
+  const min = normalizeAgeToDays(calendar.minAge, calendar.ageUnit);
+  if (min != null) {
+    return min;
+  }
+  const max = normalizeAgeToDays(calendar.maxAge, calendar.ageUnit);
+  if (max != null) {
+    return max;
+  }
+  return 0;
+};
+
+const reassignVaccineDoseNumbers = async (vaccineIds = []) => {
+  const uniqueIds = Array.from(new Set(vaccineIds.filter(Boolean)));
+  if (!uniqueIds.length) {
+    return;
+  }
+
+  const assignments = await prisma.vaccineCalendarDose.findMany({
+    where: { vaccineId: { in: uniqueIds } },
+    include: {
+      calendar: {
+        select: {
+          id: true,
+          specificAge: true,
+          minAge: true,
+          maxAge: true,
+          ageUnit: true,
+        },
+      },
+    },
+  });
+
+  const perVaccine = new Map();
+  for (const assignment of assignments) {
+    if (!perVaccine.has(assignment.vaccineId)) {
+      perVaccine.set(assignment.vaccineId, []);
+    }
+    perVaccine.get(assignment.vaccineId).push(assignment);
+  }
+
+  const updates = [];
+
+  for (const [vaccineId, list] of perVaccine.entries()) {
+    list.sort((a, b) => {
+      const weightDiff =
+        computeCalendarAgeWeight(a.calendar) -
+        computeCalendarAgeWeight(b.calendar);
+      if (weightDiff !== 0) {
+        return weightDiff;
+      }
+      const calendarIdA = a.calendar?.id ?? "";
+      const calendarIdB = b.calendar?.id ?? "";
+      const calendarDiff = calendarIdA.localeCompare(calendarIdB);
+      if (calendarDiff !== 0) {
+        return calendarDiff;
+      }
+      return a.id.localeCompare(b.id);
+    });
+
+    const tempBase = list.length + 10;
+
+    list.forEach((assignment, index) => {
+      const tempDose = tempBase + index;
+      if (assignment.doseNumber !== tempDose) {
+        updates.push(
+          prisma.vaccineCalendarDose.update({
+            where: { id: assignment.id },
+            data: { doseNumber: tempDose },
+          }),
+        );
+      }
+    });
+
+    list.forEach((assignment, index) => {
+      const desiredDose = index + 1;
+      updates.push(
+        prisma.vaccineCalendarDose.update({
+          where: { id: assignment.id },
+          data: { doseNumber: desiredDose },
+        }),
+      );
+    });
+  }
+
+  if (updates.length) {
+    await prisma.$transaction(updates);
+  }
+};
+
+const calendarAssignmentsInclude = {
+  doseAssignments: {
+    include: {
+      vaccine: {
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          dosesRequired: true,
+          gender: true,
+        },
+      },
+    },
+    orderBy: {
+      doseNumber: "asc",
+    },
+  },
+};
+
+const formatCalendarForResponse = (calendar) => {
+  if (!calendar) {
+    return calendar;
+  }
+
+  const aggregates = new Map();
+  for (const assignment of calendar.doseAssignments ?? []) {
+    const vaccine = assignment?.vaccine;
+    if (!vaccine?.id) {
+      continue;
+    }
+    if (!aggregates.has(vaccine.id)) {
+      aggregates.set(vaccine.id, {
+        vaccine,
+        count: 0,
+        minDose: null,
+        maxDose: null,
+        doses: [],
+      });
+    }
+    const bucket = aggregates.get(vaccine.id);
+    bucket.count += 1;
+    const doseNumber = assignment.doseNumber ?? null;
+    if (doseNumber != null) {
+      bucket.doses.push(doseNumber);
+      if (bucket.minDose == null || doseNumber < bucket.minDose) {
+        bucket.minDose = doseNumber;
+      }
+      if (bucket.maxDose == null || doseNumber > bucket.maxDose) {
+        bucket.maxDose = doseNumber;
+      }
+    }
+  }
+
+  const vaccines = Array.from(aggregates.values()).map(
+    ({ vaccine, count, minDose, maxDose, doses }) => ({
+      id: vaccine.id,
+      name: vaccine.name,
+      description: vaccine.description,
+      dosesRequired: vaccine.dosesRequired,
+      gender: vaccine.gender,
+      doseCount: count,
+      firstDoseNumber: minDose,
+      lastDoseNumber: maxDose,
+      doseNumbers: doses.sort((a, b) => a - b),
+    }),
+  );
+
+  return {
+    ...calendar,
+    targetAgeLabel: buildCalendarTargetLabel(calendar),
+    ageRangeLabel: buildCalendarRangeLabel(calendar),
+    ageSortWeight: computeCalendarAgeWeight(calendar),
+    vaccines,
+  };
+};
+
+const makeHttpError = (message, status = 400) => {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+};
+
+const normalizeCalendarAssignments = async (
+  tx,
+  rawAssignments = [],
+  { excludeCalendarId } = {},
+) => {
+  const counts = new Map();
+
+  for (const entry of rawAssignments ?? []) {
+    if (!entry) continue;
+    const vaccineId = entry.vaccineId ?? entry.id ?? entry.vaccine_id;
+    const rawCount =
+      entry.doseCount ??
+      entry.count ??
+      entry.doses ??
+      entry.quantity ??
+      entry.dose ??
+      0;
+    const parsedCount = Number(rawCount);
+    if (
+      typeof vaccineId === "string" &&
+      vaccineId.trim() &&
+      Number.isFinite(parsedCount) &&
+      parsedCount > 0
+    ) {
+      const current = counts.get(vaccineId.trim()) ?? 0;
+      counts.set(vaccineId.trim(), current + Math.floor(parsedCount));
+    }
+  }
+
+  if (!counts.size) {
+    return [];
+  }
+
+  const vaccineIds = Array.from(counts.keys());
+
+  const vaccines = await tx.vaccine.findMany({
+    where: { id: { in: vaccineIds } },
+    select: { id: true, name: true, dosesRequired: true },
+  });
+
+  if (vaccines.length !== vaccineIds.length) {
+    throw makeHttpError("Certains vaccins sélectionnés sont introuvables.");
+  }
+
+  const doseLimits = new Map(
+    vaccines.map((record) => {
+      const parsedValue = Number(record.dosesRequired);
+      const normalized =
+        Number.isFinite(parsedValue) && parsedValue > 0
+          ? Math.floor(parsedValue)
+          : 1;
+      return [record.id, normalized];
+    }),
+  );
+
+  const existingCountsRaw = await tx.vaccineCalendarDose.groupBy({
+    by: ["vaccineId"],
+    where: {
+      vaccineId: { in: vaccineIds },
+      ...(excludeCalendarId
+        ? { calendarId: { not: excludeCalendarId } }
+        : {}),
+    },
+    _count: { vaccineId: true },
+  });
+
+  const existingCounts = new Map(
+    existingCountsRaw.map((record) => [
+      record.vaccineId,
+      record._count?.vaccineId ?? 0,
+    ]),
+  );
+
+  const normalized = [];
+
+  for (const vaccine of vaccines) {
+    const count = counts.get(vaccine.id) ?? 0;
+    if (count <= 0) {
+      continue;
+    }
+    const limit = doseLimits.get(vaccine.id) ?? 1;
+    const alreadyUsed = existingCounts.get(vaccine.id) ?? 0;
+    if (alreadyUsed + count > limit) {
+      const label = vaccine.name ?? vaccine.id;
+      throw makeHttpError(
+        `Impossible d'assigner ${count} dose(s) supplémentaires pour ${label} : ce vaccin ne dispose que de ${limit} dose(s) au total.`,
+      );
+    }
+    normalized.push({
+      vaccineId: vaccine.id,
+      count,
+    });
+  }
+
+  return normalized;
+};
+
 const createVaccine = async (req, res, next) => {
 
   if (req.user.role !== "NATIONAL") {
@@ -207,6 +555,9 @@ const getVaccine = async (req, res, next) => {
 
     res.json({ total, vaccines });
   } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
     next(error);
   }
 };
@@ -227,23 +578,83 @@ const createVaccineCalendar = async (req, res, next) => {
     } = req.body;
 
   try {
-    const newVaccineCalendar = await prisma.vaccineCalendar.create({
-      data: {
-        description,
-        ageUnit,
-        specificAge,
-        minAge,
-        maxAge,
-        vaccines: {
-          connect: vaccine.map((id) => ({ id })),
-        },
+    const { calendarId, vaccineIds } = await prisma.$transaction(
+      async (tx) => {
+        const assignments = await normalizeCalendarAssignments(tx, vaccine);
+
+        if (!assignments.length) {
+          throw makeHttpError(
+            "Veuillez sélectionner au moins un vaccin et une dose valide.",
+          );
+        }
+
+        const created = await tx.vaccineCalendar.create({
+          data: {
+            description,
+            ageUnit,
+            specificAge,
+            minAge,
+            maxAge,
+          },
+        });
+
+        const rows = [];
+        if (assignments.length) {
+          const vaccineIdList = assignments.map(
+            (assignment) => assignment.vaccineId,
+          );
+          const existingCountsRaw = await tx.vaccineCalendarDose.groupBy({
+            by: ["vaccineId"],
+            where: { vaccineId: { in: vaccineIdList } },
+            _count: { vaccineId: true },
+          });
+          const existingCounts = new Map(
+            existingCountsRaw.map((record) => [
+              record.vaccineId,
+              record._count?.vaccineId ?? 0,
+            ]),
+          );
+
+
+          const tempOffset = 1000;
+
+          for (const assignment of assignments) {
+            const currentCount = existingCounts.get(assignment.vaccineId) ?? 0;
+            for (let i = 0; i < assignment.count; i += 1) {
+              rows.push({
+                vaccineId: assignment.vaccineId,
+                calendarId: created.id,
+                doseNumber: tempOffset + currentCount + i + 1,
+              });
+            }
+            existingCounts.set(
+              assignment.vaccineId,
+              currentCount + assignment.count,
+            );
+          }
+
+          if (rows.length) {
+            await tx.vaccineCalendarDose.createMany({
+              data: rows,
+            });
+          }
+        }
+
+        return {
+          calendarId: created.id,
+          vaccineIds: assignments.map((assignment) => assignment.vaccineId),
+        };
       },
-      include: {
-        vaccines: true,
-      },
+    );
+
+    await reassignVaccineDoseNumbers(vaccineIds);
+
+    const refreshed = await prisma.vaccineCalendar.findUnique({
+      where: { id: calendarId },
+      include: calendarAssignmentsInclude,
     });
 
-    res.status(201).json(newVaccineCalendar);
+    res.status(201).json(formatCalendarForResponse(refreshed));
   } catch (error) {
     next(error);
   }
@@ -325,27 +736,116 @@ const updateVaccineCalendar = async (req, res, next) => {
   }
 
   try {
-    const updatedCalendar = await prisma.vaccineCalendar.update({
-      where: { id },
-      data: {
-        description: description.trim(),
-        ageUnit,
-        specificAge: specificAgeValue,
-        minAge: minAgeValue,
-        maxAge: maxAgeValue,
-        vaccines: {
-          set: vaccine.map((vaccineId) => ({ id: vaccineId })),
-        },
+    const { calendarId, affectedVaccineIds } = await prisma.$transaction(
+      async (tx) => {
+        const existingAssignments = await tx.vaccineCalendarDose.findMany({
+          where: { calendarId: id },
+          select: { vaccineId: true },
+        });
+        const previousVaccineIds = existingAssignments.map(
+          (assignment) => assignment.vaccineId,
+        );
+
+        const assignments = await normalizeCalendarAssignments(tx, vaccine, {
+          excludeCalendarId: id,
+        });
+
+        if (!assignments.length) {
+          throw makeHttpError(
+            "Veuillez sélectionner au moins un vaccin et une dose valide.",
+          );
+        }
+
+        await tx.vaccineCalendar.update({
+          where: { id },
+          data: {
+            description: description.trim(),
+            ageUnit,
+            specificAge: specificAgeValue,
+            minAge: minAgeValue,
+            maxAge: maxAgeValue,
+          },
+        });
+
+        await tx.vaccineCalendarDose.deleteMany({
+          where: { calendarId: id },
+        });
+
+        const rows = [];
+        if (assignments.length) {
+          const vaccineIdList = assignments.map(
+            (assignment) => assignment.vaccineId,
+          );
+          const existingCountsRaw = await tx.vaccineCalendarDose.groupBy({
+            by: ["vaccineId"],
+            where: {
+              vaccineId: { in: vaccineIdList },
+              calendarId: { not: id },
+            },
+            _count: { vaccineId: true },
+          });
+          const existingCounts = new Map(
+            existingCountsRaw.map((record) => [
+              record.vaccineId,
+              record._count?.vaccineId ?? 0,
+            ]),
+          );
+
+
+          const tempOffset = 1000;
+
+          for (const assignment of assignments) {
+            const currentCount = existingCounts.get(assignment.vaccineId) ?? 0;
+            for (let i = 0; i < assignment.count; i += 1) {
+              rows.push({
+                vaccineId: assignment.vaccineId,
+                calendarId: id,
+                doseNumber: tempOffset + currentCount + i + 1,
+              });
+            }
+            existingCounts.set(
+              assignment.vaccineId,
+              currentCount + assignment.count,
+            );
+          }
+
+          if (rows.length) {
+            await tx.vaccineCalendarDose.createMany({
+              data: rows,
+            });
+          }
+        }
+
+        const affected = Array.from(
+          new Set([
+            ...previousVaccineIds,
+            ...assignments.map((assignment) => assignment.vaccineId),
+          ]),
+        );
+
+        return {
+          calendarId: id,
+          affectedVaccineIds: affected,
+        };
       },
-      include: { vaccines: true },
+    );
+
+    await reassignVaccineDoseNumbers(affectedVaccineIds);
+
+    const refreshed = await prisma.vaccineCalendar.findUnique({
+      where: { id: calendarId },
+      include: calendarAssignmentsInclude,
     });
 
-    res.json(updatedCalendar);
+    res.json(formatCalendarForResponse(refreshed));
   } catch (error) {
     if (error.code === "P2025") {
       return res
         .status(404)
         .json({ message: "Calendrier vaccinal introuvable." });
+    }
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
     }
     next(error);
   }
@@ -363,7 +863,8 @@ const deleteVaccineCalendar = async (req, res, next) => {
   }
 
   try {
-    const affectedChildIds = await prisma.$transaction(async (tx) => {
+    const { affectedChildIds, affectedVaccineIds } =
+      await prisma.$transaction(async (tx) => {
       const childIdSet = new Set();
       const collectChildIds = (rows = []) => {
         rows.forEach((row) => {
@@ -372,6 +873,14 @@ const deleteVaccineCalendar = async (req, res, next) => {
           }
         });
       };
+
+      const calendarAssignments = await tx.vaccineCalendarDose.findMany({
+        where: { calendarId: id },
+        select: { vaccineId: true },
+      });
+      const vaccineIds = calendarAssignments.map(
+        (assignment) => assignment.vaccineId,
+      );
 
       const [dueChildren, lateChildren, overdueChildren, scheduledChildren, completedChildren] =
         await Promise.all([
@@ -434,7 +943,10 @@ const deleteVaccineCalendar = async (req, res, next) => {
         where: { id },
       });
 
-      return Array.from(childIdSet);
+      return {
+        affectedChildIds: Array.from(childIdSet),
+        affectedVaccineIds: Array.from(new Set(vaccineIds)),
+      };
     });
 
     if (affectedChildIds.length > 0) {
@@ -449,6 +961,8 @@ const deleteVaccineCalendar = async (req, res, next) => {
         ),
       );
     }
+
+    await reassignVaccineDoseNumbers(affectedVaccineIds);
 
     res.status(204).end();
   } catch (error) {
@@ -510,10 +1024,11 @@ const sortCalendars = (calendars) =>
 
 const fetchCalendarsWithVaccines = async () => {
   const calendars = await prisma.vaccineCalendar.findMany({
-    include: { vaccines: true },
+    include: calendarAssignmentsInclude,
   });
 
-  return sortCalendars(calendars);
+  const formatted = calendars.map(formatCalendarForResponse);
+  return sortCalendars(formatted);
 };
 
 const listVaccineCalendars = async (req, res, next) => {
@@ -530,6 +1045,65 @@ const listVaccineCalendars = async (req, res, next) => {
   try {
     const calendars = await fetchCalendarsWithVaccines();
     res.json(calendars);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const listVaccineCalendarDoseWarnings = async (req, res, next) => {
+  if (req.user.role !== "NATIONAL") {
+    return res.status(403).json({ message: "Accès réservé aux agents nationaux." });
+  }
+
+  try {
+    const [vaccines, assignmentCounts] = await Promise.all([
+      prisma.vaccine.findMany({
+        select: {
+          id: true,
+          name: true,
+          dosesRequired: true,
+        },
+      }),
+      prisma.vaccineCalendarDose.groupBy({
+        by: ["vaccineId"],
+        _count: {
+          vaccineId: true,
+        },
+      }),
+    ]);
+
+    const plannedMap = new Map();
+    for (const entry of assignmentCounts) {
+      plannedMap.set(entry.vaccineId, entry._count?.vaccineId ?? 0);
+    }
+
+    const warnings = [];
+
+    for (const vaccine of vaccines) {
+      const declared = Number(vaccine.dosesRequired);
+      if (!Number.isFinite(declared) || declared <= 0) {
+        continue;
+      }
+      const planned = plannedMap.get(vaccine.id) ?? 0;
+      if (planned < declared) {
+        warnings.push({
+          vaccineId: vaccine.id,
+          name: vaccine.name,
+          requiredDoses: declared,
+          plannedDoses: planned,
+          missingDoses: declared - planned,
+        });
+      }
+    }
+
+    warnings.sort((a, b) => {
+      if (b.missingDoses !== a.missingDoses) {
+        return b.missingDoses - a.missingDoses;
+      }
+      return a.name.localeCompare(b.name, "fr", { sensitivity: "base" });
+    });
+
+    res.json({ warnings });
   } catch (error) {
     next(error);
   }
@@ -594,7 +1168,23 @@ const downloadVaccineCalendarPdf = async (req, res, next) => {
         .fillColor("#111827")
         .text(`• Intervalle : ${ageLabel}`, { continued: false });
 
-      const vaccineNames = item.vaccines.map((v) => v.name).join(", ");
+      const vaccineNames = (item.vaccines ?? [])
+        .map((v) => {
+          const countLabel = `${v.doseCount ?? 0} dose(s)`;
+          if (
+            v.firstDoseNumber != null &&
+            v.lastDoseNumber != null &&
+            v.doseCount > 0
+          ) {
+            const range =
+              v.firstDoseNumber === v.lastDoseNumber
+                ? `Dose ${v.firstDoseNumber}`
+                : `Doses ${v.firstDoseNumber}-${v.lastDoseNumber}`;
+            return `${v.name} (${countLabel}, ${range})`;
+          }
+          return `${v.name} (${countLabel})`;
+        })
+        .join(", ");
       doc
         .fontSize(12)
         .fillColor("#1f2937")
@@ -1880,6 +2470,7 @@ module.exports = {
     downloadVaccineCalendarPdf,
     getVaccine,
     listVaccineCalendars,
+    listVaccineCalendarDoseWarnings,
     listVaccines,
     ScheduleVaccine,
     listScheduledVaccines,

@@ -4,10 +4,377 @@ const { generateAccessCode } = require("../utils/accessCode");
 const {
   rebuildChildVaccinationBuckets,
 } = require("../services/vaccineBucketService");
-const {
-  buildVaccineDoseMap,
-  getDoseForEntry,
-} = require("../utils/vaccineDose");
+const { buildVaccineDoseMap } = require("../utils/vaccineDose");
+
+const makeHttpError = (message, status = 400) => {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+};
+
+const childAccessSelect = {
+  id: true,
+  healthCenterId: true,
+  healthCenter: {
+    select: {
+      district: {
+        select: {
+          id: true,
+          commune: {
+            select: {
+              region: {
+                select: {
+                  id: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+const deriveChildLocation = (child) => {
+  const healthCenterId = child?.healthCenterId ?? null;
+  const districtId = child?.healthCenter?.district?.id ?? null;
+  const regionId =
+    child?.healthCenter?.district?.commune?.region?.id ?? null;
+  return { healthCenterId, districtId, regionId };
+};
+
+const hasChildAccess = (user, child) => {
+  if (!child) {
+    return false;
+  }
+  const { healthCenterId, districtId, regionId } = deriveChildLocation(child);
+
+  switch (user.role) {
+    case "NATIONAL":
+      return true;
+    case "REGIONAL":
+      return Boolean(
+        user.regionId && regionId && user.regionId === regionId,
+      );
+    case "DISTRICT":
+      return Boolean(
+        user.districtId && districtId && user.districtId === districtId,
+      );
+    case "AGENT":
+      return Boolean(
+        user.healthCenterId &&
+          healthCenterId &&
+          user.healthCenterId === healthCenterId,
+      );
+    default:
+      return false;
+  }
+};
+
+const hasManualVaccinationAccess = (user, child) => {
+  if (!hasChildAccess(user, child)) {
+    return false;
+  }
+
+  if (["NATIONAL", "REGIONAL", "DISTRICT"].includes(user.role)) {
+    return true;
+  }
+
+  return user.role === "AGENT" && user.agentLevel === "ADMIN";
+};
+
+const normalizeId = (value, label) => {
+  if (typeof value !== "string" || !value.trim()) {
+    throw makeHttpError(`${label} est requis.`);
+  }
+  return value.trim();
+};
+
+const optionalId = (value) => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+};
+
+const parseDoseValue = (value, { optional = false } = {}) => {
+  if (value === undefined || value === null || value === "") {
+    if (optional) {
+      return undefined;
+    }
+    throw makeHttpError("La dose est requise.");
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw makeHttpError("La dose doit être un entier positif.");
+  }
+  return Math.floor(parsed);
+};
+
+const parseDateValue = (value, label, { optional = false } = {}) => {
+  if (value === undefined || value === null || value === "") {
+    if (optional) {
+      return undefined;
+    }
+    throw makeHttpError(`${label} est requis(e).`);
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw makeHttpError(`${label} est invalide.`);
+  }
+  return date;
+};
+
+const ensureVaccineExists = async (vaccineId) => {
+  const record = await prisma.vaccine.findUnique({
+    where: { id: vaccineId },
+    select: { id: true },
+  });
+  if (!record) {
+    throw makeHttpError("Vaccin introuvable.", 404);
+  }
+  return record.id;
+};
+
+const ensureCalendarExists = async (calendarId) => {
+  const record = await prisma.vaccineCalendar.findUnique({
+    where: { id: calendarId },
+    select: { id: true },
+  });
+  if (!record) {
+    throw makeHttpError("Entrée de calendrier vaccinal introuvable.", 404);
+  }
+  return record.id;
+};
+
+const buildDueCreateData = async (body, { childId }) => {
+  const vaccineId = normalizeId(body.vaccineId, "Le vaccin");
+  await ensureVaccineExists(vaccineId);
+
+  const calendarId = normalizeId(
+    body.vaccineCalendarId,
+    "Le calendrier vaccinal",
+  );
+  await ensureCalendarExists(calendarId);
+
+  const scheduledFor = parseDateValue(
+    body.scheduledFor,
+    "La date prévue",
+  );
+  const dose = parseDoseValue(body.dose);
+
+  return {
+    childId,
+    vaccineId,
+    vaccineCalendarId: calendarId,
+    scheduledFor,
+    dose,
+  };
+};
+
+const buildDueUpdateData = async (body) => {
+  const data = {};
+
+  if (body.vaccineId !== undefined) {
+    const vaccineId = normalizeId(body.vaccineId, "Le vaccin");
+    await ensureVaccineExists(vaccineId);
+    data.vaccineId = vaccineId;
+  }
+
+  if (body.vaccineCalendarId !== undefined) {
+    const calendarId = normalizeId(
+      body.vaccineCalendarId,
+      "Le calendrier vaccinal",
+    );
+    await ensureCalendarExists(calendarId);
+    data.vaccineCalendarId = calendarId;
+  }
+
+  if (body.scheduledFor !== undefined) {
+    data.scheduledFor = parseDateValue(
+      body.scheduledFor,
+      "La date prévue",
+    );
+  }
+
+  if (body.dose !== undefined) {
+    data.dose = parseDoseValue(body.dose);
+  }
+
+  if (!Object.keys(data).length) {
+    throw makeHttpError("Aucune donnée à mettre à jour.");
+  }
+
+  return data;
+};
+
+const buildLateCreateData = async (body, { childId }) => {
+  const vaccineId = normalizeId(body.vaccineId, "Le vaccin");
+  await ensureVaccineExists(vaccineId);
+
+  const calendarId = normalizeId(
+    body.vaccineCalendarId,
+    "Le calendrier vaccinal",
+  );
+  await ensureCalendarExists(calendarId);
+
+  const dueDate = parseDateValue(body.dueDate, "La date limite");
+  const dose = parseDoseValue(body.dose);
+
+  return {
+    childId,
+    vaccineId,
+    vaccineCalendarId: calendarId,
+    dueDate,
+    dose,
+  };
+};
+
+const buildLateUpdateData = async (body) => {
+  const data = {};
+
+  if (body.vaccineId !== undefined) {
+    const vaccineId = normalizeId(body.vaccineId, "Le vaccin");
+    await ensureVaccineExists(vaccineId);
+    data.vaccineId = vaccineId;
+  }
+
+  if (body.vaccineCalendarId !== undefined) {
+    const calendarId = normalizeId(
+      body.vaccineCalendarId,
+      "Le calendrier vaccinal",
+    );
+    await ensureCalendarExists(calendarId);
+    data.vaccineCalendarId = calendarId;
+  }
+
+  if (body.dueDate !== undefined) {
+    data.dueDate = parseDateValue(body.dueDate, "La date limite");
+  }
+
+  if (body.dose !== undefined) {
+    data.dose = parseDoseValue(body.dose);
+  }
+
+  if (!Object.keys(data).length) {
+    throw makeHttpError("Aucune donnée à mettre à jour.");
+  }
+
+  return data;
+};
+
+const buildCompletedCreateData = async (body, { childId, user }) => {
+  const vaccineId = normalizeId(body.vaccineId, "Le vaccin");
+  await ensureVaccineExists(vaccineId);
+
+  const calendarId = optionalId(body.vaccineCalendarId);
+  if (calendarId) {
+    await ensureCalendarExists(calendarId);
+  }
+
+  const administeredAt = parseDateValue(
+    body.administeredAt,
+    "La date d'administration",
+  );
+  const dose = parseDoseValue(body.dose);
+  const administeredById =
+    optionalId(body.administeredById) ?? user.id;
+
+  return {
+    childId,
+    vaccineId,
+    vaccineCalendarId: calendarId,
+    administeredAt,
+    administeredById,
+    dose,
+  };
+};
+
+const buildCompletedUpdateData = async (body) => {
+  const data = {};
+
+  if (body.vaccineId !== undefined) {
+    const vaccineId = normalizeId(body.vaccineId, "Le vaccin");
+    await ensureVaccineExists(vaccineId);
+    data.vaccineId = vaccineId;
+  }
+
+  if (body.vaccineCalendarId !== undefined) {
+    const calendarId = optionalId(body.vaccineCalendarId);
+    if (calendarId) {
+      await ensureCalendarExists(calendarId);
+    }
+    data.vaccineCalendarId = calendarId;
+  }
+
+  if (body.administeredAt !== undefined) {
+    data.administeredAt = parseDateValue(
+      body.administeredAt,
+      "La date d'administration",
+    );
+  }
+
+  if (body.dose !== undefined) {
+    data.dose = parseDoseValue(body.dose);
+  }
+
+  if (body.administeredById !== undefined) {
+    const adminId = optionalId(body.administeredById);
+    if (!adminId) {
+      throw makeHttpError("L'agent ayant administré le vaccin est requis.");
+    }
+    data.administeredById = adminId;
+  }
+
+  if (!Object.keys(data).length) {
+    throw makeHttpError("Aucune donnée à mettre à jour.");
+  }
+
+  return data;
+};
+
+const MANUAL_BUCKETS = {
+  due: {
+    model: prisma.childVaccineDue,
+    prepareCreate: (body, ctx) => buildDueCreateData(body, ctx),
+    prepareUpdate: (body) => buildDueUpdateData(body),
+  },
+  late: {
+    model: prisma.childVaccineLate,
+    prepareCreate: (body, ctx) => buildLateCreateData(body, ctx),
+    prepareUpdate: (body) => buildLateUpdateData(body),
+  },
+  overdue: {
+    model: prisma.childVaccineOverdue,
+    prepareCreate: (body, ctx) => buildLateCreateData(body, ctx),
+    prepareUpdate: (body) => buildLateUpdateData(body),
+  },
+  completed: {
+    model: prisma.childVaccineCompleted,
+    prepareCreate: (body, ctx) => buildCompletedCreateData(body, ctx),
+    prepareUpdate: (body) => buildCompletedUpdateData(body),
+  },
+};
+
+const handleManualMutationError = (error, res, next) => {
+  if (error?.status) {
+    return res.status(error.status).json({ message: error.message });
+  }
+  if (error?.code === "P2002") {
+    return res
+      .status(409)
+      .json({ message: "Une entrée existe déjà pour cette dose." });
+  }
+  if (error?.code === "P2003") {
+    return res
+      .status(400)
+      .json({ message: "La référence fournie est invalide." });
+  }
+  return next(error);
+};
 
 /**
  * Vérifie si un vaccin correspond au genre d'un enfant
@@ -162,7 +529,20 @@ const createChildren = async (req, res, next) => {
 
   try {
     const calendarEntries = await prisma.vaccineCalendar.findMany({
-      include: { vaccines: true },
+      include: {
+        doseAssignments: {
+          include: {
+            vaccine: {
+              select: {
+                id: true,
+                name: true,
+                gender: true,
+                dosesRequired: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     const doseMap = buildVaccineDoseMap(calendarEntries);
@@ -207,13 +587,21 @@ const createChildren = async (req, res, next) => {
         const isPastRange = age > entry.maxAge;
 
         if (isWithinRange) {
-          for (const vaccine of entry.vaccines) {
-            // Vérifier si le vaccin correspond au genre de l'enfant
-            if (!isVaccineSuitableForGender(vaccine, gender)) {
-              continue; // Passer ce vaccin s'il ne correspond pas au genre
+          for (const assignment of entry.doseAssignments ?? []) {
+            const vaccine = assignment?.vaccine;
+            if (!vaccine?.id) {
+              continue;
             }
-            // Chaque entrée du calendrier représente une dose unique
-            const dose = getDoseForEntry(doseMap, vaccine.id, entry.id);
+            if (!isVaccineSuitableForGender(vaccine, gender)) {
+              continue;
+            }
+            const dose =
+              typeof assignment.doseNumber === "number"
+                ? assignment.doseNumber
+                : null;
+            if (dose == null) {
+              continue;
+            }
             duePayload.push({
               childId: createdChild.id,
               vaccineCalendarId: entry.id,
@@ -223,13 +611,21 @@ const createChildren = async (req, res, next) => {
             });
           }
         } else if (isPastRange) {
-          for (const vaccine of entry.vaccines) {
-            // Vérifier si le vaccin correspond au genre de l'enfant
-            if (!isVaccineSuitableForGender(vaccine, gender)) {
-              continue; // Passer ce vaccin s'il ne correspond pas au genre
+          for (const assignment of entry.doseAssignments ?? []) {
+            const vaccine = assignment?.vaccine;
+            if (!vaccine?.id) {
+              continue;
             }
-            // Chaque entrée du calendrier représente une dose unique
-            const dose = getDoseForEntry(doseMap, vaccine.id, entry.id);
+            if (!isVaccineSuitableForGender(vaccine, gender)) {
+              continue;
+            }
+            const dose =
+              typeof assignment.doseNumber === "number"
+                ? assignment.doseNumber
+                : null;
+            if (dose == null) {
+              continue;
+            }
             latePayload.push({
               childId: createdChild.id,
               vaccineCalendarId: entry.id,
@@ -556,44 +952,7 @@ const getChildVaccinations = async (req, res, next) => {
       return res.status(404).json({ message: "Enfant non trouvé" });
     }
 
-    const childRegionId =
-      child.healthCenter?.district?.commune?.region?.id ?? null;
-    const childDistrictId = child.healthCenter?.district?.id ?? null;
-    const childHealthCenterId = child.healthCenterId ?? null;
-
-    const hasAccess = (() => {
-      if (req.user.role === "NATIONAL") {
-        return true;
-      }
-
-      if (req.user.role === "REGIONAL") {
-        return (
-          req.user.regionId != null &&
-          childRegionId != null &&
-          req.user.regionId === childRegionId
-        );
-      }
-
-      if (req.user.role === "DISTRICT") {
-        return (
-          req.user.districtId != null &&
-          childDistrictId != null &&
-          req.user.districtId === childDistrictId
-        );
-      }
-
-      if (req.user.role === "AGENT") {
-        return (
-          req.user.healthCenterId != null &&
-          childHealthCenterId != null &&
-          req.user.healthCenterId === childHealthCenterId
-        );
-      }
-
-      return false;
-    })();
-
-    if (!hasAccess) {
+    if (!hasChildAccess(req.user, child)) {
       return res.status(403).json({ message: "Accès refusé" });
     }
 
@@ -673,6 +1032,122 @@ const getChildVaccinations = async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+};
+
+const createManualVaccinationEntry = async (req, res, next) => {
+  const { id: childId, bucket } = req.params;
+  const config = MANUAL_BUCKETS[bucket];
+
+  if (!config) {
+    return res.status(400).json({ message: "Type d'entrée invalide." });
+  }
+
+  try {
+    const child = await prisma.children.findUnique({
+      where: { id: childId },
+      select: childAccessSelect,
+    });
+
+    if (!child) {
+      return res.status(404).json({ message: "Enfant non trouvé." });
+    }
+
+    if (!hasManualVaccinationAccess(req.user, child)) {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
+
+    const data = await config.prepareCreate(req.body ?? {}, {
+      childId,
+      user: req.user,
+    });
+
+    const record = await config.model.create({ data });
+
+    return res.status(201).json({ success: true, id: record.id });
+  } catch (error) {
+    return handleManualMutationError(error, res, next);
+  }
+};
+
+const updateManualVaccinationEntry = async (req, res, next) => {
+  const { id: childId, bucket, entryId } = req.params;
+  const config = MANUAL_BUCKETS[bucket];
+
+  if (!config) {
+    return res.status(400).json({ message: "Type d'entrée invalide." });
+  }
+
+  try {
+    const entry = await config.model.findUnique({
+      where: { id: entryId },
+      include: {
+        child: {
+          select: childAccessSelect,
+        },
+      },
+    });
+
+    if (!entry || entry.childId !== childId) {
+      return res.status(404).json({ message: "Entrée introuvable." });
+    }
+
+    if (!hasManualVaccinationAccess(req.user, entry.child)) {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
+
+    const data = await config.prepareUpdate(req.body ?? {});
+
+    if (!data || Object.keys(data).length === 0) {
+      return res
+        .status(400)
+        .json({ message: "Aucune donnée à mettre à jour." });
+    }
+
+    await config.model.update({
+      where: { id: entryId },
+      data,
+    });
+
+    return res.json({ success: true });
+  } catch (error) {
+    return handleManualMutationError(error, res, next);
+  }
+};
+
+const deleteManualVaccinationEntry = async (req, res, next) => {
+  const { id: childId, bucket, entryId } = req.params;
+  const config = MANUAL_BUCKETS[bucket];
+
+  if (!config) {
+    return res.status(400).json({ message: "Type d'entrée invalide." });
+  }
+
+  try {
+    const entry = await config.model.findUnique({
+      where: { id: entryId },
+      include: {
+        child: {
+          select: childAccessSelect,
+        },
+      },
+    });
+
+    if (!entry || entry.childId !== childId) {
+      return res.status(404).json({ message: "Entrée introuvable." });
+    }
+
+    if (!hasManualVaccinationAccess(req.user, entry.child)) {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
+
+    await config.model.delete({
+      where: { id: entryId },
+    });
+
+    return res.json({ success: true });
+  } catch (error) {
+    return handleManualMutationError(error, res, next);
   }
 };
 
@@ -875,6 +1350,9 @@ module.exports = {
   updateChildren,
   getChildren,
   getChildVaccinations,
+  createManualVaccinationEntry,
+  updateManualVaccinationEntry,
+  deleteManualVaccinationEntry,
   getParentsOverview,
   deleteChild,
 };

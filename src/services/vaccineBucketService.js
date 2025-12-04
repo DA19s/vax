@@ -1,14 +1,14 @@
 const prisma = require("../config/prismaClient");
-const {
-  buildVaccineDoseMap,
-  getDoseForEntry,
-  getDoseDescriptor,
-} = require("../utils/vaccineDose");
+const { buildVaccineDoseMap } = require("../utils/vaccineDose");
+
+const DAYS_PER_WEEK = 7;
+const DAYS_PER_MONTH = 30.4375;
+const DAYS_PER_YEAR = 365.25;
 
 const AGE_UNIT_IN_DAYS = {
-  WEEKS: 7,
-  MONTHS: 30.4375,
-  YEARS: 365.25,
+  WEEKS: DAYS_PER_WEEK,
+  MONTHS: DAYS_PER_MONTH,
+  YEARS: DAYS_PER_YEAR,
 };
 
 const isVaccineSuitableForGender = (vaccine, childGender) => {
@@ -18,18 +18,39 @@ const isVaccineSuitableForGender = (vaccine, childGender) => {
   return vaccine.gender === childGender;
 };
 
-const computeAgeByUnit = (birthDate, unit) => {
+const computeAgeInDays = (birthDate) => {
   const now = new Date();
   const birth = new Date(birthDate);
-  const diffDays = Math.floor((now.getTime() - birth.getTime()) / 86400000);
+  return Math.floor((now.getTime() - birth.getTime()) / 86400000);
+};
+
+const normalizeAgeToDays = (value, unit) => {
+  if (value == null || Number.isNaN(Number(value))) {
+    return null;
+  }
+  const numeric = Number(value);
+  switch (unit) {
+    case "WEEKS":
+      return numeric * DAYS_PER_WEEK;
+    case "MONTHS":
+      return numeric * DAYS_PER_MONTH;
+    case "YEARS":
+      return numeric * DAYS_PER_YEAR;
+    default:
+      return numeric;
+  }
+};
+
+const computeAgeByUnit = (birthDate, unit) => {
+  const diffDays = computeAgeInDays(birthDate);
 
   switch (unit) {
     case "WEEKS":
-      return Math.floor(diffDays / 7);
+      return Math.floor(diffDays / DAYS_PER_WEEK);
     case "MONTHS":
-      return Math.floor(diffDays / 30.4375);
+      return Math.floor(diffDays / DAYS_PER_MONTH);
     case "YEARS":
-      return Math.floor(diffDays / 365.25);
+      return Math.floor(diffDays / DAYS_PER_YEAR);
     default:
       return diffDays;
   }
@@ -43,7 +64,7 @@ const computeScheduledDate = (birthDate, specificAge, maxAge, unit) => {
   }
 
   if (unit === "WEEKS") {
-    base.setDate(base.getDate() + value * 7);
+    base.setDate(base.getDate() + value * DAYS_PER_WEEK);
   } else if (unit === "MONTHS") {
     base.setMonth(base.getMonth() + value);
   } else if (unit === "YEARS") {
@@ -68,12 +89,14 @@ const buildKeySet = (entries = []) =>
 const buildVaccineMetadata = (calendars) => {
   const map = new Map();
   for (const calendar of calendars) {
-    for (const vaccine of calendar.vaccines ?? []) {
+    const assignments = calendar.doseAssignments ?? [];
+    for (const assignment of assignments) {
+      const vaccine = assignment?.vaccine;
+      if (!vaccine?.id) {
+        continue;
+      }
       if (!map.has(vaccine.id)) {
-        const parsed = parseInt(vaccine.dosesRequired, 10);
         map.set(vaccine.id, {
-          dosesRequired:
-            Number.isFinite(parsed) && parsed > 0 ? parsed : 1,
           gender: vaccine.gender ?? null,
         });
       }
@@ -96,11 +119,15 @@ const rebuildChildVaccinationBuckets = async (
     sharedCalendars ??
       tx.vaccineCalendar.findMany({
         include: {
-          vaccines: {
-            select: {
-              id: true,
-              gender: true,
-              dosesRequired: true,
+          doseAssignments: {
+            include: {
+              vaccine: {
+                select: {
+                  id: true,
+                  gender: true,
+                  dosesRequired: true,
+                },
+              },
             },
           },
         },
@@ -159,13 +186,16 @@ const rebuildChildVaccinationBuckets = async (
       continue;
     }
 
-    for (let doseIndex = 1; doseIndex <= meta.dosesRequired; doseIndex += 1) {
-      const descriptor = getDoseDescriptor(doseMap, vaccineId, doseIndex);
+    const sortedDescriptors = Array.from(descriptors.entries()).sort(
+      ([doseA], [doseB]) => doseA - doseB,
+    );
+
+    for (const [doseNumber, descriptor] of sortedDescriptors) {
       if (!descriptor) {
         continue;
       }
 
-      const key = getDoseKey(vaccineId, descriptor.calendarId, doseIndex);
+      const key = getDoseKey(vaccineId, descriptor.calendarId, doseNumber);
       if (
         completedSet.has(key) ||
         scheduledSet.has(key) ||
@@ -193,7 +223,7 @@ const rebuildChildVaccinationBuckets = async (
           vaccineId,
           vaccineCalendarId: descriptor.calendarId,
           scheduledFor: scheduledDate,
-          dose: doseIndex,
+          dose: doseNumber,
         });
       } else if (pastRange && scheduledDate < today) {
         lateCreate.push({
@@ -201,7 +231,7 @@ const rebuildChildVaccinationBuckets = async (
           vaccineId,
           vaccineCalendarId: descriptor.calendarId,
           dueDate: scheduledDate,
-          dose: doseIndex,
+          dose: doseNumber,
         });
       }
     }
@@ -237,8 +267,16 @@ const rebuildChildVaccinationBuckets = async (
 const rebuildAllVaccinationBuckets = async () => {
   const calendars = await prisma.vaccineCalendar.findMany({
     include: {
-      vaccines: {
-        select: { id: true, gender: true, dosesRequired: true },
+      doseAssignments: {
+        include: {
+          vaccine: {
+            select: {
+              id: true,
+              gender: true,
+              dosesRequired: true,
+            },
+          },
+        },
       },
     },
   });

@@ -1,8 +1,54 @@
 const { Router } = require("express");
 const mobileController = require("../controllers/mobileController");
+const vaccinationProofController = require("../controllers/vaccinationProofController");
 const { requireMobileAuth } = require("../middleware/auth");
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
 
 const router = Router();
+
+// Configuration multer pour les preuves de vaccination (mobile)
+const proofUploadDir = path.join(__dirname, "../../uploads/vaccination-proofs");
+if (!fs.existsSync(proofUploadDir)) {
+  fs.mkdirSync(proofUploadDir, { recursive: true });
+}
+
+const proofStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, proofUploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    cb(null, `${uniqueSuffix}${path.extname(file.originalname)}`);
+  },
+});
+
+const proofUpload = multer({
+  storage: proofStorage,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/webp",
+      "application/pdf",
+    ];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(
+        new Error(
+          `Type de fichier non autorisé. Types autorisés: JPEG, PNG, WebP, PDF`,
+        ),
+        false,
+      );
+    }
+  },
+});
 
 // Demande de code de vérification
 router.post("/request-verification-code", mobileController.requestVerificationCode);
@@ -64,6 +110,14 @@ router.put("/children/:childId/notifications/mark-all-read", requireMobileAuth, 
 
 // Créer une demande de vaccin (nécessite authentification)
 router.post("/children/:childId/vaccine-requests", requireMobileAuth, require("../controllers/vaccineRequestController").createVaccineRequest);
+
+// Upload de preuves de vaccination (nécessite authentification)
+router.post(
+  "/children/:childId/vaccination-proofs",
+  requireMobileAuth,
+  proofUpload.array("files", 10), // Maximum 10 fichiers
+  vaccinationProofController.uploadVaccinationProofs,
+);
 
 module.exports = router;
 

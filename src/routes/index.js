@@ -22,6 +22,7 @@ router.use("/advice", require("./advice"));
 router.use("/mobile", require("./mobile"));
 router.use("/vaccine-requests", require("./vaccineRequests"));
 router.use("/reports", require("./reports"));
+router.use("/vaccination-proofs", require("./vaccinationProofs"));
 
 module.exports = router;
 

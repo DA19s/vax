@@ -10,6 +10,7 @@ import {
   CalendarCheck,
   Lightbulb,
   FileText,
+  FileImage,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import LogoPreview from "@/app/components/LogoPreview";
@@ -40,6 +41,7 @@ const navItems: NavItem[] = [
   { label: "Calendrier vaccinal", href: "/dashboard/calendrier", icon: Calendar },
   { label: "Rendez-vous", href: "/dashboard/rendezvous", icon: CalendarCheck },
   { label: "Enfants", href: "/dashboard/enfants", icon: Users },
+  { label: "Documents", href: "/dashboard/documents", icon: FileImage },
   { label: "Rapports", href: "/dashboard/rapports", icon: FileText },
 ];
 
@@ -64,6 +66,7 @@ export default function Sidebar({ active = "/dashboard" }: SidebarProps) {
         { label: "Calendrier vaccinal", href: "/dashboard/calendrier", icon: Calendar },
         { label: "Rendez-vous", href: "/dashboard/rendezvous", icon: CalendarCheck },
         { label: "Enfants", href: "/dashboard/enfants", icon: Users },
+        { label: "Documents", href: "/dashboard/documents", icon: FileImage },
         { label: "Rapports", href: "/dashboard/rapports", icon: FileText },
       ];
     }
@@ -79,6 +82,7 @@ export default function Sidebar({ active = "/dashboard" }: SidebarProps) {
         { label: "Calendrier vaccinal", href: "/dashboard/calendrier", icon: Calendar },
         { label: "Rendez-vous", href: "/dashboard/rendezvous", icon: CalendarCheck },
         { label: "Enfants", href: "/dashboard/enfants", icon: Users },
+        { label: "Documents", href: "/dashboard/documents", icon: FileImage },
         { label: "Rapports", href: "/dashboard/rapports", icon: FileText },
       ];
     }
@@ -93,6 +97,7 @@ export default function Sidebar({ active = "/dashboard" }: SidebarProps) {
         { label: "Calendrier vaccinal", href: "/dashboard/calendrier", icon: Calendar },
         { label: "Rendez-vous", href: "/dashboard/rendezvous", icon: CalendarCheck },
         { label: "Enfants", href: "/dashboard/enfants", icon: Users },
+        { label: "Documents", href: "/dashboard/documents", icon: FileImage },
         { label: "Rapports", href: "/dashboard/rapports", icon: FileText },
       ];
     }
@@ -108,6 +113,7 @@ export default function Sidebar({ active = "/dashboard" }: SidebarProps) {
           { label: "Vaccins", href: "/dashboard/vaccins", icon: Syringe },
           { label: "Calendrier vaccinal", href: "/dashboard/calendrier", icon: Calendar },
           { label: "Enfants", href: "/dashboard/enfants", icon: Users },
+          { label: "Documents", href: "/dashboard/documents", icon: FileImage },
           { label: "Rapports", href: "/dashboard/rapports", icon: FileText },
         ];
       }
@@ -119,6 +125,7 @@ export default function Sidebar({ active = "/dashboard" }: SidebarProps) {
         { label: "Vaccins", href: "/dashboard/vaccins", icon: Syringe },
         { label: "Calendrier vaccinal", href: "/dashboard/calendrier", icon: Calendar },
         { label: "Enfants", href: "/dashboard/enfants", icon: Users },
+        { label: "Documents", href: "/dashboard/documents", icon: FileImage },
       ];
     }
 

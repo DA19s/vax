@@ -23,6 +23,11 @@ router.get(
 );
 router.get("/", requireAuth, vaccineController.getVaccine);
 router.get("/calendar", requireAuth, vaccineController.listVaccineCalendars);
+router.get(
+  "/calendar/dose-warnings",
+  requireAuth,
+  vaccineController.listVaccineCalendarDoseWarnings,
+);
 router.post(
   "/scheduled",
   requireAuth,

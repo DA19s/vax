@@ -42,3 +42,4 @@ ALTER TABLE "VaccineRequest" ADD CONSTRAINT "VaccineRequest_vaccineCalendarId_fk
 ALTER TABLE "VaccineRequest" ADD CONSTRAINT "VaccineRequest_scheduledById_fkey" FOREIGN KEY ("scheduledById") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 
+

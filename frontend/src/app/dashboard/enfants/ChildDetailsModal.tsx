@@ -16,8 +16,13 @@ import {
   User,
   X,
 } from "lucide-react";
-import VaccinationRecordModal from "./VaccinationRecordModal";
+import dynamic from "next/dynamic";
 import { Child, VaccinationDetail } from "./types";
+
+const VaccinationRecordModal = dynamic(
+  () => import("./VaccinationRecordModal"),
+  { ssr: false },
+);
 
 const formatDate = (value?: string | null, withTime = false): string => {
   if (!value) return "-";
@@ -65,6 +70,7 @@ type Props = {
   onClose: () => void;
   onRefresh?: () => void;
   canSchedule?: boolean;
+  canEditVaccinations?: boolean;
 };
 
 type ScheduleOption = {
@@ -81,6 +87,7 @@ export default function ChildDetailsModal({
   onClose,
   onRefresh,
   canSchedule = false,
+  canEditVaccinations = false,
 }: Props) {
   const [detail, setDetail] = useState<VaccinationDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -130,6 +137,13 @@ export default function ChildDetailsModal({
   useEffect(() => {
     fetchDetail();
   }, [fetchDetail]);
+
+  const handleRecordRefresh = useCallback(async () => {
+    await fetchDetail();
+    if (onRefresh) {
+      onRefresh();
+    }
+  }, [fetchDetail, onRefresh]);
 
   useEffect(() => {
     if (!detail) {
@@ -503,11 +517,16 @@ export default function ChildDetailsModal({
         </div>
       </div>
 
-      {detail && (
+      {detail && showRecord && (
         <VaccinationRecordModal
           isOpen={showRecord}
           onClose={() => setShowRecord(false)}
           detail={detail}
+          childId={child.id}
+          apiBase={apiBase}
+          token={token}
+          canEdit={canEditVaccinations}
+          onRefresh={handleRecordRefresh}
         />
       )}
 

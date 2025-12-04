@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../child/child_dashboard_screen.dart';
 import '../../core/config/api_config.dart';
+import 'vaccination_date_screen.dart';
 
 class VaccineSelectionScreen extends StatefulWidget {
   final String childId;
@@ -27,10 +28,67 @@ class VaccineSelectionScreen extends StatefulWidget {
 class _VaccineSelectionScreenState extends State<VaccineSelectionScreen> {
   final storage = const FlutterSecureStorage();
   List<Map<String, dynamic>> _availableVaccines = []; // Liste de vaccins individuels
-  Map<String, int> _selectedVaccinesWithDoses = {}; // Format: "vaccineCalendarId_vaccineId" -> nombre de doses
+  Map<String, int> _selectedVaccinesWithDoses = {}; // Format: "vaccineId" -> nombre total de doses sélectionnées
+  final Map<String, List<Map<String, dynamic>>> _doseTimelineByVaccine = {};
+  final Map<String, List<String>> _calendarWindowsByVaccine = {};
   bool _isLoading = true;
-  bool _isSaving = false;
   String? _error;
+
+  List<Map<String, dynamic>> _cloneTimeline(dynamic raw) {
+    if (raw is List) {
+      return raw
+          .whereType<Map>()
+          .map(
+            (entry) =>
+                Map<String, dynamic>.from(entry.cast<String, dynamic>()),
+          )
+          .toList();
+    }
+    return const [];
+  }
+
+  int _parsePositiveInt(dynamic value, [int fallback = 0]) {
+    final parsed =
+        value is num ? value.toInt() : int.tryParse(value?.toString() ?? '');
+    if (parsed == null || parsed <= 0) {
+      return fallback;
+    }
+    return parsed;
+  }
+
+  List<Map<String, dynamic>> _buildFallbackTimeline(
+    String vaccineId,
+    Map<String, dynamic> aggregatedData,
+  ) {
+    final windows = _calendarWindowsByVaccine[vaccineId] ?? const [];
+    if (windows.isEmpty) {
+      return const [];
+    }
+
+    final totalDoses =
+        _parsePositiveInt(aggregatedData['rawDosesRequired'], windows.length);
+    if (totalDoses <= 0) {
+      return const [];
+    }
+
+    final assignments = <Map<String, dynamic>>[];
+    int doseNumber = 1;
+    int windowIndex = 0;
+
+    while (doseNumber <= totalDoses) {
+      final calendarId = windows[windowIndex];
+      assignments.add({
+        'calendarId': calendarId,
+        'doseNumber': doseNumber,
+      });
+      doseNumber += 1;
+      if (windows.length > 1 && windowIndex < windows.length - 1) {
+        windowIndex += 1;
+      }
+    }
+
+    return assignments;
+  }
 
   @override
   void initState() {
@@ -97,46 +155,164 @@ class _VaccineSelectionScreenState extends State<VaccineSelectionScreen> {
           return isInCurrentRange || isPastRange;
         }).toList();
 
-        // Transformer en liste de vaccins individuels
-        final List<Map<String, dynamic>> individualVaccines = [];
-        
+        double? normalizeAgeToDays(dynamic value, String? unit) {
+          if (value == null) return null;
+          final numeric = value is num ? value.toDouble() : double.tryParse(value.toString());
+          if (numeric == null) return null;
+          switch (unit) {
+            case 'WEEKS':
+              return numeric * 7;
+            case 'MONTHS':
+              return numeric * 30.4375;
+            case 'YEARS':
+              return numeric * 365.25;
+            default:
+              return numeric;
+          }
+        }
+
+        final Map<String, Map<String, dynamic>> aggregated = {};
+        _calendarWindowsByVaccine.clear();
+
         for (final entry in relevantVaccines) {
-          final vaccinesList = entry['vaccines'] as List;
-          final vaccineCalendarId = entry['id'];
-          final ageUnit = entry['ageUnit'] as String;
+          final vaccinesList = entry['vaccines'] as List? ?? [];
+          final vaccineCalendarId = entry['id'] as String?;
+          final ageUnit = entry['ageUnit'] as String?;
           final specificAge = entry['specificAge'];
           final minAge = entry['minAge'];
           final maxAge = entry['maxAge'];
-          
-          // Créer une entrée pour chaque vaccin dans ce calendrier
+
+          final windowWeight =
+              normalizeAgeToDays(specificAge, ageUnit) ??
+              normalizeAgeToDays(minAge, ageUnit) ??
+              normalizeAgeToDays(maxAge, ageUnit) ??
+              double.infinity;
+
           for (final v in vaccinesList) {
-            Map<String, dynamic> vaccine;
-            if (v is Map) {
-              vaccine = {
-                'id': v['id'],
-                'name': v['name'] as String,
-                'dosesRequired': v['dosesRequired'] ?? '1',
-              };
-            } else {
-              vaccine = {
-                'id': null,
-                'name': v.toString(),
-                'dosesRequired': '1',
-              };
+            if (v is! Map) continue;
+            final vaccineId = v['id'];
+            if (vaccineId is! String || vaccineId.isEmpty) continue;
+            final vaccineName = v['name'] as String? ?? "Vaccin";
+            if (vaccineCalendarId != null) {
+              _calendarWindowsByVaccine
+                  .putIfAbsent(vaccineId, () => [])
+                  .add(vaccineCalendarId);
             }
-            
-            individualVaccines.add({
-              'vaccineId': vaccine['id'],
-              'vaccineName': vaccine['name'],
-              'dosesRequired': vaccine['dosesRequired'],
-              'vaccineCalendarId': vaccineCalendarId,
-              'ageUnit': ageUnit,
-              'specificAge': specificAge,
-              'minAge': minAge,
-              'maxAge': maxAge,
+
+            final entryData = aggregated.putIfAbsent(vaccineId, () {
+              return {
+                'vaccineId': vaccineId,
+                'vaccineName': vaccineName,
+                'primaryWeight': windowWeight,
+                'primaryAgeUnit': ageUnit,
+                'primarySpecificAge': specificAge,
+                'primaryMinAge': minAge,
+                'primaryMaxAge': maxAge,
+                'rawDosesRequired': v['dosesRequired'],
+                'doseTimeline': <Map<String, dynamic>>[],
+                'maxDoseNumber': 0,
+              };
             });
+
+            if (windowWeight < (entryData['primaryWeight'] as double? ?? double.infinity)) {
+              entryData['primaryWeight'] = windowWeight;
+              entryData['primaryAgeUnit'] = ageUnit;
+              entryData['primarySpecificAge'] = specificAge;
+              entryData['primaryMinAge'] = minAge;
+              entryData['primaryMaxAge'] = maxAge;
+            }
+
+            final List<dynamic> rawDoseNumbers = (v['doseNumbers'] as List<dynamic>?) ?? [];
+            final List<int> doseNumbers = rawDoseNumbers
+                .map((value) => value is num ? value.toInt() : int.tryParse(value.toString()))
+                .whereType<int>()
+                .toList()
+              ..sort();
+
+            if (doseNumbers.isNotEmpty) {
+              for (final doseNumber in doseNumbers) {
+                final currentMax = entryData['maxDoseNumber'] as int? ?? 0;
+                if (doseNumber > currentMax) {
+                  entryData['maxDoseNumber'] = doseNumber;
+                }
+                (entryData['doseTimeline'] as List<Map<String, dynamic>>).add({
+                  'doseNumber': doseNumber,
+                  'calendarId': vaccineCalendarId,
+                });
+              }
+            } else {
+              final rawDoseCount = v['doseCount'] ?? v['dosesRequired'];
+              final fallbackCount = rawDoseCount is num
+                  ? rawDoseCount.toInt()
+                  : int.tryParse(rawDoseCount?.toString() ?? '0') ?? 0;
+              if (fallbackCount > 0) {
+                for (int i = 0; i < fallbackCount; i++) {
+                  final currentMax = (entryData['maxDoseNumber'] as int? ?? 0) + 1;
+                  entryData['maxDoseNumber'] = currentMax;
+                  (entryData['doseTimeline'] as List<Map<String, dynamic>>).add({
+                    'doseNumber': currentMax,
+                    'calendarId': vaccineCalendarId,
+                  });
+                }
+              }
+            }
           }
         }
+
+        _doseTimelineByVaccine.clear();
+
+        final List<Map<String, dynamic>> individualVaccines =
+            aggregated.values.map((data) {
+          final List<Map<String, dynamic>> timeline =
+              List<Map<String, dynamic>>.from(data['doseTimeline'] as List)
+                ..sort((a, b) {
+                  final aDose = a['doseNumber'] is num
+                      ? (a['doseNumber'] as num).toInt()
+                      : 0;
+                  final bDose = b['doseNumber'] is num
+                      ? (b['doseNumber'] as num).toInt()
+                      : 0;
+                  return aDose.compareTo(bDose);
+                });
+          List<Map<String, dynamic>> effectiveTimeline = timeline;
+          if (effectiveTimeline.isEmpty) {
+            effectiveTimeline =
+                _buildFallbackTimeline(data['vaccineId'] as String, data);
+          }
+          final firstDose = effectiveTimeline.isNotEmpty
+              ? effectiveTimeline.first['doseNumber']
+              : null;
+          final lastDose = effectiveTimeline.isNotEmpty
+              ? effectiveTimeline.last['doseNumber']
+              : null;
+          final totalDoses = effectiveTimeline.length;
+          final fallbackTotal =
+              int.tryParse(data['rawDosesRequired']?.toString() ?? '') ??
+                  totalDoses;
+          final normalizedTotal = totalDoses > 0
+              ? totalDoses
+              : (fallbackTotal > 0 ? fallbackTotal : 1);
+
+          final vaccineId = data['vaccineId'] as String;
+          final timelineClone = _cloneTimeline(effectiveTimeline);
+          _doseTimelineByVaccine[vaccineId] = timelineClone;
+
+          return {
+            'vaccineId': data['vaccineId'],
+            'vaccineName': data['vaccineName'],
+            'dosesRequired': normalizedTotal.toString(),
+            'doseRangeLabel': firstDose != null && lastDose != null
+                ? (firstDose == lastDose
+                    ? 'Dose ${firstDose.toInt()}'
+                    : 'Doses ${firstDose.toInt()}-${lastDose.toInt()}')
+                : null,
+            'ageUnit': data['primaryAgeUnit'],
+            'specificAge': data['primarySpecificAge'],
+            'minAge': data['primaryMinAge'],
+            'maxAge': data['primaryMaxAge'],
+            'doseTimeline': timelineClone,
+          };
+        }).toList();
         
         setState(() {
           _availableVaccines = individualVaccines;
@@ -164,62 +340,89 @@ class _VaccineSelectionScreenState extends State<VaccineSelectionScreen> {
     }
 
     setState(() {
-      _isSaving = true;
       _error = null;
     });
 
-    try {
-      // Préparer les données pour l'API
-      // Le format de key est: vaccineCalendarId_vaccineId
-      final vaccinesToMark = <Map<String, dynamic>>[];
-      
-      for (final entry in _selectedVaccinesWithDoses.entries) {
-        final key = entry.key;
-        final dosesCount = entry.value;
-        final parts = key.split('_');
-        if (parts.length >= 2) {
-          final vaccineCalendarId = parts[0];
-          final vaccineId = parts[1];
-          
-          // Créer une entrée pour chaque dose administrée
-          for (int dose = 1; dose <= dosesCount; dose++) {
-            vaccinesToMark.add({
-              'vaccineCalendarId': vaccineCalendarId,
-              'vaccineId': vaccineId,
-              'dose': dose,
-            });
-          }
-        }
+    final selectedEntries = _prepareSelectedDoseEntries();
+    if (selectedEntries.isEmpty) {
+      setState(() {
+        _error =
+            "Impossible de préparer les vaccins sélectionnés. Veuillez réessayer.";
+      });
+      return;
+    }
+
+    final deepCopy = selectedEntries
+        .map((entry) => Map<String, dynamic>.from(entry))
+        .toList(growable: false);
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        settings: RouteSettings(arguments: deepCopy),
+        builder: (_) => VaccinationDateScreen(
+          selectedVaccines: deepCopy,
+          childId: widget.childId,
+          token: widget.token,
+          userData: widget.userData,
+        ),
+      ),
+    );
+  }
+
+  List<Map<String, dynamic>> _prepareSelectedDoseEntries() {
+    final Map<String, Map<String, dynamic>> vaccineLookup = {
+      for (final vaccine in _availableVaccines)
+        if (vaccine['vaccineId'] is String)
+          vaccine['vaccineId'] as String: vaccine,
+    };
+
+    final entries = <Map<String, dynamic>>[];
+
+    _selectedVaccinesWithDoses.forEach((key, dosesCount) {
+      final vaccineData = vaccineLookup[key];
+      if (vaccineData == null) {
+        return;
       }
 
-      final url = Uri.parse(
-          "${ApiConfig.apiBaseUrl}/mobile/children/${widget.childId}/mark-vaccines-done");
-      final response = await http.post(
-        url,
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": "Bearer ${widget.token}",
-        },
-        body: jsonEncode({
-          "vaccines": vaccinesToMark,
-        }),
-      );
+      final List<Map<String, dynamic>> doseTimeline =
+          _doseTimelineByVaccine[key] ??
+          _cloneTimeline(vaccineData['doseTimeline']);
+      if (doseTimeline.isEmpty) {
+        return;
+      }
 
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        await _navigateToChildDashboard();
-      } else {
-        final data = jsonDecode(response.body);
-        setState(() {
-          _error = data["message"] ?? "Erreur lors de l'enregistrement";
-          _isSaving = false;
+      final int assignable =
+          dosesCount.clamp(0, doseTimeline.length).toInt();
+
+      for (int index = 0; index < assignable; index++) {
+        final slot = doseTimeline[index];
+        final calendarId = slot['calendarId'] as String?;
+        final doseNumber = slot['doseNumber'] is num
+            ? (slot['doseNumber'] as num).toInt()
+            : (index + 1);
+        if (calendarId == null) {
+          continue;
+        }
+        entries.add({
+          'vaccineId': key,
+          'vaccineName': vaccineData['vaccineName'] as String? ?? "Vaccin",
+          'vaccineCalendarId': calendarId,
+          'dose': doseNumber,
         });
       }
-    } catch (e) {
-      setState(() {
-        _error = "Erreur de connexion au serveur";
-        _isSaving = false;
-      });
-    }
+    });
+
+    entries.sort((a, b) {
+      final nameA = (a['vaccineName'] as String? ?? '').toLowerCase();
+      final nameB = (b['vaccineName'] as String? ?? '').toLowerCase();
+      if (nameA == nameB) {
+        return (a['dose'] as int).compareTo(b['dose'] as int);
+      }
+      return nameA.compareTo(nameB);
+    });
+
+    return entries;
   }
 
   Future<void> _navigateToChildDashboard() async {
@@ -405,18 +608,34 @@ class _VaccineSelectionScreenState extends State<VaccineSelectionScreen> {
                             itemCount: _availableVaccines.length,
                             itemBuilder: (context, index) {
                               final vaccine = _availableVaccines[index];
-                              final vaccineName = vaccine['vaccineName'] as String;
+                              final vaccineName =
+                                  vaccine['vaccineName'] as String? ?? "Vaccin";
                               final vaccineId = vaccine['vaccineId'] as String?;
-                              final vaccineCalendarId = vaccine['vaccineCalendarId'] as String;
-                              final dosesRequiredStr = vaccine['dosesRequired'] as String? ?? '1';
-                              final dosesRequired = int.tryParse(dosesRequiredStr) ?? 1;
-                              
-                              // Clé unique pour chaque vaccin: vaccineCalendarId_vaccineId
-                              final vaccineKey = vaccineId != null 
-                                  ? '${vaccineCalendarId}_$vaccineId'
-                                  : '${vaccineCalendarId}_${vaccineName}';
-                              
-                              final selectedDoses = _selectedVaccinesWithDoses[vaccineKey] ?? 0;
+                              if (vaccineId == null) {
+                                return const SizedBox.shrink();
+                              }
+                              final dosesRequiredStr =
+                                  vaccine['dosesRequired'] as String? ?? '1';
+                              final parsedDosesRequired =
+                                  int.tryParse(dosesRequiredStr) ?? 1;
+                              final List<Map<String, dynamic>> doseTimeline =
+                                  (vaccine['doseTimeline'] as List?)
+                                          ?.whereType<Map>()
+                                          .map(
+                                            (entry) => Map<String, dynamic>.from(
+                                              entry.cast<String, dynamic>(),
+                                            ),
+                                          )
+                                          .toList() ??
+                                      [];
+                              final dosesRequired = doseTimeline.isNotEmpty
+                                  ? doseTimeline.length
+                                  : parsedDosesRequired;
+
+                              final vaccineKey = vaccineId;
+
+                              final selectedDoses =
+                                  _selectedVaccinesWithDoses[vaccineKey] ?? 0;
                               final isSelected = selectedDoses > 0;
 
                               return Card(
@@ -464,12 +683,23 @@ class _VaccineSelectionScreenState extends State<VaccineSelectionScreen> {
                                                 ),
                                                 const SizedBox(height: 4),
                                                 Text(
-                                                  'Recommandé à ${_getAgeLabel(vaccine)} • $dosesRequired dose${dosesRequired > 1 ? 's' : ''} requise${dosesRequired > 1 ? 's' : ''}',
+                                                'Recommandé à ${_getAgeLabel(vaccine)} • $dosesRequired dose${dosesRequired > 1 ? 's' : ''} au total',
                                                   style: GoogleFonts.poppins(
                                                     fontSize: 12,
                                                     color: const Color(0xFF94A3B8),
                                                   ),
                                                 ),
+                                              if (vaccine['doseRangeLabel'] != null) ...[
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  vaccine['doseRangeLabel'] as String,
+                                                  style: GoogleFonts.poppins(
+                                                    fontSize: 11,
+                                                    color: const Color(0xFF64748B),
+                                                    fontWeight: FontWeight.w500,
+                                                  ),
+                                                ),
+                                              ],
                                               ],
                                             ),
                                           ),
@@ -584,7 +814,7 @@ class _VaccineSelectionScreenState extends State<VaccineSelectionScreen> {
                   width: double.infinity,
                   height: 56,
                   child: ElevatedButton(
-                    onPressed: _isSaving ? null : _saveSelectedVaccines,
+                    onPressed: _saveSelectedVaccines,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF3B760F),
                       shape: RoundedRectangleBorder(
@@ -592,25 +822,16 @@ class _VaccineSelectionScreenState extends State<VaccineSelectionScreen> {
                       ),
                       elevation: 0,
                     ),
-                    child: _isSaving
-                        ? const SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 2.5,
-                            ),
-                          )
-                        : Text(
-                            _selectedVaccinesWithDoses.isEmpty
-                                ? "Continuer sans sélection"
-                                : "Valider et continuer",
-                            style: GoogleFonts.poppins(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white,
-                            ),
-                          ),
+                    child: Text(
+                      _selectedVaccinesWithDoses.isEmpty
+                          ? "Continuer sans sélection"
+                          : "Valider et continuer",
+                      style: GoogleFonts.poppins(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
                   ),
                 ),
               ],

@@ -181,6 +181,7 @@ export default function EnfantsPage() {
                 onRefresh={loadChildren}
                 regionOptions={user?.role === "NATIONAL" ? regionOptions : undefined}
                 role={user?.role ?? null}
+                agentLevel={user?.agentLevel ?? null}
               />
             )}
             {activeTab === "parents" && (

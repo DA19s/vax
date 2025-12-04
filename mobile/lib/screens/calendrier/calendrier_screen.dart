@@ -537,6 +537,23 @@ class _CalendrierVaccinalScreenState extends State<CalendrierVaccinalScreen> {
             color = Colors.orangeAccent;
           }
 
+          final dynamic doseCount = v['doseCount'];
+          final dynamic firstDose = v['firstDoseNumber'];
+          final dynamic lastDose = v['lastDoseNumber'];
+          String? badgeText;
+          if (doseCount is num && doseCount > 0) {
+            if (firstDose is num && lastDose is num) {
+              badgeText = firstDose == lastDose
+                  ? 'Dose ${firstDose.toInt()}'
+                  : 'Doses ${firstDose.toInt()}-${lastDose.toInt()}';
+            } else {
+              badgeText = '${doseCount.toInt()} dose(s)';
+            }
+          } else if (v['dose'] != null &&
+              (v['dose'].toString()).trim().isNotEmpty) {
+            badgeText = v['dose'].toString();
+          }
+
           return Stack(
             children: [
               if (index < items.length - 1)
@@ -591,8 +608,7 @@ class _CalendrierVaccinalScreenState extends State<CalendrierVaccinalScreen> {
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
-                                if ((v['doseNumber'] is num && v['doseNumber'] > 0) ||
-                                    (v['dose'] != null && (v['dose'].toString()).trim().isNotEmpty)) ...[
+                                if (badgeText != null) ...[
                                   const SizedBox(width: 6),
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -601,9 +617,7 @@ class _CalendrierVaccinalScreenState extends State<CalendrierVaccinalScreen> {
                                       borderRadius: BorderRadius.circular(999),
                                     ),
                                     child: Text(
-                                      (v['doseNumber'] is num && v['doseNumber'] > 0)
-                                          ? 'Dose ${v['doseNumber'].toInt()}'
-                                          : v['dose'].toString(),
+                                      badgeText!,
                                       style: const TextStyle(
                                         fontSize: 11,
                                         fontWeight: FontWeight.w700,

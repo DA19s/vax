@@ -96,7 +96,6 @@ model Campaign {
 
 model VaccineCalendar {
   id            String  @id @default(uuid())
-  vaccines      Vaccine[]
   description   String
   ageUnit       AgeUnit
   specificAge   Int
@@ -109,6 +108,7 @@ model VaccineCalendar {
   overdueEntries     ChildVaccineOverdue[] 
   lateEntries        ChildVaccineLate[]
   vaccineRequests    VaccineRequest[]
+  doseAssignments    VaccineCalendarDose[]
 }
 
 enum AgeUnit {
@@ -126,7 +126,6 @@ model Vaccine {
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
-  vaccineCalendars                VaccineCalendar[]
   StockNATIONAL                   StockNATIONAL?
   StockREGIONAL                   StockREGIONAL[]
   StockDISTRICT                   StockDISTRICT[]
@@ -142,6 +141,22 @@ model Vaccine {
   stockTransfers       StockTransfer[]
   pendingStockTransfers PendingStockTransfer[]
   vaccineRequests        VaccineRequest[]
+  calendarAssignments    VaccineCalendarDose[]
+}
+
+model VaccineCalendarDose {
+  id          String           @id @default(uuid())
+  vaccineId   String
+  calendarId  String
+  doseNumber  Int
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  vaccine     Vaccine          @relation(fields: [vaccineId], references: [id], onDelete: Cascade)
+  calendar    VaccineCalendar  @relation(fields: [calendarId], references: [id], onDelete: Cascade)
+
+  @@unique([vaccineId, doseNumber])
+  @@index([calendarId])
 }
 
 model Commune {
@@ -237,6 +252,7 @@ model Children {
   lateVaccines           ChildVaccineLate[]
   notifications          Notification[]
   vaccineRequests        VaccineRequest[]
+  vaccinationProofs      ChildVaccinationProof[]
 }
 
 enum Gender {
@@ -501,6 +517,22 @@ model VaccineRequest {
   @@index([status])
   @@index([requestedAt])
   @@index([scheduledById])
+}
+
+model ChildVaccinationProof {
+  id                String   @id @default(uuid())
+  childId           String
+  child             Children  @relation(fields: [childId], references: [id], onDelete: Cascade)
+  filePath          String   // Chemin du fichier sur le serveur
+  fileName          String   // Nom original du fichier
+  fileSize          Int?     // Taille en bytes
+  mimeType          String?  // Type MIME (image/jpeg, image/png, etc.)
+  uploadedAt        DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([childId])
+  @@index([uploadedAt])
 }
 
 

@@ -18,30 +18,40 @@ const computeAgeWeight = (calendarEntry) => {
 };
 
 const buildVaccineDoseMap = (calendarEntries = []) => {
-  const sortedEntries = [...calendarEntries].sort(
-    (a, b) => computeAgeWeight(a) - computeAgeWeight(b),
-  );
-
-  const perVaccineCounters = new Map();
-  const entryDoseMap = new Map();
   const doseDefinitionMap = new Map();
+  const fallbackCounters = new Map();
 
-  for (const entry of sortedEntries) {
-    if (!entry?.vaccines?.length) {
-      continue;
-    }
+  for (const entry of calendarEntries) {
+    const assignments = entry?.doseAssignments ?? entry?.vaccines ?? [];
 
-    for (const vaccine of entry.vaccines) {
-      const currentCount = perVaccineCounters.get(vaccine.id) ?? 0;
-      const nextCount = currentCount + 1;
-      perVaccineCounters.set(vaccine.id, nextCount);
-      entryDoseMap.set(`${vaccine.id}::${entry.id}`, nextCount);
+    for (const assignment of assignments) {
+      const vaccine = assignment?.vaccine ?? assignment;
+      const vaccineId = vaccine?.id ?? assignment?.vaccineId;
+      const rawDoseNumber =
+        assignment?.doseNumber ??
+        assignment?.dose ??
+        assignment?.dose_index ??
+        null;
 
-      if (!doseDefinitionMap.has(vaccine.id)) {
-        doseDefinitionMap.set(vaccine.id, new Map());
+      let doseNumber;
+      const parsedDoseNumber = Number(rawDoseNumber);
+      if (Number.isFinite(parsedDoseNumber)) {
+        doseNumber = Math.max(1, Math.floor(parsedDoseNumber));
+      } else {
+        const currentCount = fallbackCounters.get(vaccineId) ?? 0;
+        doseNumber = currentCount + 1;
+        fallbackCounters.set(vaccineId, doseNumber);
       }
 
-      doseDefinitionMap.get(vaccine.id).set(nextCount, {
+      if (!vaccineId) {
+        continue;
+      }
+
+      if (!doseDefinitionMap.has(vaccineId)) {
+        doseDefinitionMap.set(vaccineId, new Map());
+      }
+
+      doseDefinitionMap.get(vaccineId).set(doseNumber, {
         calendarId: entry.id,
         ageUnit: entry.ageUnit,
         specificAge: entry.specificAge,
@@ -53,16 +63,8 @@ const buildVaccineDoseMap = (calendarEntries = []) => {
   }
 
   return {
-    entryDoseMap,
     doseDefinitionMap,
   };
-};
-
-const getDoseForEntry = (doseMap, vaccineId, calendarId) => {
-  if (!doseMap || !vaccineId || !calendarId) {
-    return 1;
-  }
-  return doseMap.entryDoseMap?.get(`${vaccineId}::${calendarId}`) ?? 1;
 };
 
 const getDoseDescriptor = (doseMap, vaccineId, doseNumber) => {
@@ -75,16 +77,25 @@ const getDoseDescriptor = (doseMap, vaccineId, doseNumber) => {
     return null;
   }
 
-  return (
-    descriptors.get(doseNumber) ??
-    descriptors.get(descriptors.size) ??
-    null
-  );
+  if (descriptors.has(doseNumber)) {
+    return descriptors.get(doseNumber);
+  }
+
+  let fallbackDescriptor = null;
+  let fallbackDose = -Infinity;
+
+  for (const [definedDose, descriptor] of descriptors.entries()) {
+    if (definedDose > fallbackDose) {
+      fallbackDose = definedDose;
+      fallbackDescriptor = descriptor;
+    }
+  }
+
+  return fallbackDescriptor;
 };
 
 module.exports = {
   buildVaccineDoseMap,
-  getDoseForEntry,
   getDoseDescriptor,
 };
 

@@ -207,7 +207,20 @@ const parentRegister = async (req, res, next) => {
     const accessCode = generateAccessCode(6);
 
     const calendarEntries = await prisma.vaccineCalendar.findMany({
-      include: { vaccines: true },
+      include: {
+        doseAssignments: {
+          include: {
+            vaccine: {
+              select: {
+                id: true,
+                name: true,
+                gender: true,
+                dosesRequired: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     let updatedChildId;
@@ -243,7 +256,11 @@ const parentRegister = async (req, res, next) => {
         const isPastRange = age > entry.maxAge;
 
         if (isWithinRange) {
-          for (const vaccine of entry.vaccines) {
+          for (const assignment of entry.doseAssignments ?? []) {
+            const vaccine = assignment?.vaccine;
+            if (!vaccine?.id) {
+              continue;
+            }
             // Vérifier si le vaccin correspond au genre de l'enfant
             if (!isVaccineSuitableForGender(vaccine, child.gender)) {
               continue; // Passer ce vaccin s'il ne correspond pas au genre
@@ -254,11 +271,16 @@ const parentRegister = async (req, res, next) => {
               vaccineCalendarId: entry.id,
               vaccineId: vaccine.id,
               scheduledFor: dueDate,
+              dose: assignment.doseNumber ?? 1,
             });
           }
         } else if (isPastRange) {
           hasLate = true;
-          for (const vaccine of entry.vaccines) {
+          for (const assignment of entry.doseAssignments ?? []) {
+            const vaccine = assignment?.vaccine;
+            if (!vaccine?.id) {
+              continue;
+            }
             // Vérifier si le vaccin correspond au genre de l'enfant
             if (!isVaccineSuitableForGender(vaccine, child.gender)) {
               continue; // Passer ce vaccin s'il ne correspond pas au genre
@@ -269,6 +291,7 @@ const parentRegister = async (req, res, next) => {
               vaccineCalendarId: entry.id,
               vaccineId: vaccine.id,
               dueDate: dueDate,
+              dose: assignment.doseNumber ?? 1,
             });
           }
         }
@@ -843,7 +866,23 @@ const getVaccineCalendar = async (req, res, next) => {
     }
 
     const calendars = await prisma.vaccineCalendar.findMany({
-      include: { vaccines: true },
+      include: {
+        doseAssignments: {
+          include: {
+            vaccine: {
+              select: {
+                id: true,
+                name: true,
+                dosesRequired: true,
+                gender: true,
+              },
+            },
+          },
+          orderBy: {
+            doseNumber: "asc",
+          },
+        },
+      },
       orderBy: [
         { ageUnit: "asc" },
         { specificAge: "asc" },
@@ -852,13 +891,52 @@ const getVaccineCalendar = async (req, res, next) => {
     });
 
     const formattedCalendars = calendars.map((calendar) => {
-      // Filtrer les vaccins selon le genre si un childId est fourni
-      let vaccines = calendar.vaccines;
-      if (childGender) {
-        vaccines = vaccines.filter((vaccine) =>
-          isVaccineSuitableForGender(vaccine, childGender)
-        );
+      const aggregates = new Map();
+      for (const assignment of calendar.doseAssignments ?? []) {
+        const vaccine = assignment?.vaccine;
+        if (!vaccine?.id) {
+          continue;
+        }
+        if (
+          childGender &&
+          !isVaccineSuitableForGender(vaccine, childGender)
+        ) {
+          continue;
+        }
+        if (!aggregates.has(vaccine.id)) {
+          aggregates.set(vaccine.id, {
+            vaccine,
+            count: 0,
+            minDose: null,
+            maxDose: null,
+            doses: [],
+          });
+        }
+        const bucket = aggregates.get(vaccine.id);
+        bucket.count += 1;
+        const doseNumber = assignment.doseNumber ?? null;
+        if (doseNumber != null) {
+          bucket.doses.push(doseNumber);
+          if (bucket.minDose == null || doseNumber < bucket.minDose) {
+            bucket.minDose = doseNumber;
+          }
+          if (bucket.maxDose == null || doseNumber > bucket.maxDose) {
+            bucket.maxDose = doseNumber;
+          }
+        }
       }
+
+      const vaccines = Array.from(aggregates.values()).map(
+        ({ vaccine, count, minDose, maxDose, doses }) => ({
+          id: vaccine.id,
+          name: vaccine.name,
+          dosesRequired: vaccine.dosesRequired,
+          doseCount: count,
+          firstDoseNumber: minDose,
+          lastDoseNumber: maxDose,
+          doseNumbers: doses.sort((a, b) => a - b),
+        }),
+      );
 
       return {
         id: calendar.id,
@@ -867,11 +945,7 @@ const getVaccineCalendar = async (req, res, next) => {
         specificAge: calendar.specificAge,
         minAge: calendar.minAge,
         maxAge: calendar.maxAge,
-        vaccines: vaccines.map((vaccine) => ({
-          id: vaccine.id,
-          name: vaccine.name,
-          dosesRequired: vaccine.dosesRequired,
-        })),
+        vaccines,
       };
     });
 
@@ -885,6 +959,17 @@ const getVaccineCalendar = async (req, res, next) => {
  * POST /api/mobile/children/:childId/mark-vaccines-done
  * Marquer des vaccins comme effectués (pour les parents lors de l'inscription)
  */
+const parseAdministeredAt = (value) => {
+  if (!value) {
+    return null;
+  }
+  const parsedDate = new Date(value);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return null;
+  }
+  return parsedDate;
+};
+
 const markVaccinesDone = async (req, res, next) => {
   try {
     const { childId } = req.params;
@@ -965,7 +1050,7 @@ const markVaccinesDone = async (req, res, next) => {
       };
 
       for (const vaccinePayload of vaccines) {
-        const { vaccineCalendarId, vaccineId } = vaccinePayload;
+        const { vaccineCalendarId, vaccineId, administeredAt } = vaccinePayload;
 
         if (!vaccineId) {
           continue; // Ignorer si vaccineId manquant
@@ -1022,12 +1107,15 @@ const markVaccinesDone = async (req, res, next) => {
         }
 
         // Créer l'entrée de vaccin complété
+        const normalizedAdministeredAt =
+          parseAdministeredAt(administeredAt) ?? new Date();
+
         await tx.childVaccineCompleted.create({
           data: {
             childId,
             vaccineId,
             vaccineCalendarId: vaccineCalendarId || null,
-            administeredAt: new Date(),
+            administeredAt: normalizedAdministeredAt,
             administeredById: null, // vaccins marqués par les parents
             dose: targetDose,
           },

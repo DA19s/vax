@@ -20,3 +20,4 @@ ALTER TABLE "StockReservation"
     FOREIGN KEY ("scheduleId") REFERENCES "ChildVaccineScheduled"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 
+
