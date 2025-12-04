@@ -6,6 +6,7 @@ import {
   Baby,
   Calendar,
   CalendarPlus,
+  FileImage,
   HeartPulse,
   Home,
   Loader2,
@@ -21,6 +22,11 @@ import { Child, VaccinationDetail } from "./types";
 
 const VaccinationRecordModal = dynamic(
   () => import("./VaccinationRecordModal"),
+  { ssr: false },
+);
+
+const ChildDocumentsModal = dynamic(
+  () => import("./ChildDocumentsModal"),
   { ssr: false },
 );
 
@@ -93,6 +99,7 @@ export default function ChildDetailsModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRecord, setShowRecord] = useState(false);
+  const [showDocumentsModal, setShowDocumentsModal] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [scheduleOptions, setScheduleOptions] = useState<ScheduleOption[]>([]);
   const [selectedVaccineId, setSelectedVaccineId] = useState<string | null>(null);
@@ -507,6 +514,15 @@ export default function ChildDetailsModal({
           </button>
           <button
             type="button"
+            onClick={() => setShowDocumentsModal(true)}
+            className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+            disabled={loading || !!error}
+          >
+            <FileImage className="h-4 w-4" />
+            Documents
+          </button>
+          <button
+            type="button"
             onClick={() => setShowRecord(true)}
             className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
             disabled={loading || !!error}
@@ -516,6 +532,16 @@ export default function ChildDetailsModal({
           </button>
         </div>
       </div>
+
+      {showDocumentsModal && (
+        <ChildDocumentsModal
+          childId={child.id}
+          childName={child.name}
+          token={token}
+          isOpen={showDocumentsModal}
+          onClose={() => setShowDocumentsModal(false)}
+        />
+      )}
 
       {detail && showRecord && (
         <VaccinationRecordModal

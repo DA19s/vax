@@ -38,6 +38,8 @@ export default function EnfantsPage() {
   const [error, setError] = useState<string | null>(null);
   const [regionOptions, setRegionOptions] = useState<string[]>([]);
 
+  const [activationFilter, setActivationFilter] = useState<string>("all");
+
   const loadChildren = useCallback(async () => {
     if (!accessToken) {
       return;
@@ -46,7 +48,12 @@ export default function EnfantsPage() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_URL}/api/children`, {
+      const params = new URLSearchParams();
+      if (activationFilter !== "all") {
+        params.append("status", activationFilter);
+      }
+      const url = `${API_URL}/api/children${params.toString() ? `?${params.toString()}` : ""}`;
+      const response = await fetch(url, {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${accessToken}`,
@@ -74,7 +81,7 @@ export default function EnfantsPage() {
     } finally {
       setLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, activationFilter]);
 
   const loadRegions = useCallback(async () => {
     if (!accessToken || user?.role !== "NATIONAL") {
@@ -182,6 +189,8 @@ export default function EnfantsPage() {
                 regionOptions={user?.role === "NATIONAL" ? regionOptions : undefined}
                 role={user?.role ?? null}
                 agentLevel={user?.agentLevel ?? null}
+                activationFilter={activationFilter}
+                onActivationFilterChange={setActivationFilter}
               />
             )}
             {activeTab === "parents" && (

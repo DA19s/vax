@@ -334,7 +334,8 @@ class _VaccineSelectionScreenState extends State<VaccineSelectionScreen> {
 
   Future<void> _saveSelectedVaccines() async {
     if (_selectedVaccinesWithDoses.isEmpty) {
-      // Pas de vaccins sélectionnés, aller directement à l'interface enfant
+      // Pas de vaccins sélectionnés, activer le compte et aller directement à l'interface enfant
+      // Le backend activera automatiquement le compte si aucun vaccin n'est sélectionné
       await _navigateToChildDashboard();
       return;
     }

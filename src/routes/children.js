@@ -71,6 +71,8 @@ router.delete(
 router.put("/:id", requireAuth, childrenController.updateChildren);
 router.delete("/:id", requireAuth, childrenController.deleteChild);
 router.get("/", requireAuth, childrenController.getChildren);
+router.put("/:id/activate", requireAuth, childrenController.activateChild);
+router.put("/:id/request-photos", requireAuth, childrenController.requestPhotos);
 
 // Routes pour les preuves de vaccination
 router.post(

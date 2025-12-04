@@ -170,7 +170,25 @@ class _VaccinationDateScreenState extends State<VaccinationDateScreen> {
       if (!mounted) return;
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        // Naviguer vers la page d'upload de photos
+        final responseData = jsonDecode(response.body);
+        final isActive = responseData['isActive'] ?? false;
+        final needsVerification = responseData['needsVerification'] ?? false;
+
+        // Si le compte est activé (aucun vaccin sélectionné), aller directement au dashboard
+        if (isActive && !needsVerification) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(
+              builder: (_) => ChildDashboardScreen(
+                userData: widget.userData,
+                childId: widget.childId,
+              ),
+            ),
+            (route) => false,
+          );
+          return;
+        }
+
+        // Si des vaccins ont été sélectionnés, aller à la page d'upload de photos
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (_) => VaccinationProofUploadScreen(

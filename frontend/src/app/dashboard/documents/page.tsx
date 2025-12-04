@@ -71,7 +71,7 @@ export default function DocumentsPage() {
       const childrenData = await childrenRes.json();
       const childrenList = Array.isArray(childrenData)
         ? childrenData
-        : childrenData?.children ?? [];
+        : childrenData?.items ?? childrenData?.children ?? [];
 
       // Pour chaque enfant, récupérer ses preuves
       const childrenWithProofs = await Promise.all(
@@ -96,6 +96,11 @@ export default function DocumentsPage() {
             const proofsData = await proofsRes.json();
             const proofs = proofsData?.proofs ?? [];
 
+            // Debug: log pour vérifier les preuves
+            if (proofs.length > 0) {
+              console.log(`Enfant ${child.id} a ${proofs.length} preuve(s)`, proofs);
+            }
+
             return {
               ...child,
               proofs,
@@ -109,8 +114,13 @@ export default function DocumentsPage() {
         }),
       );
 
+      // Debug: log pour vérifier les données
+      console.log("Enfants avec preuves:", childrenWithProofs);
+      console.log("Enfants avec preuves (filtrés):", childrenWithProofs.filter(c => c.proofs.length > 0));
+
       setChildren(childrenWithProofs);
     } catch (err) {
+      console.error("Erreur lors du chargement des documents:", err);
       setError(
         err instanceof Error
           ? err.message

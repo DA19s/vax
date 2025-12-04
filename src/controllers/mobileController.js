@@ -389,6 +389,19 @@ const parentRegister = async (req, res, next) => {
       });
     }
 
+    // Vérifier s'il y a des vaccins à sélectionner (dueVaccines ou lateVaccines)
+    const hasVaccinesToSelect = (fullChild.dueVaccines?.length > 0) || (fullChild.lateVaccines?.length > 0);
+    
+    // Si aucun vaccin à sélectionner, activer directement le compte
+    if (!hasVaccinesToSelect) {
+      await prisma.children.update({
+        where: { id: fullChild.id },
+        data: { isActive: true },
+      });
+    }
+    // Sinon, le compte reste non activé (isActive = false par défaut)
+    // Il sera activé après la sélection des vaccins selon le flux
+
     // Générer un token JWT pour le parent
     const token = tokenService.signAccessToken({
       sub: fullChild.id,
@@ -399,6 +412,8 @@ const parentRegister = async (req, res, next) => {
     res.status(201).json({
       success: true,
       token,
+      isActive: !hasVaccinesToSelect, // Actif si aucun vaccin à sélectionner
+      hasVaccinesToSelect, // Indique s'il y a des vaccins à sélectionner
       child: {
         id: fullChild.id,
         firstName: fullChild.firstName,
@@ -1179,9 +1194,34 @@ const markVaccinesDone = async (req, res, next) => {
       await rebuildChildVaccinationBuckets(childId, tx);
     });
 
+    // Vérifier si des vaccins ont été sélectionnés
+    const hasSelectedVaccines = vaccines && vaccines.length > 0;
+    
+    // Récupérer l'enfant pour vérifier son état
+    const updatedChild = await prisma.children.findUnique({
+      where: { id: childId },
+      select: {
+        id: true,
+        isActive: true,
+        photosRequested: true,
+      },
+    });
+
+    // Si aucun vaccin sélectionné, activer le compte directement
+    if (!hasSelectedVaccines) {
+      await prisma.children.update({
+        where: { id: childId },
+        data: { isActive: true },
+      });
+    }
+    // Si des vaccins ont été sélectionnés, le compte reste non activé
+    // Il sera activé après vérification par l'agent
+
     res.json({
       success: true,
       message: "Vaccins marqués comme effectués",
+      isActive: !hasSelectedVaccines, // Actif si aucun vaccin sélectionné
+      needsVerification: hasSelectedVaccines, // Nécessite vérification si des vaccins sélectionnés
     });
   } catch (error) {
     next(error);
@@ -1336,6 +1376,8 @@ const getChildDashboard = async (req, res, next) => {
         fatherName: child.fatherName,
         motherName: child.motherName,
         nextAppointment: child.nextAppointment,
+        isActive: child.isActive ?? false,
+        photosRequested: child.photosRequested ?? false,
         healthCenter: {
           id: child.healthCenter.id,
           name: child.healthCenter.name,

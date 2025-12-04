@@ -36,17 +36,30 @@ const proofUpload = multer({
       "image/png",
       "image/webp",
       "application/pdf",
+      "image/*", // Accepter tous les types d'images si le MIME type n'est pas précis
     ];
-    if (allowedMimes.includes(file.mimetype)) {
+    
+    // Vérifier par MIME type
+    if (allowedMimes.includes(file.mimetype) || file.mimetype.startsWith("image/")) {
       cb(null, true);
-    } else {
-      cb(
-        new Error(
-          `Type de fichier non autorisé. Types autorisés: JPEG, PNG, WebP, PDF`,
-        ),
-        false,
-      );
+      return;
     }
+    
+    // Vérifier par extension de fichier comme fallback
+    const ext = path.extname(file.originalname).toLowerCase();
+    const allowedExts = [".jpg", ".jpeg", ".png", ".webp", ".pdf"];
+    
+    if (allowedExts.includes(ext)) {
+      cb(null, true);
+      return;
+    }
+    
+    cb(
+      new Error(
+        `Type de fichier non autorisé. Types autorisés: JPEG, PNG, WebP, PDF`,
+      ),
+      false,
+    );
   },
 });
 
@@ -115,7 +128,32 @@ router.post("/children/:childId/vaccine-requests", requireMobileAuth, require(".
 router.post(
   "/children/:childId/vaccination-proofs",
   requireMobileAuth,
-  proofUpload.array("files", 10), // Maximum 10 fichiers
+  (req, res, next) => {
+    proofUpload.array("files", 10)(req, res, (err) => {
+      if (err) {
+        // Gérer les erreurs multer
+        if (err.code === "LIMIT_FILE_SIZE") {
+          return res.status(400).json({
+            message: "Fichier trop volumineux. Taille maximale: 10MB",
+          });
+        }
+        if (err.code === "LIMIT_FILE_COUNT") {
+          return res.status(400).json({
+            message: "Trop de fichiers. Maximum: 10 fichiers",
+          });
+        }
+        if (err.message) {
+          return res.status(400).json({
+            message: err.message,
+          });
+        }
+        return res.status(400).json({
+          message: "Erreur lors de l'upload du fichier",
+        });
+      }
+      next();
+    });
+  },
   vaccinationProofController.uploadVaccinationProofs,
 );
 

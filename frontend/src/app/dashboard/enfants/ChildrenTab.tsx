@@ -82,6 +82,8 @@ type Props = {
   regionOptions?: string[];
   role?: string | null;
   agentLevel?: string | null;
+  activationFilter?: string;
+  onActivationFilterChange?: (filter: string) => void;
 };
 
 export default function ChildrenTab({
@@ -94,6 +96,8 @@ export default function ChildrenTab({
   regionOptions,
   role,
   agentLevel,
+  activationFilter = "all",
+  onActivationFilterChange,
 }: Props) {
   const [selectedChild, setSelectedChild] = useState<Child | null>(null);
   const [search, setSearch] = useState("");
@@ -535,6 +539,24 @@ export default function ChildrenTab({
               ))}
             </select>
           </div>
+
+          {onActivationFilterChange && (
+            <div className="relative">
+              <CheckCircle className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+              <select
+                value={activationFilter}
+                onChange={(event) => {
+                  onActivationFilterChange(event.target.value);
+                  setPage(1);
+                }}
+                className="w-full appearance-none rounded-xl border border-slate-300 py-2.5 pl-11 pr-10 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+              >
+                <option value="all">Tous les comptes</option>
+                <option value="active">✅ Comptes actifs</option>
+                <option value="inactive">⏳ Comptes en attente</option>
+              </select>
+            </div>
+          )}
         </div>
       </div>
 
@@ -585,7 +607,9 @@ export default function ChildrenTab({
                     return (
                       <tr
                         key={child.id}
-                        className="cursor-pointer transition hover:bg-blue-50"
+                        className={`cursor-pointer transition hover:bg-blue-50 ${
+                          !child.isActive ? "bg-amber-50/50" : ""
+                        }`}
                         onClick={() => setSelectedChild(child)}
                       >
                         <td className="px-6 py-4">
@@ -612,24 +636,46 @@ export default function ChildrenTab({
                         </td>
                         <td className="px-6 py-4 text-slate-600">{child.healthCenter || "-"}</td>
                         <td className="px-6 py-4">
-                          <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${statusBadgeClasses(badge)}`}>
-                            {badge}
-                          </span>
+                          <div className="flex flex-col gap-1">
+                            <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${statusBadgeClasses(badge)}`}>
+                              {badge}
+                            </span>
+                            {!child.isActive && (
+                              <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-700">
+                                ⏳ En attente de vérification
+                              </span>
+                            )}
+                          </div>
                         </td>
                         {isAgent && (
                           <td className="px-6 py-4">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteChild(child.id, child.name);
-                              }}
-                              disabled={deletingChildId === child.id}
-                              className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                              {deletingChildId === child.id ? "Suppression..." : "Supprimer"}
-                            </button>
+                            <div className="flex items-center gap-2">
+                              {!child.isActive && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    // TODO: Ouvrir la page de comparaison
+                                    window.location.href = `/dashboard/enfants/verification/${child.id}`;
+                                  }}
+                                  className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-100"
+                                >
+                                  Comparer
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteChild(child.id, child.name);
+                                }}
+                                disabled={deletingChildId === child.id}
+                                className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                {deletingChildId === child.id ? "Suppression..." : "Supprimer"}
+                              </button>
+                            </div>
                           </td>
                         )}
                       </tr>

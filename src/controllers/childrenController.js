@@ -565,6 +565,8 @@ const createChildren = async (req, res, next) => {
           fatherName,
           motherName,
           code: generateAccessCode(),
+          isActive: false, // Par défaut non activé, sera activé selon le flux mobile
+          photosRequested: false,
         },
       });
 
@@ -763,6 +765,15 @@ const getChildren = async (req, res, next) => {
 
   try {
     let whereClause = {};
+    
+    // Filtre par statut d'activation (active, inactive, all)
+    const statusFilter = req.query.status;
+    if (statusFilter === "active") {
+      whereClause.isActive = true;
+    } else if (statusFilter === "inactive") {
+      whereClause.isActive = false;
+    }
+    // Si "all" ou non spécifié, on ne filtre pas
 
     if (req.user.role === "REGIONAL") {
       const regional = await prisma.user.findUnique({
@@ -775,6 +786,7 @@ const getChildren = async (req, res, next) => {
       }
 
       whereClause = {
+        ...whereClause,
         healthCenter: {
           district: {
             commune: {
@@ -796,6 +808,7 @@ const getChildren = async (req, res, next) => {
       }
 
       whereClause = {
+        ...whereClause,
         healthCenter: {
           districtId: districtUser.districtId,
         },
@@ -813,6 +826,7 @@ const getChildren = async (req, res, next) => {
       }
 
       whereClause = {
+        ...whereClause,
         healthCenterId: agent.healthCenterId,
       };
     }
@@ -1345,6 +1359,182 @@ const deleteChild = async (req, res, next) => {
   }
 };
 
+/**
+ * PUT /api/children/:id/activate
+ * Active le compte d'un enfant
+ */
+const activateChild = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    
+    // Vérifier les permissions (seuls les agents peuvent activer)
+    if (req.user.role !== "AGENT" && req.user.role !== "NATIONAL") {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
+
+    const child = await prisma.children.findUnique({
+      where: { id },
+      include: {
+        healthCenter: {
+          select: {
+            district: {
+              select: {
+                commune: {
+                  select: {
+                    region: {
+                      select: { id: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!child) {
+      return res.status(404).json({ message: "Enfant non trouvé" });
+    }
+
+    // Vérifier l'accès géographique
+    let hasAccess = false;
+    if (req.user.role === "NATIONAL") {
+      hasAccess = true;
+    } else if (req.user.role === "REGIONAL") {
+      const regionId = child.healthCenter?.district?.commune?.region?.id;
+      hasAccess = req.user.regionId && regionId && req.user.regionId === regionId;
+    } else if (req.user.role === "DISTRICT") {
+      const districtId = child.healthCenter?.districtId;
+      hasAccess = req.user.districtId && districtId && req.user.districtId === districtId;
+    } else if (req.user.role === "AGENT") {
+      hasAccess = req.user.healthCenterId && child.healthCenterId && 
+                  req.user.healthCenterId === child.healthCenterId;
+    }
+
+    if (!hasAccess) {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
+
+    // Activer le compte
+    const updatedChild = await prisma.children.update({
+      where: { id },
+      data: {
+        isActive: true,
+        photosRequested: false, // Réinitialiser la demande de photos
+      },
+    });
+
+    // Envoyer un message WhatsApp au parent
+    const { sendWhatsAppMessage } = require("../services/whatsapp");
+    try {
+      await sendWhatsAppMessage({
+        to: child.phoneParent,
+        message: `Bonjour ${child.fatherName || child.motherName || "Parent"}, votre compte pour ${child.firstName} ${child.lastName} a été activé avec succès. Vous pouvez maintenant accéder à toutes les fonctionnalités de l'application Imunia.`,
+      });
+    } catch (whatsappError) {
+      console.error("Erreur envoi WhatsApp:", whatsappError);
+      // Ne pas bloquer l'activation si WhatsApp échoue
+    }
+
+    res.json({
+      success: true,
+      message: "Compte activé avec succès",
+      child: updatedChild,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PUT /api/children/:id/request-photos
+ * Demande de nouvelles photos au parent
+ */
+const requestPhotos = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    
+    // Vérifier les permissions (seuls les agents peuvent demander des photos)
+    if (req.user.role !== "AGENT" && req.user.role !== "NATIONAL") {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
+
+    const child = await prisma.children.findUnique({
+      where: { id },
+      include: {
+        healthCenter: {
+          select: {
+            district: {
+              select: {
+                commune: {
+                  select: {
+                    region: {
+                      select: { id: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!child) {
+      return res.status(404).json({ message: "Enfant non trouvé" });
+    }
+
+    // Vérifier l'accès géographique
+    let hasAccess = false;
+    if (req.user.role === "NATIONAL") {
+      hasAccess = true;
+    } else if (req.user.role === "REGIONAL") {
+      const regionId = child.healthCenter?.district?.commune?.region?.id;
+      hasAccess = req.user.regionId && regionId && req.user.regionId === regionId;
+    } else if (req.user.role === "DISTRICT") {
+      const districtId = child.healthCenter?.districtId;
+      hasAccess = req.user.districtId && districtId && req.user.districtId === districtId;
+    } else if (req.user.role === "AGENT") {
+      hasAccess = req.user.healthCenterId && child.healthCenterId && 
+                  req.user.healthCenterId === child.healthCenterId;
+    }
+
+    if (!hasAccess) {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
+
+    // Marquer que des photos sont demandées
+    const updatedChild = await prisma.children.update({
+      where: { id },
+      data: {
+        photosRequested: true,
+        isActive: false, // S'assurer que le compte reste non activé
+      },
+    });
+
+    // Envoyer un message WhatsApp au parent
+    const { sendWhatsAppMessage } = require("../services/whatsapp");
+    try {
+      await sendWhatsAppMessage({
+        to: child.phoneParent,
+        message: `Bonjour ${child.fatherName || child.motherName || "Parent"}, nous avons besoin de photos plus claires du carnet de vaccination de ${child.firstName} ${child.lastName}. Veuillez vous connecter à l'application Imunia et télécharger de nouvelles photos pour continuer à utiliser l'application.`,
+      });
+    } catch (whatsappError) {
+      console.error("Erreur envoi WhatsApp:", whatsappError);
+      // Ne pas bloquer la demande si WhatsApp échoue
+    }
+
+    res.json({
+      success: true,
+      message: "Demande de nouvelles photos envoyée",
+      child: updatedChild,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createChildren,
   updateChildren,
@@ -1355,4 +1545,6 @@ module.exports = {
   deleteManualVaccinationEntry,
   getParentsOverview,
   deleteChild,
+  activateChild,
+  requestPhotos,
 };

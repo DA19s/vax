@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
-import 'package:intl/intl.dart';
 
 import '../../core/config/api_config.dart';
 import '../child/child_dashboard_screen.dart';
@@ -93,7 +92,7 @@ class _VaccinationProofUploadScreenState
     }
   }
 
-  Future<void> _removeFile(int index) {
+  void _removeFile(int index) {
     setState(() {
       _selectedFiles.removeAt(index);
     });
@@ -123,23 +122,60 @@ class _VaccinationProofUploadScreenState
         request.headers['Authorization'] = 'Bearer ${widget.token}';
 
         for (final file in _selectedFiles) {
-          final fileStream = http.ByteStream(file.openRead());
-          final length = await file.length();
-          final multipartFile = http.MultipartFile(
-            'files',
-            fileStream,
-            length,
-            filename: file.path.split('/').last,
-          );
-          request.files.add(multipartFile);
+          try {
+            if (!await file.exists()) {
+              throw Exception('Le fichier n\'existe plus: ${file.path}');
+            }
+            final fileStream = http.ByteStream(file.openRead());
+            final length = await file.length();
+            if (length == 0) {
+              throw Exception('Le fichier est vide: ${file.path}');
+            }
+            final fileName = file.path.split(Platform.pathSeparator).last;
+            final multipartFile = http.MultipartFile(
+              'files',
+              fileStream,
+              length,
+              filename: fileName,
+            );
+            request.files.add(multipartFile);
+          } catch (e) {
+            throw Exception('Erreur lors de la préparation du fichier ${file.path}: $e');
+          }
         }
 
         final streamedResponse = await request.send();
         final response = await http.Response.fromStream(streamedResponse);
 
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          // Après l'upload, le compte reste non activé (en attente de vérification)
+          // Naviguer vers le dashboard avec le badge de vérification
+          if (mounted) {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(
+                builder: (_) => ChildDashboardScreen(
+                  userData: widget.userData,
+                  childId: widget.childId,
+                ),
+              ),
+              (route) => false,
+            );
+          }
+          return;
+        }
+
         if (response.statusCode != 200 && response.statusCode != 201) {
-          final data = jsonDecode(response.body);
-          throw Exception(data['message'] ?? 'Erreur lors de l\'upload');
+          String errorMessage = 'Erreur lors de l\'upload';
+          try {
+            final data = jsonDecode(response.body);
+            errorMessage = data['message'] ?? errorMessage;
+          } catch (e) {
+            final bodyText = response.body.length > 200 
+                ? '${response.body.substring(0, 200)}...' 
+                : response.body;
+            errorMessage = 'Erreur ${response.statusCode}: $bodyText';
+          }
+          throw Exception(errorMessage);
         }
       }
 
@@ -156,8 +192,17 @@ class _VaccinationProofUploadScreenState
       );
     } catch (error) {
       if (!mounted) return;
+      String errorMessage = 'Une erreur est survenue lors du traitement de votre demande. Veuillez réessayer plus tard.';
+      if (error is Exception) {
+        final errorStr = error.toString().replaceAll('Exception: ', '');
+        if (errorStr.isNotEmpty && !errorStr.contains('null')) {
+          errorMessage = errorStr;
+        }
+      } else if (error.toString().isNotEmpty) {
+        errorMessage = error.toString();
+      }
       setState(() {
-        _error = error.toString().replaceAll('Exception: ', '');
+        _error = errorMessage;
         _isUploading = false;
       });
     }

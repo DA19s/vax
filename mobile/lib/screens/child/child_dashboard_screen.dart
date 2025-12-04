@@ -19,6 +19,7 @@ import '../conseils/health_tips_screen.dart';
 import '../campagnes/campagne_screen.dart';
 import '../notifications/notifications_screen.dart';
 import '../profil/profile_screen.dart';
+import '../../screens/auth/vaccination_proof_upload_screen.dart';
 
 class ChildDashboardScreen extends StatefulWidget {
   final Map<String, dynamic>? userData;
@@ -88,6 +89,21 @@ class _ChildDashboardScreenState extends State<ChildDashboardScreen> {
 
       if (dashboardResponse.statusCode == 200) {
         final dashboardData = jsonDecode(dashboardResponse.body);
+        final childData = dashboardData['child'] as Map<String, dynamic>? ?? {};
+        final isActive = childData['isActive'] ?? false;
+        final photosRequested = childData['photosRequested'] ?? false;
+
+        // Vérifier si l'accès doit être bloqué
+        if (photosRequested) {
+          setState(() {
+            _error = "Veuillez télécharger de nouvelles photos du carnet de vaccination pour continuer à utiliser l'application.";
+            _isLoading = false;
+          });
+          // Afficher un dialogue pour forcer l'upload
+          Future.microtask(() => _showPhotoRequestDialog());
+          return;
+        }
+
         setState(() {
           _dashboardData = dashboardData;
           // Initialiser le compteur de notifications depuis les données
@@ -146,6 +162,49 @@ class _ChildDashboardScreenState extends State<ChildDashboardScreen> {
         _notificationCount = count;
       });
     } catch (_) {}
+  }
+
+  Future<void> _showPhotoRequestDialog() async {
+    if (!mounted) return;
+    
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text(
+          "Photos requises",
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        ),
+        content: Text(
+          "Veuillez télécharger de nouvelles photos du carnet de vaccination pour continuer à utiliser l'application.",
+          style: GoogleFonts.poppins(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              // Naviguer vers la page d'upload de photos
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(
+                  builder: (_) => VaccinationProofUploadScreen(
+                    childId: widget.childId,
+                    token: _token ?? "",
+                    userData: widget.userData ?? {},
+                  ),
+                ),
+              );
+            },
+            child: Text(
+              "Télécharger des photos",
+              style: GoogleFonts.poppins(
+                color: const Color(0xFF3B760F),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -455,6 +514,66 @@ class _ChildDashboardScreenState extends State<ChildDashboardScreen> {
             ),
           ),
         ),
+        // Badge de vérification si le compte n'est pas activé
+        if (_dashboardData != null)
+          Builder(
+            builder: (context) {
+              final child = _dashboardData!["child"] as Map<String, dynamic>? ?? {};
+              final isActive = child["isActive"] ?? false;
+              if (isActive) {
+                return const SliverToBoxAdapter(child: SizedBox.shrink());
+              }
+              return SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFA726).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: const Color(0xFFFFA726).withOpacity(0.3),
+                        width: 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.hourglass_empty_rounded,
+                          color: Color(0xFFFFA726),
+                          size: 24,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "Compte en attente de vérification",
+                                style: GoogleFonts.poppins(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: const Color(0xFFE65100),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                "Votre compte est en cours de vérification par un agent. Vous serez notifié une fois qu'il sera activé.",
+                                style: GoogleFonts.poppins(
+                                  fontSize: 12,
+                                  color: const Color(0xFFE65100).withOpacity(0.8),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
         // Prochain rendez-vous (entre le header et les blocs de statistiques)
         if (_upcomingAppointments.isNotEmpty)
           SliverToBoxAdapter(

@@ -62,6 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [refreshToken, setRefreshToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(true);
 
   useEffect(() => {
     try {
@@ -81,6 +82,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       Cookies.remove(ACCESS_TOKEN_KEY);
       Cookies.remove(REFRESH_TOKEN_KEY);
       Cookies.remove(USER_KEY);
+    } finally {
+      setIsInitializing(false);
     }
   }, []);
 
@@ -204,6 +207,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
+    // Ne pas rediriger pendant l'initialisation
+    if (isInitializing) {
+      return;
+    }
+
     if (!accessToken) {
       setProfileLoaded(false);
       if (!isPublicPath(pathname) && pathname !== "/login") {
@@ -236,7 +244,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearTimeout(timeout);
       }
     };
-  }, [accessToken, logout, pathname, router]);
+  }, [accessToken, logout, pathname, router, isInitializing]);
 
   useEffect(() => {
     if (accessToken && !profileLoaded) {

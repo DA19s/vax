@@ -243,6 +243,8 @@ model Children {
   nextAgentId             String?
   user                    User?            @relation(fields: [nextAgentId], references: [id])
   nextAppointment         DateTime?
+  isActive                Boolean         @default(false)
+  photosRequested         Boolean         @default(false)
 
   records                 Record[]
   completedVaccines      ChildVaccineCompleted[]

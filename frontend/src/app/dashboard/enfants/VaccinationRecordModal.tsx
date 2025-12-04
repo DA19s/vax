@@ -6,6 +6,8 @@ import {
   AlertCircle,
   Calendar,
   CheckCircle,
+  ChevronDown,
+  ChevronUp,
   Clock,
   Loader2,
   Pencil,
@@ -25,6 +27,7 @@ type Props = {
   token: string | null;
   canEdit?: boolean;
   onRefresh?: () => void | Promise<void>;
+  inline?: boolean; // Nouveau prop pour afficher sans overlay
 };
 
 const sectionClasses = "rounded-2xl border border-slate-200 bg-white p-4";
@@ -265,6 +268,7 @@ function VaccinationRecordModal({
   token,
   canEdit = false,
   onRefresh,
+  inline = false,
 }: Props) {
   if (!isOpen) return null;
 
@@ -282,7 +286,10 @@ function VaccinationRecordModal({
     dose: "1",
     date: "",
   });
-  const [managerOpen, setManagerOpen] = useState(false);
+  const [managerOpen, setManagerOpen] = useState(inline); // Si inline, ouvrir directement le manager
+  const [expandedSections, setExpandedSections] = useState<Set<"due" | "late" | "completed">>(
+    new Set(["due", "late", "completed"]), // Toutes les sections ouvertes par défaut
+  );
   const [referenceData, setReferenceData] = useState<{
     vaccines: VaccineOption[];
     calendars: CalendarOption[];
@@ -687,58 +694,402 @@ function VaccinationRecordModal({
     return (
       <div
         key={`${entry.bucket}-${entry.id}`}
-        className="relative rounded-xl border border-slate-200 bg-white/70 p-4"
+        className="relative rounded-lg border-2 border-slate-300 bg-white p-3 shadow-sm transition hover:shadow-md"
       >
         {allowActions ? (
-          <div className="absolute right-3 top-3 flex gap-2">
+          <div className="absolute right-2 top-2 flex gap-1.5">
             <button
               type="button"
               onClick={() => handleOpenEditor(entry.bucket, "edit", entry)}
-              className="rounded-full bg-slate-100 p-2 text-slate-600 transition hover:bg-slate-200"
+              className="rounded-lg bg-blue-100 p-1.5 text-blue-600 transition hover:bg-blue-200"
               aria-label="Modifier l'entrée"
             >
-              <Pencil className="h-4 w-4" />
+              <Pencil className="h-3.5 w-3.5" />
             </button>
             <button
               type="button"
               onClick={() => handleDeleteEntry(entry)}
               disabled={loading}
-              className="rounded-full bg-red-100 p-2 text-red-600 transition hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-70"
+              className="rounded-lg bg-red-100 p-1.5 text-red-600 transition hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-70"
               aria-label="Supprimer l'entrée"
             >
               {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <Trash2 className="h-4 w-4" />
+                <Trash2 className="h-3.5 w-3.5" />
               )}
             </button>
           </div>
         ) : null}
-        <div className="mb-2 flex flex-wrap items-center gap-2 text-xs uppercase tracking-wide text-slate-500">
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-600">
-            {meta.label}
-          </span>
-          <span className="text-slate-500">Dose {entry.dose}</span>
+        <div className="pr-16">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className="rounded-md bg-slate-200 px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-slate-700">
+              {meta.label}
+            </span>
+            <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
+              Dose {entry.dose}
+            </span>
+          </div>
+          <p className="mb-1 text-base font-bold text-slate-900">
+            {entry.vaccineName}
+          </p>
+          {calendarHint ? (
+            <p className="mb-1 text-xs font-medium text-slate-600">{calendarHint}</p>
+          ) : null}
+          {dateValue ? (
+            <p className="text-xs text-slate-700">
+              <span className="font-semibold">{meta.dateLabel} :</span>{" "}
+              <span className="font-medium">{formatDate(dateValue)}</span>
+            </p>
+          ) : null}
+          {entry.bucket === "completed" && entry.administeredByName ? (
+            <p className="mt-1 text-xs font-medium text-emerald-700">
+              Administré par {entry.administeredByName}
+            </p>
+          ) : null}
         </div>
-        <p className="text-base font-semibold text-slate-900">
-          {entry.vaccineName}
-        </p>
-        {calendarHint ? (
-          <p className="text-xs text-slate-500">{calendarHint}</p>
-        ) : null}
-        {dateValue ? (
-          <p className="mt-2 text-sm text-slate-600">
-            {meta.dateLabel} : <span className="font-medium">{formatDate(dateValue)}</span>
-          </p>
-        ) : null}
-        {entry.bucket === "completed" && entry.administeredByName ? (
-          <p className="text-xs text-emerald-600">
-            Administré par {entry.administeredByName}
-          </p>
-        ) : null}
       </div>
     );
   };
+
+  // Si inline, afficher seulement le contenu de gestion sans overlay
+  if (inline) {
+    return (
+      <div className="w-full space-y-4">
+        {actionError ? (
+          <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {actionError}
+          </div>
+        ) : null}
+        <div className="space-y-3">
+          {/* Vaccins à faire */}
+          <section className="rounded-xl border-2 border-blue-300 bg-blue-50 shadow-md overflow-hidden">
+            <button
+              type="button"
+              onClick={() => {
+                setExpandedSections((prev) => {
+                  const next = new Set(prev);
+                  if (next.has("due")) {
+                    next.delete("due");
+                  } else {
+                    next.add("due");
+                  }
+                  return next;
+                });
+              }}
+              className="w-full flex items-center justify-between gap-2 p-4 hover:bg-blue-100 transition"
+            >
+              <div className="flex items-center gap-2">
+                <Syringe className="h-5 w-5 text-blue-600" />
+                <h3 className="text-base font-bold text-blue-900">Vaccins à faire</h3>
+                <span className="text-xs text-blue-600 font-medium">({dueEntries.length})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {canEditBuckets && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenEditor("due", "create");
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Ajouter
+                  </button>
+                )}
+                {expandedSections.has("due") ? (
+                  <ChevronUp className="h-5 w-5 text-blue-600" />
+                ) : (
+                  <ChevronDown className="h-5 w-5 text-blue-600" />
+                )}
+              </div>
+            </button>
+            {expandedSections.has("due") && (
+              <div className="px-4 pb-4 space-y-2.5 text-sm">
+                {dueEntries.length === 0 ? (
+                  <p className="py-4 text-center text-blue-600">Aucune entrée.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {dueEntries.map((entry) => renderManualEntryCard(entry))}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          {/* Vaccins en retard */}
+          <section className="rounded-xl border-2 border-red-300 bg-red-50 shadow-md overflow-hidden">
+            <button
+              type="button"
+              onClick={() => {
+                setExpandedSections((prev) => {
+                  const next = new Set(prev);
+                  if (next.has("late")) {
+                    next.delete("late");
+                  } else {
+                    next.add("late");
+                  }
+                  return next;
+                });
+              }}
+              className="w-full flex items-center justify-between gap-2 p-4 hover:bg-red-100 transition"
+            >
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-5 w-5 text-red-600" />
+                <h3 className="text-base font-bold text-red-900">Vaccins en retard</h3>
+                <span className="text-xs text-red-600 font-medium">({lateEntries.length})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {canEditBuckets && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenEditor("late", "create");
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-red-700"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Ajouter
+                  </button>
+                )}
+                {expandedSections.has("late") ? (
+                  <ChevronUp className="h-5 w-5 text-red-600" />
+                ) : (
+                  <ChevronDown className="h-5 w-5 text-red-600" />
+                )}
+              </div>
+            </button>
+            {expandedSections.has("late") && (
+              <div className="px-4 pb-4 space-y-2.5 text-sm">
+                {lateEntries.length === 0 ? (
+                  <p className="py-4 text-center text-red-600">Aucune entrée.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {lateEntries.map((entry) => renderManualEntryCard(entry))}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          {/* Vaccins administrés */}
+          <section className="rounded-xl border-2 border-emerald-300 bg-emerald-50 shadow-md overflow-hidden">
+            <button
+              type="button"
+              onClick={() => {
+                setExpandedSections((prev) => {
+                  const next = new Set(prev);
+                  if (next.has("completed")) {
+                    next.delete("completed");
+                  } else {
+                    next.add("completed");
+                  }
+                  return next;
+                });
+              }}
+              className="w-full flex items-center justify-between gap-2 p-4 hover:bg-emerald-100 transition"
+            >
+              <div className="flex items-center gap-2">
+                <CheckCircle className="h-5 w-5 text-emerald-600" />
+                <h3 className="text-base font-bold text-emerald-900">Vaccins administrés</h3>
+                <span className="text-xs text-emerald-600 font-medium">({completedEntries.length})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {canEditBuckets && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenEditor("completed", "create");
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Ajouter
+                  </button>
+                )}
+                {expandedSections.has("completed") ? (
+                  <ChevronUp className="h-5 w-5 text-emerald-600" />
+                ) : (
+                  <ChevronDown className="h-5 w-5 text-emerald-600" />
+                )}
+              </div>
+            </button>
+            {expandedSections.has("completed") && (
+              <div className="px-4 pb-4 space-y-2.5 text-sm">
+                {completedEntries.length === 0 ? (
+                  <p className="py-4 text-center text-emerald-600">Aucune entrée.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {completedEntries.map((entry) => renderManualEntryCard(entry))}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        </div>
+
+        {/* Formulaire d'édition (modal même en mode inline) */}
+        {canEditBuckets && editorState.open && editorState.bucket ? (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/70 px-4 py-8">
+            <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+              <div className="mb-4 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    {editorState.mode === "create" ? "Nouvelle entrée" : "Modifier l'entrée"}
+                  </p>
+                  <h3 className="text-lg font-semibold text-slate-900">
+                    {detail.child.name} • {BUCKET_META[editorState.bucket].label}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeEditor}
+                  className="rounded-full bg-slate-100 p-2 text-slate-600 transition hover:bg-slate-200"
+                  aria-label="Fermer le formulaire"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {referenceError ? (
+                <div className="mb-4 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  <p className="mb-2">{referenceError}</p>
+                  <button
+                    type="button"
+                    onClick={fetchReferenceData}
+                    className="rounded-full bg-red-600 px-3 py-1 text-xs font-semibold text-white"
+                    disabled={referenceLoading}
+                  >
+                    Réessayer
+                  </button>
+                </div>
+              ) : null}
+
+              <form className="space-y-4" onSubmit={handleEditorSubmit}>
+                <div>
+                  <label className="mb-1 block text-sm font-semibold text-slate-700">
+                    Vaccin
+                  </label>
+                  <select
+                    className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                    value={formValues.vaccineId}
+                    onChange={(event) =>
+                      handleFormValueChange("vaccineId", event.target.value)
+                    }
+                    required
+                  >
+                    <option value="">Sélectionnez un vaccin</option>
+                    {referenceData.vaccines.map((vaccine) => (
+                      <option key={vaccine.id} value={vaccine.id}>
+                        {vaccine.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {(BUCKET_META[editorState.bucket].requireCalendar ||
+                  referenceData.calendars.length > 0) && (
+                  <div>
+                    <label className="mb-1 block text-sm font-semibold text-slate-700">
+                      Fenêtre du calendrier
+                    </label>
+                    <select
+                      className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                      value={formValues.calendarId}
+                      onChange={(event) =>
+                        handleFormValueChange("calendarId", event.target.value)
+                      }
+                      required={BUCKET_META[editorState.bucket].requireCalendar}
+                    >
+                      <option value="">
+                        {BUCKET_META[editorState.bucket].requireCalendar
+                          ? "Sélectionnez une fenêtre"
+                          : "Optionnel"}
+                      </option>
+                      {filteredCalendars.map((calendar) => (
+                        <option key={calendar.id} value={calendar.id}>
+                          {calendar.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-sm font-semibold text-slate-700">
+                      Dose
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                      value={formValues.dose}
+                      onChange={(event) =>
+                        handleFormValueChange("dose", event.target.value)
+                      }
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-semibold text-slate-700">
+                      {BUCKET_META[editorState.bucket].dateLabel}
+                    </label>
+                    <input
+                      type="datetime-local"
+                      className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                      value={formValues.date}
+                      onChange={(event) =>
+                        handleFormValueChange("date", event.target.value)
+                      }
+                      required
+                    />
+                  </div>
+                </div>
+
+                {formError ? (
+                  <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-2 text-sm text-red-700">
+                    {formError}
+                  </div>
+                ) : null}
+
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={closeEditor}
+                    className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={formSubmitting}
+                    className="inline-flex items-center gap-2 rounded-full bg-purple-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    {formSubmitting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Enregistrement...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="h-4 w-4" />
+                        {editorState.mode === "create" ? "Ajouter" : "Mettre à jour"}
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-[60] flex overflow-y-auto bg-slate-900/70 px-4 py-8">

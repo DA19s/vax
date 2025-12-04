@@ -51,6 +51,8 @@ export type Child = {
   address: string;
   status: "A_JOUR" | "PAS_A_JOUR" | string;
   nextAppointment: string | null;
+  isActive?: boolean;
+  photosRequested?: boolean;
   vaccinesDue: VaccineDue[];
   vaccinesScheduled: VaccineScheduled[];
   vaccinesLate: VaccineLate[];
