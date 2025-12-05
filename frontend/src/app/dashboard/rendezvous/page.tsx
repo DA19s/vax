@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, Calendar, CalendarCheck, Loader2, Pencil, Search, Trash2 } from "lucide-react";
+import { AlertCircle, Calendar, CalendarCheck, Loader2, Pencil, Search, Trash2, X } from "lucide-react";
 import DashboardShell from "../components/DashboardShell";
 import { useAuth } from "@/context/AuthContext";
 
@@ -1000,6 +1000,24 @@ export default function RendezvousPage() {
       </div>
       {activeTab === "requests" ? (
         <div className="space-y-4">
+          {error && (
+            <div className="rounded-3xl border border-red-200 bg-red-50/80 p-4 text-sm text-red-700">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="h-5 w-5 flex-shrink-0 text-red-600" />
+                <div className="flex-1">
+                  <p className="font-semibold">Erreur</p>
+                  <p className="mt-1">{error}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setError(null)}
+                  className="flex-shrink-0 rounded-full p-1 text-red-600 transition hover:bg-red-100"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
           {requestsLoading ? (
             <div className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-white/70 px-6 py-10 text-slate-600 shadow-sm">
               <Loader2 className="h-5 w-5 animate-spin" />

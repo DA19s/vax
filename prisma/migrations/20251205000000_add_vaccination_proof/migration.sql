@@ -22,3 +22,4 @@ CREATE INDEX "ChildVaccinationProof_uploadedAt_idx" ON "ChildVaccinationProof"("
 -- AddForeignKey
 ALTER TABLE "ChildVaccinationProof" ADD CONSTRAINT "ChildVaccinationProof_childId_fkey" FOREIGN KEY ("childId") REFERENCES "Children"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
+

@@ -263,10 +263,157 @@ const sendStockTransferNotificationEmail = async ({
   return results;
 };
 
+const sendChildAccountActivatedEmail = async ({
+  agentEmails,
+  childName,
+  parentName,
+  healthCenterName,
+}) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
+      <h2 style="color:#2c7be5;">Nouveau compte activé - Imunia</h2>
+      <p>Bonjour,</p>
+      <p>Un nouveau compte a été activé directement :</p>
+      <div style="background:#f5f5f5; padding:15px; border-radius:5px; margin:20px 0;">
+        <p><strong>Enfant :</strong> ${childName}</p>
+        <p><strong>Parent :</strong> ${parentName}</p>
+        <p><strong>Centre de santé :</strong> ${healthCenterName || "Non spécifié"}</p>
+        <p><strong>Statut :</strong> <span style="color:#10b981; font-weight:bold;">Compte activé</span></p>
+      </div>
+      <p>Le compte a été activé automatiquement car aucun vaccin n'a été sélectionné.</p>
+      <p style="text-align:center; margin:20px 0;">
+        <a href="${process.env.FRONTEND_URL}/dashboard/enfants" style="background:#2c7be5; color:#fff; padding:12px 24px; text-decoration:none; border-radius:5px; font-size:16px;">
+          Voir les enfants
+        </a>
+      </p>
+      <p style="font-size:12px; color:#888;">
+        Ceci est un email automatique, merci de ne pas y répondre.
+      </p>
+    </div>
+  `;
+
+  const results = [];
+  for (const email of agentEmails) {
+    try {
+      const info = await transporter.sendMail({
+        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        to: email,
+        subject: `Nouveau compte activé - ${childName}`,
+        html,
+      });
+      console.log(`Email compte activé envoyé à ${email}:`, info.response);
+      results.push({ email, success: true, messageId: info.messageId });
+    } catch (error) {
+      console.error(`Erreur envoi email à ${email}:`, error.message);
+      results.push({ email, success: false, error: error.message });
+    }
+  }
+  return results;
+};
+
+const sendChildAccountPendingEmail = async ({
+  agentEmails,
+  childName,
+  parentName,
+  healthCenterName,
+}) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
+      <h2 style="color:#f59e0b;">Compte en attente de vérification - Imunia</h2>
+      <p>Bonjour,</p>
+      <p>Un nouveau compte nécessite votre vérification :</p>
+      <div style="background:#fef3c7; padding:15px; border-radius:5px; margin:20px 0; border-left:4px solid #f59e0b;">
+        <p><strong>Enfant :</strong> ${childName}</p>
+        <p><strong>Parent :</strong> ${parentName}</p>
+        <p><strong>Centre de santé :</strong> ${healthCenterName || "Non spécifié"}</p>
+        <p><strong>Statut :</strong> <span style="color:#f59e0b; font-weight:bold;">⏳ En attente de vérification</span></p>
+      </div>
+      <p>Le parent a sélectionné des vaccins et uploadé des photos. Veuillez vérifier le compte et les preuves de vaccination.</p>
+      <p style="text-align:center; margin:20px 0;">
+        <a href="${process.env.FRONTEND_URL}/dashboard/enfants?status=inactive" style="background:#f59e0b; color:#fff; padding:12px 24px; text-decoration:none; border-radius:5px; font-size:16px;">
+          Voir les comptes en attente
+        </a>
+      </p>
+      <p style="font-size:12px; color:#888;">
+        Ceci est un email automatique, merci de ne pas y répondre.
+      </p>
+    </div>
+  `;
+
+  const results = [];
+  for (const email of agentEmails) {
+    try {
+      const info = await transporter.sendMail({
+        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        to: email,
+        subject: `Compte en attente de vérification - ${childName}`,
+        html,
+      });
+      console.log(`Email compte en attente envoyé à ${email}:`, info.response);
+      results.push({ email, success: true, messageId: info.messageId });
+    } catch (error) {
+      console.error(`Erreur envoi email à ${email}:`, error.message);
+      results.push({ email, success: false, error: error.message });
+    }
+  }
+  return results;
+};
+
+const sendNewPhotosUploadedEmail = async ({
+  agentEmails,
+  childName,
+  parentName,
+  healthCenterName,
+}) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
+      <h2 style="color:#3b82f6;">Nouvelles photos uploadées - Imunia</h2>
+      <p>Bonjour,</p>
+      <p>Le parent a uploadé de nouvelles photos du carnet de vaccination :</p>
+      <div style="background:#dbeafe; padding:15px; border-radius:5px; margin:20px 0; border-left:4px solid #3b82f6;">
+        <p><strong>Enfant :</strong> ${childName}</p>
+        <p><strong>Parent :</strong> ${parentName}</p>
+        <p><strong>Centre de santé :</strong> ${healthCenterName || "Non spécifié"}</p>
+        <p><strong>Action requise :</strong> Vérifier les nouvelles photos et activer le compte si tout est correct.</p>
+      </div>
+      <p>Veuillez vérifier les nouvelles photos et activer le compte si tout est en ordre.</p>
+      <p style="text-align:center; margin:20px 0;">
+        <a href="${process.env.FRONTEND_URL}/dashboard/enfants?status=inactive" style="background:#3b82f6; color:#fff; padding:12px 24px; text-decoration:none; border-radius:5px; font-size:16px;">
+          Voir les comptes en attente
+        </a>
+      </p>
+      <p style="font-size:12px; color:#888;">
+        Ceci est un email automatique, merci de ne pas y répondre.
+      </p>
+    </div>
+  `;
+
+  const results = [];
+  for (const email of agentEmails) {
+    try {
+      const info = await transporter.sendMail({
+        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        to: email,
+        subject: `Nouvelles photos uploadées - ${childName}`,
+        html,
+      });
+      console.log(`Email nouvelles photos envoyé à ${email}:`, info.response);
+      results.push({ email, success: true, messageId: info.messageId });
+    } catch (error) {
+      console.error(`Erreur envoi email à ${email}:`, error.message);
+      results.push({ email, success: false, error: error.message });
+    }
+  }
+  return results;
+};
+
 module.exports = {
   sendInvitationEmail,
   sendPasswordResetEmail,
   sendVaccineRequestEmail,
   sendTwoFactorCode,
   sendStockTransferNotificationEmail,
+  sendChildAccountActivatedEmail,
+  sendChildAccountPendingEmail,
+  sendNewPhotosUploadedEmail,
 };

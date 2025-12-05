@@ -125,6 +125,23 @@ export default function Sidebar({ active = "/dashboard" }: SidebarProps) {
     return navItems;
   }, [user]);
 
+  const adminLabel = useMemo(() => {
+    if (!user) return "Administration";
+    
+    switch (user.role) {
+      case "NATIONAL":
+        return "Administration nationale";
+      case "REGIONAL":
+        return "Administration régionale";
+      case "DISTRICT":
+        return "Administration de district";
+      case "AGENT":
+        return "Centre de santé";
+      default:
+        return "Administration";
+    }
+  }, [user]);
+
   return (
     <aside
       className="fixed left-0 top-0 hidden h-screen w-64 flex-shrink-0 flex-col overflow-y-auto border-r border-slate-800 px-6 py-8 text-white md:flex"
@@ -139,7 +156,7 @@ export default function Sidebar({ active = "/dashboard" }: SidebarProps) {
           <p className="text-lg font-semibold">
             {settings.appName ?? "Imunia"}
           </p>
-          <p className="text-xs text-slate-300">Administration nationale</p>
+          <p className="text-xs text-slate-300">{adminLabel}</p>
         </div>
       </div>
 

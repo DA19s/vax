@@ -138,12 +138,7 @@ class _VaccinationListScreenState extends State<VaccinationListScreen> with Sing
   bool _hasExistingRequestOrScheduled(String? vaccineId, int currentDose, List<dynamic> scheduledVaccines) {
     if (vaccineId == null) return false;
     
-    // Si un vaccin est déjà prévu (scheduled), on ne peut pas demander d'autres vaccins
-    if (scheduledVaccines.isNotEmpty) {
-      return true;
-    }
-    
-    // Vérifier s'il existe déjà un rendez-vous programmé pour cette dose spécifique
+    // Vérifier s'il existe déjà un rendez-vous programmé pour ce vaccin spécifique avec cette dose
     return scheduledVaccines.any((scheduled) {
       return scheduled["vaccineId"] == vaccineId && (scheduled["dose"] ?? 1) == currentDose;
     });
@@ -340,16 +335,15 @@ class _VaccinationListScreenState extends State<VaccinationListScreen> with Sing
       completedVaccines,
     );
     
-    // Vérifier s'il existe déjà une demande ou un rendez-vous programmé pour cette dose
+    // Vérifier s'il existe déjà une demande ou un rendez-vous programmé pour cette dose spécifique
     final scheduledVaccines = _dashboardData?["vaccinations"]?["scheduled"] as List<dynamic>? ?? [];
-    final hasAnyScheduled = scheduledVaccines.isNotEmpty; // Vérifier s'il y a un vaccin prévu (peu importe lequel)
     final hasExistingRequestOrScheduled = _hasExistingRequestOrScheduled(
       vaccine["vaccineId"] as String?,
       currentDose,
       scheduledVaccines,
     );
     
-    final canRequest = previousDosesOk && !hasAnyScheduled && !hasExistingRequestOrScheduled;
+    final canRequest = previousDosesOk && !hasExistingRequestOrScheduled;
 
     return AppCard(
       margin: const EdgeInsets.only(bottom: AppSpacing.sm),
@@ -438,11 +432,9 @@ class _VaccinationListScreenState extends State<VaccinationListScreen> with Sing
               label: Text(
                 !previousDosesOk
                     ? "Complétez d'abord les doses précédentes"
-                    : hasAnyScheduled
-                        ? "Un vaccin est déjà prévu"
-                        : hasExistingRequestOrScheduled
-                            ? "Demande ou rendez-vous déjà en cours"
-                            : (isOverdue ? "Demander une nouvelle date" : "Demander un rendez-vous"),
+                    : hasExistingRequestOrScheduled
+                        ? "Déjà programmé"
+                        : (isOverdue ? "Demander une nouvelle date" : "Demander un rendez-vous"),
                 style: GoogleFonts.poppins(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,

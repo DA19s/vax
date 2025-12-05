@@ -3,6 +3,7 @@
 import { useAuth } from "@/context/AuthContext";
 import DashboardShell from "../components/DashboardShell";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import ChildrenTab from "./ChildrenTab";
 import ParentsTab from "./ParentsTab";
 import { Child } from "./types";
@@ -32,6 +33,8 @@ const statusLabel = (child: Child): string => {
 
 export default function EnfantsPage() {
   const { accessToken, user } = useAuth();
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabKey>("children");
   const [children, setChildren] = useState<Child[]>([]);
   const [loading, setLoading] = useState(false);
@@ -130,6 +133,35 @@ export default function EnfantsPage() {
       }
     }
   }, [accessToken, user?.role, loadChildren, loadRegions]);
+
+  // Recharger les données quand un paramètre refresh est présent dans l'URL
+  useEffect(() => {
+    const refresh = searchParams.get("refresh");
+    if (refresh === "true" && accessToken) {
+      loadChildren();
+      // Retirer le paramètre de l'URL
+      const newSearchParams = new URLSearchParams(searchParams.toString());
+      newSearchParams.delete("refresh");
+      const newUrl = newSearchParams.toString()
+        ? `/dashboard/enfants?${newSearchParams.toString()}`
+        : "/dashboard/enfants";
+      router.replace(newUrl);
+    }
+  }, [searchParams, accessToken, loadChildren, router]);
+
+  // Recharger les données quand la page reçoit le focus (utile après redirection)
+  useEffect(() => {
+    const handleFocus = () => {
+      if (accessToken) {
+        loadChildren();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [accessToken, loadChildren]);
 
   const stats = useMemo(() => {
     const total = children.length;

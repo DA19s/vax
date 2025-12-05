@@ -2034,10 +2034,14 @@ const missVaccineForPlanner = async (plannerId) => {
 
   return prisma.$transaction(async (tx) => {
     const now = new Date();
+    // Attendre un jour après la date prévue avant de marquer comme manqué
+    // On soustrait 24 heures (86400000 ms) pour obtenir la date limite
+    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    
     const scheduledList = await tx.childVaccineScheduled.findMany({
       where: {
         plannerId,
-        scheduledFor: { lt: now },
+        scheduledFor: { lt: oneDayAgo }, // Date prévue passée d'au moins 1 jour
       },
     });
 
@@ -2058,10 +2062,14 @@ const missVaccineForHealthCenter = async (healthCenterId) => {
 
   return prisma.$transaction(async (tx) => {
     const now = new Date();
+    // Attendre un jour après la date prévue avant de marquer comme manqué
+    // On soustrait 24 heures (86400000 ms) pour obtenir la date limite
+    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    
     const scheduledList = await tx.childVaccineScheduled.findMany({
       where: {
         child: { healthCenterId },
-        scheduledFor: { lt: now },
+        scheduledFor: { lt: oneDayAgo }, // Date prévue passée d'au moins 1 jour
       },
     });
 

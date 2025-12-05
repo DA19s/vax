@@ -398,6 +398,34 @@ const parentRegister = async (req, res, next) => {
         where: { id: fullChild.id },
         data: { isActive: true },
       });
+
+      // Envoyer un email aux agents du centre de santé pour les informer
+      try {
+        const { sendChildAccountActivatedEmail } = require("../services/emailService");
+        const agents = await prisma.user.findMany({
+          where: {
+            role: "AGENT",
+            agentLevel: "ADMIN",
+            healthCenterId: fullChild.healthCenterId,
+          },
+          select: { email: true },
+        });
+
+        if (agents.length > 0) {
+          const agentEmails = agents.map((a) => a.email).filter(Boolean);
+          if (agentEmails.length > 0) {
+            await sendChildAccountActivatedEmail({
+              agentEmails,
+              childName: `${fullChild.firstName} ${fullChild.lastName}`,
+              parentName: fullChild.fatherName || fullChild.motherName || "Parent",
+              healthCenterName: fullChild.healthCenter?.name || "Non spécifié",
+            });
+          }
+        }
+      } catch (emailError) {
+        console.error("Erreur envoi email agents (compte activé):", emailError);
+        // Ne pas bloquer le processus si l'email échoue
+      }
     }
     // Sinon, le compte reste non activé (isActive = false par défaut)
     // Il sera activé après la sélection des vaccins selon le flux
@@ -1200,12 +1228,19 @@ const markVaccinesDone = async (req, res, next) => {
     // Récupérer l'enfant pour vérifier son état
     const updatedChild = await prisma.children.findUnique({
       where: { id: childId },
-      select: {
-        id: true,
-        isActive: true,
-        photosRequested: true,
+      include: {
+        healthCenter: {
+          select: { name: true, id: true },
+        },
       },
     });
+
+    if (!updatedChild) {
+      return res.status(404).json({
+        success: false,
+        message: "Enfant non trouvé",
+      });
+    }
 
     // Si aucun vaccin sélectionné, activer le compte directement
     if (!hasSelectedVaccines) {
@@ -1213,9 +1248,36 @@ const markVaccinesDone = async (req, res, next) => {
         where: { id: childId },
         data: { isActive: true },
       });
+    } else {
+      // Si des vaccins ont été sélectionnés, le compte reste non activé
+      // Envoyer un email aux agents pour les informer qu'un compte est en attente
+      try {
+        const { sendChildAccountPendingEmail } = require("../services/emailService");
+        const agents = await prisma.user.findMany({
+          where: {
+            role: "AGENT",
+            agentLevel: "ADMIN",
+            healthCenterId: updatedChild.healthCenterId,
+          },
+          select: { email: true },
+        });
+
+        if (agents.length > 0) {
+          const agentEmails = agents.map((a) => a.email).filter(Boolean);
+          if (agentEmails.length > 0) {
+            await sendChildAccountPendingEmail({
+              agentEmails,
+              childName: `${updatedChild.firstName} ${updatedChild.lastName}`,
+              parentName: updatedChild.fatherName || updatedChild.motherName || "Parent",
+              healthCenterName: updatedChild.healthCenter?.name || "Non spécifié",
+            });
+          }
+        }
+      } catch (emailError) {
+        console.error("Erreur envoi email agents (compte en attente):", emailError);
+        // Ne pas bloquer le processus si l'email échoue
+      }
     }
-    // Si des vaccins ont été sélectionnés, le compte reste non activé
-    // Il sera activé après vérification par l'agent
 
     res.json({
       success: true,

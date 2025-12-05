@@ -461,6 +461,8 @@ const mapChildrenForResponse = (child) => {
     vaccinesLate: lateVaccines,
     vaccinesOverdue: overdueVaccines,
     vaccinesCompleted: completedVaccines,
+    isActive: child.isActive ?? false,
+    photosRequested: child.photosRequested ?? false,
     createdAt: child.birthDate,
     updatedAt: child.birthDate,
   };
@@ -1426,12 +1428,23 @@ const activateChild = async (req, res, next) => {
     });
 
     // Envoyer un message WhatsApp au parent
-    const { sendWhatsAppMessage } = require("../services/whatsapp");
+    const { sendAccountActivationWhatsApp } = require("../services/whatsapp");
+    const { notifyAccountActivated } = require("../services/notificationService");
     try {
-      await sendWhatsAppMessage({
-        to: child.phoneParent,
-        message: `Bonjour ${child.fatherName || child.motherName || "Parent"}, votre compte pour ${child.firstName} ${child.lastName} a été activé avec succès. Vous pouvez maintenant accéder à toutes les fonctionnalités de l'application Imunia.`,
-      });
+      const parentName = child.fatherName || child.motherName || "Parent";
+      const childName = `${child.firstName} ${child.lastName}`;
+      await sendAccountActivationWhatsApp(child.phoneParent, parentName, childName);
+      
+      // Créer une notification dans l'application mobile
+      try {
+        await notifyAccountActivated({
+          childId: child.id,
+          childName,
+        });
+      } catch (notificationError) {
+        console.error("Erreur création notification activation:", notificationError);
+        // Ne pas bloquer l'activation si la notification échoue
+      }
     } catch (whatsappError) {
       console.error("Erreur envoi WhatsApp:", whatsappError);
       // Ne pas bloquer l'activation si WhatsApp échoue
@@ -1514,12 +1527,23 @@ const requestPhotos = async (req, res, next) => {
     });
 
     // Envoyer un message WhatsApp au parent
-    const { sendWhatsAppMessage } = require("../services/whatsapp");
+    const { sendPhotoRequestWhatsApp } = require("../services/whatsapp");
+    const { notifyPhotoRequest } = require("../services/notificationService");
     try {
-      await sendWhatsAppMessage({
-        to: child.phoneParent,
-        message: `Bonjour ${child.fatherName || child.motherName || "Parent"}, nous avons besoin de photos plus claires du carnet de vaccination de ${child.firstName} ${child.lastName}. Veuillez vous connecter à l'application Imunia et télécharger de nouvelles photos pour continuer à utiliser l'application.`,
-      });
+      const parentName = child.fatherName || child.motherName || "Parent";
+      const childName = `${child.firstName} ${child.lastName}`;
+      await sendPhotoRequestWhatsApp(child.phoneParent, parentName, childName);
+      
+      // Créer une notification dans l'application mobile
+      try {
+        await notifyPhotoRequest({
+          childId: child.id,
+          childName,
+        });
+      } catch (notificationError) {
+        console.error("Erreur création notification demande photos:", notificationError);
+        // Ne pas bloquer la demande si la notification échoue
+      }
     } catch (whatsappError) {
       console.error("Erreur envoi WhatsApp:", whatsappError);
       // Ne pas bloquer la demande si WhatsApp échoue

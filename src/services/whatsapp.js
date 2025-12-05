@@ -134,9 +134,39 @@ Imunia`;
   return sendWhatsApp(to, message);
 };
 
+const sendPhotoRequestWhatsApp = async (to, parentName, childName) => {
+  const message = `📸 *Demande de nouvelles photos - Imunia*
+
+Bonjour ${parentName},
+
+Nous avons besoin de photos plus claires du carnet de vaccination de *${childName}*.
+
+Veuillez vous connecter à l'application Imunia et télécharger de nouvelles photos pour continuer à utiliser l'application.
+
+💬 Besoin d'aide ? Répondez à ce message.
+_Imunia - Protéger la santé de nos enfants_`;
+
+  return sendWhatsApp(to, message);
+};
+
+const sendAccountActivationWhatsApp = async (to, parentName, childName) => {
+  const message = `✅ *Compte activé - Imunia*
+
+Bonjour ${parentName},
+
+Le compte de *${childName}* a été activé avec succès. Vous pouvez maintenant utiliser toutes les fonctionnalités de l'application Imunia.
+
+💬 Besoin d'aide ? Répondez à ce message.
+_Imunia - Protéger la santé de nos enfants_`;
+
+  return sendWhatsApp(to, message);
+};
+
 module.exports = {
   sendWhatsApp,
   sendAccessCodeWhatsApp,
   sendVerificationCodeWhatsApp,
   sendVaccinationReminder,
+  sendPhotoRequestWhatsApp,
+  sendAccountActivationWhatsApp,
 };

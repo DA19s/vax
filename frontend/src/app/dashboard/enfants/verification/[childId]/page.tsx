@@ -216,8 +216,22 @@ export default function VerificationPage() {
         throw new Error(data?.message ?? "Erreur lors de l'activation");
       }
 
-      // Rediriger vers la page des enfants
-      router.push("/dashboard/enfants");
+      // Recharger les données de l'enfant pour mettre à jour l'affichage
+      const childResponse = await fetch(`${API_URL}/api/children/${childId}/vaccinations`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      if (childResponse.ok) {
+        const childData = await childResponse.json();
+        setChild(childData);
+      }
+
+      // Rediriger vers la page des enfants avec un paramètre pour forcer le rechargement
+      router.push("/dashboard/enfants?refresh=true");
+      // Forcer le rechargement de la page pour mettre à jour la liste
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur lors de l'activation");
     } finally {

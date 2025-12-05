@@ -1301,27 +1301,40 @@ export default function CalendrierVaccinalPage() {
         </div>
       )}
       {isNational && editModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur">
-          <div className="relative w-full max-w-3xl rounded-3xl bg-white p-6 shadow-2xl">
-            <button
-              type="button"
-              onClick={closeEditModal}
-              className="absolute right-4 top-4 rounded-full border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
-            >
-              <X className="h-4 w-4" />
-            </button>
-            <h3 className="text-lg font-semibold text-slate-900">
-              Modifier le calendrier vaccinal
-            </h3>
-            <p className="mt-1 text-sm text-slate-500">
-              Ajustez les informations puis enregistrez vos modifications.
-            </p>
-            {editError && (
-              <div className="mt-4 rounded-2xl border border-red-200 bg-red-50/80 p-3 text-sm text-red-700">
-                {editError}
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur px-4 py-8">
+          <form
+            onSubmit={handleEditSubmit}
+            className="relative flex h-[90vh] max-h-[90vh] w-full max-w-3xl flex-col rounded-3xl bg-white shadow-2xl"
+          >
+            {/* Header fixe */}
+            <div className="flex-shrink-0 border-b border-slate-200 p-6">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold text-slate-900">
+                    Modifier le calendrier vaccinal
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Ajustez les informations puis enregistrez vos modifications.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeEditModal}
+                  className="flex-shrink-0 rounded-full border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </div>
-            )}
-            <form onSubmit={handleEditSubmit} className="mt-6 space-y-5">
+              {editError && (
+                <div className="mt-4 rounded-2xl border border-red-200 bg-red-50/80 p-3 text-sm text-red-700">
+                  {editError}
+                </div>
+              )}
+            </div>
+
+            {/* Contenu scrollable */}
+            <div className="min-h-0 flex-1 overflow-y-auto p-6">
+              <div className="space-y-5">
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
                 <div className="space-y-1">
                   <label className="text-sm font-medium text-slate-600">
@@ -1507,7 +1520,11 @@ export default function CalendrierVaccinalPage() {
                   placeholder="Informations complémentaires..."
                 />
               </div>
+              </div>
+            </div>
 
+            {/* Footer fixe */}
+            <div className="flex-shrink-0 border-t border-slate-200 p-6">
               <div className="flex justify-end gap-3">
                 <button
                   type="button"
@@ -1524,8 +1541,8 @@ export default function CalendrierVaccinalPage() {
                   Mettre à jour
                 </button>
               </div>
-            </form>
-          </div>
+            </div>
+          </form>
         </div>
       )}
     </DashboardShell>

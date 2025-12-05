@@ -33,10 +33,14 @@ const uploadVaccinationProofs = async (req, res, next) => {
       });
     }
 
-    // Vérifier que l'enfant existe
+    // Vérifier que l'enfant existe et récupérer les informations nécessaires
     const child = await prisma.children.findUnique({
       where: { id: childId },
-      select: { id: true },
+      include: {
+        healthCenter: {
+          select: { name: true, id: true },
+        },
+      },
     });
 
     if (!child) {
@@ -95,9 +99,43 @@ const uploadVaccinationProofs = async (req, res, next) => {
       });
     }
 
-    // Après l'upload des photos, le compte reste non activé
-    // Il sera activé après vérification par l'agent
-    // Ne pas activer automatiquement ici
+    // Réinitialiser photosRequested à false après l'upload de nouvelles photos
+    // Le compte reste non activé (isActive reste false) jusqu'à vérification par l'agent
+    await prisma.children.update({
+      where: { id: childId },
+      data: {
+        photosRequested: false,
+        // isActive reste false - sera activé par l'agent après vérification
+      },
+    });
+
+    // Envoyer un email aux agents pour les informer que de nouvelles photos ont été uploadées
+    try {
+      const { sendNewPhotosUploadedEmail } = require("../services/emailService");
+      const agents = await prisma.user.findMany({
+        where: {
+          role: "AGENT",
+          agentLevel: "ADMIN",
+          healthCenterId: child.healthCenterId,
+        },
+        select: { email: true },
+      });
+
+      if (agents.length > 0) {
+        const agentEmails = agents.map((a) => a.email).filter(Boolean);
+        if (agentEmails.length > 0) {
+          await sendNewPhotosUploadedEmail({
+            agentEmails,
+            childName: `${child.firstName} ${child.lastName}`,
+            parentName: child.fatherName || child.motherName || "Parent",
+            healthCenterName: child.healthCenter?.name || "Non spécifié",
+          });
+        }
+      }
+    } catch (emailError) {
+      console.error("Erreur envoi email agents (nouvelles photos):", emailError);
+      // Ne pas bloquer le processus si l'email échoue
+    }
 
     res.status(201).json({
       success: true,

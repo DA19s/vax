@@ -40,10 +40,17 @@ type VaccineOption = {
   dosesRequired?: string;
 };
 
+type CalendarVaccineInfo = {
+  id: string;
+  name: string;
+  doseNumbers: number[]; // Les numéros de doses disponibles dans cette fenêtre
+};
+
 type CalendarOption = {
   id: string;
   label: string;
   vaccineIds: string[];
+  vaccines: CalendarVaccineInfo[]; // Informations détaillées sur les vaccins et leurs doses
 };
 
 type ManualEntry = {
@@ -366,6 +373,17 @@ function VaccinationRecordModal({
                 .map((v: any) => v?.id)
                 .filter((id: unknown): id is string => typeof id === "string")
             : [],
+          vaccines: Array.isArray(item?.vaccines)
+            ? item.vaccines
+                .filter((v: any) => v?.id && Array.isArray(v?.doseNumbers))
+                .map((v: any) => ({
+                  id: v.id,
+                  name: v.name || "",
+                  doseNumbers: Array.isArray(v.doseNumbers)
+                    ? v.doseNumbers.filter((d: any) => typeof d === "number" && d > 0)
+                    : [],
+                }))
+            : [],
         }));
 
       setReferenceData({ vaccines: vaccinesList, calendars: calendarsList });
@@ -474,14 +492,42 @@ function VaccinationRecordModal({
 
   const handleFormValueChange = useCallback(
     (field: "vaccineId" | "calendarId" | "dose" | "date", value: string) => {
-      setFormValues((prev) => ({
-        ...prev,
-        [field]: value,
-      }));
+      setFormValues((prev) => {
+        const next = { ...prev, [field]: value };
+        
+        // Si la fenêtre change, vérifier si le vaccin sélectionné est toujours valide
+        if (field === "calendarId") {
+          if (value && prev.vaccineId) {
+            const selectedCalendar = referenceData.calendars.find(
+              (cal) => cal.id === value,
+            );
+            if (
+              selectedCalendar &&
+              selectedCalendar.vaccineIds.length > 0 &&
+              !selectedCalendar.vaccineIds.includes(prev.vaccineId)
+            ) {
+              // Le vaccin n'est plus valide, le réinitialiser
+              next.vaccineId = "";
+              next.dose = "1";
+            }
+          } else if (!value) {
+            // Si on enlève la fenêtre, on peut garder le vaccin mais réinitialiser la dose
+            next.dose = "1";
+          }
+        }
+        
+        // Si le vaccin change, réinitialiser la dose
+        if (field === "vaccineId") {
+          next.dose = "1";
+        }
+        
+        return next;
+      });
     },
-    [],
+    [referenceData.calendars],
   );
 
+  // Filtrer les calendriers basés sur le vaccin sélectionné (si aucun vaccin n'est sélectionné, tous les calendriers sont disponibles)
   const filteredCalendars = useMemo(() => {
     if (!referenceData.calendars.length) {
       return [];
@@ -495,6 +541,81 @@ function VaccinationRecordModal({
         calendar.vaccineIds.includes(formValues.vaccineId),
     );
   }, [formValues.vaccineId, referenceData.calendars]);
+
+  // Filtrer les vaccins basés sur la fenêtre sélectionnée (si une fenêtre est sélectionnée)
+  const filteredVaccines = useMemo(() => {
+    if (!formValues.calendarId) {
+      // Si aucune fenêtre n'est sélectionnée, tous les vaccins sont disponibles
+      return referenceData.vaccines;
+    }
+    const selectedCalendar = referenceData.calendars.find(
+      (cal) => cal.id === formValues.calendarId,
+    );
+    if (!selectedCalendar || selectedCalendar.vaccineIds.length === 0) {
+      // Si la fenêtre n'a pas de vaccins spécifiques, tous les vaccins sont disponibles
+      return referenceData.vaccines;
+    }
+    // Filtrer pour ne garder que les vaccins de cette fenêtre
+    return referenceData.vaccines.filter((vaccine) =>
+      selectedCalendar.vaccineIds.includes(vaccine.id),
+    );
+  }, [formValues.calendarId, referenceData.calendars, referenceData.vaccines]);
+
+  // Filtrer les doses disponibles basées sur la fenêtre et le vaccin sélectionnés
+  const availableDoses = useMemo(() => {
+    const selectedVaccine = referenceData.vaccines.find(
+      (v) => v.id === formValues.vaccineId,
+    );
+    if (!selectedVaccine) {
+      return [];
+    }
+
+    const maxDoses = selectedVaccine.dosesRequired
+      ? Number(selectedVaccine.dosesRequired)
+      : 1;
+    if (!Number.isFinite(maxDoses) || maxDoses <= 0) {
+      return [1];
+    }
+
+    // Si une fenêtre est sélectionnée, filtrer les doses selon cette fenêtre
+    if (formValues.calendarId) {
+      const selectedCalendar = referenceData.calendars.find(
+        (cal) => cal.id === formValues.calendarId,
+      );
+      if (selectedCalendar) {
+        const vaccineInfo = selectedCalendar.vaccines.find(
+          (v) => v.id === formValues.vaccineId,
+        );
+        if (vaccineInfo && vaccineInfo.doseNumbers.length > 0) {
+          // Retourner uniquement les doses disponibles dans cette fenêtre
+          return vaccineInfo.doseNumbers;
+        }
+      }
+    }
+
+    // Si aucune fenêtre n'est sélectionnée ou si le vaccin n'est pas dans la fenêtre,
+    // retourner toutes les doses possibles (1 à maxDoses)
+    return Array.from({ length: maxDoses }, (_, i) => i + 1);
+  }, [
+    formValues.calendarId,
+    formValues.vaccineId,
+    referenceData.calendars,
+    referenceData.vaccines,
+  ]);
+
+  // Effet pour valider et réinitialiser la dose si elle n'est plus disponible
+  useEffect(() => {
+    if (formValues.vaccineId && formValues.dose && availableDoses.length > 0) {
+      const doseValue = Number(formValues.dose);
+      if (!availableDoses.includes(doseValue)) {
+        // La dose sélectionnée n'est plus disponible, réinitialiser à la première dose disponible
+        setFormValues((prev) => ({
+          ...prev,
+          dose: String(availableDoses[0]),
+        }));
+      }
+    }
+  }, [availableDoses, formValues.vaccineId, formValues.dose]);
 
   const handleEditorSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
@@ -520,17 +641,32 @@ function VaccinationRecordModal({
         setFormError("La dose doit être un nombre positif.");
         return;
       }
+      
+      // Si une fenêtre est sélectionnée, valider que la dose est dans les doses disponibles
+      if (formValues.calendarId && formValues.vaccineId) {
+        const selectedCalendar = referenceData.calendars.find(
+          (cal) => cal.id === formValues.calendarId,
+        );
+        if (selectedCalendar) {
+          const vaccineInfo = selectedCalendar.vaccines.find(
+            (v) => v.id === formValues.vaccineId,
+          );
+          if (vaccineInfo && vaccineInfo.doseNumbers.length > 0) {
+            if (!vaccineInfo.doseNumbers.includes(doseValue)) {
+              setFormError(
+                `La dose ${doseValue} n'est pas disponible dans la fenêtre sélectionnée. Doses disponibles : ${vaccineInfo.doseNumbers.join(", ")}.`,
+              );
+              return;
+            }
+          }
+        }
+      }
+      
       payload.dose = doseValue;
 
-      if (editorState.bucket === "completed") {
-        if (formValues.calendarId) {
-          payload.vaccineCalendarId = formValues.calendarId;
-        }
-      } else if (meta.requireCalendar) {
-        if (!formValues.calendarId) {
-          setFormError("Veuillez sélectionner une fenêtre du calendrier.");
-          return;
-        }
+      // La fenêtre est maintenant optionnelle pour tous les buckets
+      // Si une fenêtre est sélectionnée, on l'ajoute au payload
+      if (formValues.calendarId) {
         payload.vaccineCalendarId = formValues.calendarId;
       }
 
@@ -586,6 +722,7 @@ function VaccinationRecordModal({
       formValues.date,
       formValues.dose,
       formValues.vaccineId,
+      referenceData.calendars,
       onRefresh,
       token,
     ],
@@ -764,8 +901,9 @@ function VaccinationRecordModal({
         <div className="space-y-3">
           {/* Vaccins à faire */}
           <section className="rounded-xl border-2 border-blue-300 bg-blue-50 shadow-md overflow-hidden">
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => {
                 setExpandedSections((prev) => {
                   const next = new Set(prev);
@@ -777,7 +915,21 @@ function VaccinationRecordModal({
                   return next;
                 });
               }}
-              className="w-full flex items-center justify-between gap-2 p-4 hover:bg-blue-100 transition"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setExpandedSections((prev) => {
+                    const next = new Set(prev);
+                    if (next.has("due")) {
+                      next.delete("due");
+                    } else {
+                      next.add("due");
+                    }
+                    return next;
+                  });
+                }
+              }}
+              className="w-full flex items-center justify-between gap-2 p-4 hover:bg-blue-100 transition cursor-pointer"
             >
               <div className="flex items-center gap-2">
                 <Syringe className="h-5 w-5 text-blue-600" />
@@ -804,7 +956,7 @@ function VaccinationRecordModal({
                   <ChevronDown className="h-5 w-5 text-blue-600" />
                 )}
               </div>
-            </button>
+            </div>
             {expandedSections.has("due") && (
               <div className="px-4 pb-4 space-y-2.5 text-sm">
                 {dueEntries.length === 0 ? (
@@ -820,8 +972,9 @@ function VaccinationRecordModal({
 
           {/* Vaccins en retard */}
           <section className="rounded-xl border-2 border-red-300 bg-red-50 shadow-md overflow-hidden">
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => {
                 setExpandedSections((prev) => {
                   const next = new Set(prev);
@@ -833,7 +986,21 @@ function VaccinationRecordModal({
                   return next;
                 });
               }}
-              className="w-full flex items-center justify-between gap-2 p-4 hover:bg-red-100 transition"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setExpandedSections((prev) => {
+                    const next = new Set(prev);
+                    if (next.has("late")) {
+                      next.delete("late");
+                    } else {
+                      next.add("late");
+                    }
+                    return next;
+                  });
+                }
+              }}
+              className="w-full flex items-center justify-between gap-2 p-4 hover:bg-red-100 transition cursor-pointer"
             >
               <div className="flex items-center gap-2">
                 <AlertCircle className="h-5 w-5 text-red-600" />
@@ -860,7 +1027,7 @@ function VaccinationRecordModal({
                   <ChevronDown className="h-5 w-5 text-red-600" />
                 )}
               </div>
-            </button>
+            </div>
             {expandedSections.has("late") && (
               <div className="px-4 pb-4 space-y-2.5 text-sm">
                 {lateEntries.length === 0 ? (
@@ -876,8 +1043,9 @@ function VaccinationRecordModal({
 
           {/* Vaccins administrés */}
           <section className="rounded-xl border-2 border-emerald-300 bg-emerald-50 shadow-md overflow-hidden">
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => {
                 setExpandedSections((prev) => {
                   const next = new Set(prev);
@@ -889,7 +1057,21 @@ function VaccinationRecordModal({
                   return next;
                 });
               }}
-              className="w-full flex items-center justify-between gap-2 p-4 hover:bg-emerald-100 transition"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setExpandedSections((prev) => {
+                    const next = new Set(prev);
+                    if (next.has("completed")) {
+                      next.delete("completed");
+                    } else {
+                      next.add("completed");
+                    }
+                    return next;
+                  });
+                }
+              }}
+              className="w-full flex items-center justify-between gap-2 p-4 hover:bg-emerald-100 transition cursor-pointer"
             >
               <div className="flex items-center gap-2">
                 <CheckCircle className="h-5 w-5 text-emerald-600" />
@@ -916,7 +1098,7 @@ function VaccinationRecordModal({
                   <ChevronDown className="h-5 w-5 text-emerald-600" />
                 )}
               </div>
-            </button>
+            </div>
             {expandedSections.has("completed") && (
               <div className="px-4 pb-4 space-y-2.5 text-sm">
                 {completedEntries.length === 0 ? (
@@ -982,7 +1164,7 @@ function VaccinationRecordModal({
                     required
                   >
                     <option value="">Sélectionnez un vaccin</option>
-                    {referenceData.vaccines.map((vaccine) => (
+                    {filteredVaccines.map((vaccine) => (
                       <option key={vaccine.id} value={vaccine.id}>
                         {vaccine.name}
                       </option>
@@ -1002,13 +1184,9 @@ function VaccinationRecordModal({
                       onChange={(event) =>
                         handleFormValueChange("calendarId", event.target.value)
                       }
-                      required={BUCKET_META[editorState.bucket].requireCalendar}
+                      required={false}
                     >
-                      <option value="">
-                        {BUCKET_META[editorState.bucket].requireCalendar
-                          ? "Sélectionnez une fenêtre"
-                          : "Optionnel"}
-                      </option>
+                      <option value="">Optionnel (modification spécifique à l'enfant)</option>
                       {filteredCalendars.map((calendar) => (
                         <option key={calendar.id} value={calendar.id}>
                           {calendar.label}
@@ -1023,16 +1201,36 @@ function VaccinationRecordModal({
                     <label className="mb-1 block text-sm font-semibold text-slate-700">
                       Dose
                     </label>
-                    <input
-                      type="number"
-                      min={1}
-                      className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
-                      value={formValues.dose}
-                      onChange={(event) =>
-                        handleFormValueChange("dose", event.target.value)
-                      }
-                      required
-                    />
+                    {availableDoses.length > 0 ? (
+                      <select
+                        className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                        value={formValues.dose}
+                        onChange={(event) =>
+                          handleFormValueChange("dose", event.target.value)
+                        }
+                        required
+                      >
+                        <option value="">Sélectionnez une dose</option>
+                        {availableDoses.map((dose) => (
+                          <option key={dose} value={String(dose)}>
+                            Dose {dose}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="number"
+                        min={1}
+                        className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                        value={formValues.dose}
+                        onChange={(event) =>
+                          handleFormValueChange("dose", event.target.value)
+                        }
+                        required
+                        disabled={!formValues.vaccineId}
+                        placeholder={formValues.vaccineId ? "Sélectionnez d'abord un vaccin" : ""}
+                      />
+                    )}
                   </div>
 
                   <div>
@@ -1474,13 +1672,9 @@ function VaccinationRecordModal({
                     onChange={(event) =>
                       handleFormValueChange("calendarId", event.target.value)
                     }
-                    required={BUCKET_META[editorState.bucket].requireCalendar}
+                    required={false}
                   >
-                    <option value="">
-                      {BUCKET_META[editorState.bucket].requireCalendar
-                        ? "Sélectionnez une fenêtre"
-                        : "Optionnel"}
-                    </option>
+                    <option value="">Optionnel (modification spécifique à l'enfant)</option>
                     {filteredCalendars.map((calendar) => (
                       <option key={calendar.id} value={calendar.id}>
                         {calendar.label}

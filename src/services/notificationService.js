@@ -168,6 +168,30 @@ const notifyAppointmentCancelled = async ({ childId, vaccineName, scheduledDate 
   });
 };
 
+/**
+ * Créer une notification pour l'activation du compte enfant
+ */
+const notifyAccountActivated = async ({ childId, childName }) => {
+  return createAndSendNotification({
+    childId,
+    title: "Compte activé",
+    message: `Le compte de ${childName} a été activé avec succès. Vous pouvez maintenant accéder à toutes les fonctionnalités de l'application Imunia.`,
+    type: "account",
+  });
+};
+
+/**
+ * Créer une notification pour la demande de nouvelles photos
+ */
+const notifyPhotoRequest = async ({ childId, childName }) => {
+  return createAndSendNotification({
+    childId,
+    title: "Nouvelles photos requises",
+    message: `Nous avons besoin de photos plus claires du carnet de vaccination de ${childName}. Veuillez vous connecter à l'application et télécharger de nouvelles photos pour continuer à utiliser l'application.`,
+    type: "verification",
+  });
+};
+
 module.exports = {
   createAndSendNotification,
   notifyVaccineScheduled,
@@ -178,5 +202,7 @@ module.exports = {
   notifyAppointment,
   notifyAppointmentUpdated,
   notifyAppointmentCancelled,
+  notifyAccountActivated,
+  notifyPhotoRequest,
 };
 

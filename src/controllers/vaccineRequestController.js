@@ -1,6 +1,9 @@
 const prisma = require("../config/prismaClient");
 const { sendVaccineRequestEmail } = require("../services/emailService");
 const { notifyVaccineScheduled } = require("../services/notificationService");
+const {
+  reserveDoseForHealthCenter,
+} = require("../services/stockLotService");
 
 /**
  * Vérifie si un vaccin correspond au genre d'un enfant
@@ -15,6 +18,74 @@ const isVaccineSuitableForGender = (vaccine, childGender) => {
   }
   // Si le vaccin a un genre, il doit correspondre au genre de l'enfant
   return vaccine.gender === childGender;
+};
+
+/**
+ * Réassigne automatiquement les doses pour tous les rendez-vous d'un enfant pour un vaccin donné
+ * Les doses sont assignées selon l'ordre chronologique : le rendez-vous le plus proche prend la dose la plus petite disponible
+ * @param {Object} tx - Transaction Prisma
+ * @param {string} childId - ID de l'enfant
+ * @param {string} vaccineId - ID du vaccin
+ */
+const reassignDosesForVaccine = async (tx, childId, vaccineId) => {
+  // Récupérer tous les rendez-vous programmés pour ce vaccin et cet enfant, triés par date
+  const scheduledAppointments = await tx.childVaccineScheduled.findMany({
+    where: {
+      childId,
+      vaccineId,
+    },
+    orderBy: {
+      scheduledFor: "asc",
+    },
+    select: {
+      id: true,
+      scheduledFor: true,
+      dose: true,
+    },
+  });
+
+  if (scheduledAppointments.length === 0) {
+    return;
+  }
+
+  // Récupérer les doses déjà complétées pour ce vaccin
+  const completedDoses = await tx.childVaccineCompleted.findMany({
+    where: {
+      childId,
+      vaccineId,
+    },
+    select: {
+      dose: true,
+    },
+  });
+
+  const completedDoseValues = completedDoses
+    .map((c) => (typeof c.dose === "number" ? c.dose : null))
+    .filter((dose) => dose != null);
+
+  // Calculer la prochaine dose disponible
+  let nextDose = 1;
+  while (completedDoseValues.includes(nextDose)) {
+    nextDose++;
+  }
+
+  // Réassigner les doses selon l'ordre chronologique
+  for (const appointment of scheduledAppointments) {
+    // Si cette dose est déjà complétée, passer à la suivante
+    while (completedDoseValues.includes(nextDose)) {
+      nextDose++;
+    }
+
+    // Mettre à jour la dose si elle a changé
+    if (appointment.dose !== nextDose) {
+      await tx.childVaccineScheduled.update({
+        where: { id: appointment.id },
+        data: { dose: nextDose },
+      });
+    }
+
+    nextDose++;
+  }
 };
 
 /**
@@ -450,6 +521,23 @@ const scheduleVaccineRequest = async (req, res, next) => {
 
     // Créer le rendez-vous programmé
     const result = await prisma.$transaction(async (tx) => {
+      // Vérifier et réserver le stock avant de créer le rendez-vous
+      let reservation;
+      try {
+        reservation = await reserveDoseForHealthCenter(tx, {
+          vaccineId: request.vaccineId,
+          healthCenterId: request.child.healthCenterId,
+          quantity: 1,
+          appointmentDate: scheduledDate,
+        });
+      } catch (stockError) {
+        // Capturer les erreurs de stock et les renvoyer avec un message clair
+        if (stockError.status === 400) {
+          throw Object.assign(new Error(stockError.message || "Stock insuffisant pour programmer ce vaccin"), { status: 400 });
+        }
+        throw stockError;
+      }
+
       // Créer l'entrée dans childVaccineScheduled
       const scheduled = await tx.childVaccineScheduled.create({
         data: {
@@ -461,6 +549,18 @@ const scheduleVaccineRequest = async (req, res, next) => {
           dose: request.dose ?? 1,
         },
       });
+
+      // Créer la réservation de stock
+      await tx.stockReservation.create({
+        data: {
+          scheduleId: scheduled.id,
+          stockLotId: reservation.lotId,
+          quantity: reservation.quantity,
+        },
+      });
+
+      // Réassigner toutes les doses selon l'ordre chronologique
+      await reassignDosesForVaccine(tx, request.childId, request.vaccineId);
 
       // Mettre à jour la demande
       const updatedRequest = await tx.vaccineRequest.update({
@@ -519,19 +619,13 @@ const scheduleVaccineRequest = async (req, res, next) => {
     // On le fait après la transaction pour éviter les problèmes de rollback
     setImmediate(async () => {
       try {
-        console.log("🔔 Création notification pour rendez-vous programmé:", {
-          childId: request.child.id,
-          vaccineName: request.vaccine.name,
-          scheduledDate: scheduledDate,
-        });
         await notifyVaccineScheduled({
           childId: request.child.id,
           vaccineName: request.vaccine.name,
           scheduledDate: scheduledDate,
         });
-        console.log("✅ Notification créée et envoyée avec succès");
       } catch (notifError) {
-        console.error("❌ Erreur création notification:", notifError);
+        // Erreur silencieuse pour la notification - ne pas bloquer la réponse
       }
     });
 
@@ -542,6 +636,25 @@ const scheduleVaccineRequest = async (req, res, next) => {
       request: result.request,
     });
   } catch (error) {
+    // Gérer les erreurs de stock et autres erreurs avec des messages clairs
+    if (error.status === 400) {
+      return res.status(400).json({
+        success: false,
+        message: error.message || "Impossible de programmer le rendez-vous",
+      });
+    }
+    if (error.status === 404) {
+      return res.status(404).json({
+        success: false,
+        message: error.message || "Ressource non trouvée",
+      });
+    }
+    if (error.status === 403) {
+      return res.status(403).json({
+        success: false,
+        message: error.message || "Accès refusé",
+      });
+    }
     next(error);
   }
 };
