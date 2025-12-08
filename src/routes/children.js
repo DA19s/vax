@@ -78,8 +78,14 @@ router.put("/:id/request-photos", requireAuth, childrenController.requestPhotos)
 router.post(
   "/:childId/vaccination-proofs",
   requireAuth,
-  proofUpload.array("files", 10), // Maximum 10 fichiers
+  proofUpload.array("files", 10), // Maximum 10 fichiers (pour mobile)
   vaccinationProofController.uploadVaccinationProofs,
+);
+router.post(
+  "/:childId/vaccination-proofs/upload",
+  requireAuth,
+  proofUpload.single("file"), // Un seul fichier avec titre (pour backoffice)
+  vaccinationProofController.uploadProofFromBackoffice,
 );
 router.get(
   "/:childId/vaccination-proofs",

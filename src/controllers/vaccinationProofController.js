@@ -80,18 +80,27 @@ const uploadVaccinationProofs = async (req, res, next) => {
       fs.renameSync(file.path, filePath);
 
       // Enregistrer dans la base de données
+      // Pour le mobile, utiliser le nom du fichier comme titre par défaut
+      let title = file.originalname.replace(/\.[^/.]+$/, ""); // Nom sans extension
+      // S'assurer que le titre n'est pas vide (fallback sur le nom complet si nécessaire)
+      if (!title || title.trim() === "") {
+        title = file.originalname || "Document sans nom";
+      }
       const proof = await prisma.childVaccinationProof.create({
         data: {
           childId,
+          title: title.trim(),
           filePath: `uploads/vaccination-proofs/${uniqueFileName}`,
           fileName: file.originalname,
           fileSize: file.size,
           mimeType: file.mimetype,
+          uploadedBy: null, // Mobile upload, pas d'utilisateur
         },
       });
 
       uploadedFiles.push({
         id: proof.id,
+        title: proof.title,
         fileName: proof.fileName,
         fileSize: proof.fileSize,
         mimeType: proof.mimeType,
@@ -100,12 +109,10 @@ const uploadVaccinationProofs = async (req, res, next) => {
     }
 
     // Réinitialiser photosRequested à false après l'upload de nouvelles photos
-    // Le compte reste non activé (isActive reste false) jusqu'à vérification par l'agent
     await prisma.children.update({
       where: { id: childId },
       data: {
         photosRequested: false,
-        // isActive reste false - sera activé par l'agent après vérification
       },
     });
 
@@ -175,9 +182,11 @@ const getVaccinationProofs = async (req, res, next) => {
       orderBy: { uploadedAt: "desc" },
       select: {
         id: true,
+        title: true,
         fileName: true,
         fileSize: true,
         mimeType: true,
+        uploadedBy: true,
         uploadedAt: true,
         createdAt: true,
       },
@@ -578,8 +587,126 @@ const deleteProof = async (req, res, next) => {
   }
 };
 
+/**
+ * POST /api/children/:childId/vaccination-proofs/upload
+ * Uploader un document depuis le backoffice avec titre
+ */
+const uploadProofFromBackoffice = async (req, res, next) => {
+  try {
+    const { childId } = req.params;
+    const { title } = req.body;
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        message: "Aucun fichier fourni",
+      });
+    }
+
+    const trimmedTitle = title?.trim();
+    if (!trimmedTitle || trimmedTitle === "") {
+      // Supprimer le fichier uploadé si le titre est manquant
+      const filePath = path.join(UPLOAD_DIR, file.filename);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+      return res.status(400).json({
+        success: false,
+        message: "Le titre du document est requis",
+      });
+    }
+
+    // Vérifier que l'enfant existe
+    const child = await prisma.children.findUnique({
+      where: { id: childId },
+      select: { id: true },
+    });
+
+    if (!child) {
+      // Supprimer le fichier uploadé
+      const filePath = path.join(UPLOAD_DIR, file.filename);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+      return res.status(404).json({
+        success: false,
+        message: "Enfant non trouvé",
+      });
+    }
+
+    // Vérifier le type MIME ou l'extension
+    const ext = path.extname(file.originalname).toLowerCase();
+    const allowedExts = [".jpg", ".jpeg", ".png", ".webp", ".pdf"];
+    const isValidMime = ALLOWED_MIME_TYPES.includes(file.mimetype) || file.mimetype.startsWith("image/");
+    const isValidExt = allowedExts.includes(ext);
+    
+    if (!isValidMime && !isValidExt) {
+      // Supprimer le fichier uploadé
+      const filePath = path.join(UPLOAD_DIR, file.filename);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+      return res.status(400).json({
+        success: false,
+        message: `Type de fichier non autorisé: ${file.mimetype || ext || "inconnu"}. Types autorisés: JPEG, PNG, WebP, PDF`,
+      });
+    }
+
+    // Vérifier la taille
+    if (file.size > MAX_FILE_SIZE) {
+      // Supprimer le fichier uploadé
+      const filePath = path.join(UPLOAD_DIR, file.filename);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+      return res.status(400).json({
+        success: false,
+        message: `Fichier trop volumineux: ${file.originalname}. Taille maximale: 10MB`,
+      });
+    }
+
+    // Créer l'entrée dans la base de données
+    const proof = await prisma.childVaccinationProof.create({
+      data: {
+        childId,
+        title: trimmedTitle,
+        filePath: `uploads/vaccination-proofs/${file.filename}`,
+        fileName: file.originalname || "fichier",
+        fileSize: file.size,
+        mimeType: file.mimetype,
+        uploadedBy: req.user?.id || null,
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Document uploadé avec succès",
+      proof: {
+        id: proof.id,
+        title: proof.title,
+        fileName: proof.fileName,
+        mimeType: proof.mimeType,
+        fileSize: proof.fileSize,
+        uploadedBy: proof.uploadedBy,
+        uploadedAt: proof.uploadedAt,
+      },
+    });
+  } catch (error) {
+    // Supprimer le fichier uploadé en cas d'erreur
+    if (req.file) {
+      const filePath = path.join(UPLOAD_DIR, req.file.filename);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    }
+    next(error);
+  }
+};
+
 module.exports = {
   uploadVaccinationProofs,
+  uploadProofFromBackoffice,
   getVaccinationProofs,
   getProofFileBase64,
   getProofFile,

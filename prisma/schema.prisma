@@ -525,10 +525,12 @@ model ChildVaccinationProof {
   id                String   @id @default(uuid())
   childId           String
   child             Children  @relation(fields: [childId], references: [id], onDelete: Cascade)
+  title             String   // Titre du document
   filePath          String   // Chemin du fichier sur le serveur
   fileName          String   // Nom original du fichier
   fileSize          Int?     // Taille en bytes
   mimeType          String?  // Type MIME (image/jpeg, image/png, etc.)
+  uploadedBy        String?  // ID de l'utilisateur qui a uploadé (null si parent)
   uploadedAt        DateTime @default(now())
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt

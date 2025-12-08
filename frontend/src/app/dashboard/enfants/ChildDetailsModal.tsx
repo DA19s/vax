@@ -347,13 +347,13 @@ export default function ChildDetailsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 px-4 py-8">
-      <div className="relative w-full max-w-3xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-        <div className="flex items-center justify-between bg-gradient-to-r from-blue-600 to-blue-800 px-6 py-4 text-white">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 px-4 py-4">
+      <div className="relative w-full max-w-3xl max-h-[90vh] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl flex flex-col">
+        <div className="flex items-center justify-between bg-gradient-to-r from-blue-600 to-blue-800 px-6 py-3 text-white flex-shrink-0">
           <div>
             <p className="text-xs uppercase tracking-wide text-blue-100">Dossier médical</p>
-            <h2 className="text-xl font-semibold">{child.name}</h2>
-            <p className="text-sm text-blue-100">{statusLabel}</p>
+            <h2 className="text-lg font-semibold">{child.name}</h2>
+            <p className="text-xs text-blue-100">{statusLabel}</p>
           </div>
           <button
             type="button"
@@ -364,56 +364,56 @@ export default function ChildDetailsModal({
           </button>
         </div>
 
-        <div className="space-y-6 px-6 py-6">
-          <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-            <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
-              <User className="h-4 w-4 text-blue-500" />
+        <div className="space-y-4 px-6 py-4 overflow-y-auto flex-1">
+          <section className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
+            <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <User className="h-3.5 w-3.5 text-blue-500" />
               Informations de l'enfant
             </h3>
-            <div className="flex items-start gap-4">
-              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-50">
-                <Baby className="h-8 w-8 text-blue-600" />
+            <div className="flex items-start gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 flex-shrink-0">
+                <Baby className="h-6 w-6 text-blue-600" />
               </div>
-              <div className="space-y-1 text-sm text-slate-600">
+              <div className="space-y-0.5 text-sm text-slate-600">
                 <p>
-                  <span className="inline-block w-28 text-slate-500">Nom</span>
+                  <span className="inline-block w-24 text-slate-500 text-xs">Nom</span>
                   <span className="font-medium text-slate-900">{child.name}</span>
                 </p>
                 <p>
-                  <span className="inline-block w-28 text-slate-500">Naissance</span>
+                  <span className="inline-block w-24 text-slate-500 text-xs">Naissance</span>
                   <span className="font-medium text-slate-900">{formatDate(child.birthDate)}</span>
                 </p>
                 <p>
-                  <span className="inline-block w-28 text-slate-500">Genre</span>
+                  <span className="inline-block w-24 text-slate-500 text-xs">Genre</span>
                   <span className="font-medium text-slate-900">{child.gender === "M" ? "Garçon" : "Fille"}</span>
                 </p>
               </div>
             </div>
           </section>
 
-          <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-            <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
-              <Home className="h-4 w-4 text-blue-500" />
+          <section className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
+            <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <Home className="h-3.5 w-3.5 text-blue-500" />
               Responsable légal
             </h3>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className="flex items-center gap-3 text-sm text-slate-600">
-                <User className="h-5 w-5 text-blue-400" />
-                <div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div className="flex items-center gap-2 text-sm text-slate-600">
+                <User className="h-4 w-4 text-blue-400 flex-shrink-0" />
+                <div className="min-w-0">
                   <p className="text-xs uppercase text-slate-400">Parent</p>
-                  <p className="font-medium text-slate-900">{child.parentName || "Non renseigné"}</p>
+                  <p className="font-medium text-slate-900 truncate">{child.parentName || "Non renseigné"}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-3 text-sm text-slate-600">
-                <Phone className="h-5 w-5 text-blue-400" />
-                <div>
+              <div className="flex items-center gap-2 text-sm text-slate-600">
+                <Phone className="h-4 w-4 text-blue-400 flex-shrink-0" />
+                <div className="min-w-0">
                   <p className="text-xs uppercase text-slate-400">Téléphone</p>
                   <p className="font-medium text-slate-900">{child.parentPhone || "Non renseigné"}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-3 text-sm text-slate-600 md:col-span-2">
-                <MapPin className="h-5 w-5 text-blue-400" />
-                <div>
+              <div className="flex items-center gap-2 text-sm text-slate-600 md:col-span-2">
+                <MapPin className="h-4 w-4 text-blue-400 flex-shrink-0" />
+                <div className="min-w-0">
                   <p className="text-xs uppercase text-slate-400">Adresse</p>
                   <p className="font-medium text-slate-900">{child.address || "Non renseignée"}</p>
                 </div>
@@ -421,30 +421,30 @@ export default function ChildDetailsModal({
             </div>
           </section>
 
-          <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-            <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
-              <Stethoscope className="h-4 w-4 text-blue-500" />
+          <section className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
+            <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <Stethoscope className="h-3.5 w-3.5 text-blue-500" />
               Suivi vaccinal
             </h3>
 
             {loading ? (
-              <div className="flex items-center justify-center py-10">
-                <div className="mx-auto h-10 w-10 animate-spin rounded-full border-b-2 border-blue-600" />
+              <div className="flex items-center justify-center py-6">
+                <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600" />
               </div>
             ) : error ? (
-              <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
-                <AlertCircle className="h-5 w-5" />
+              <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+                <AlertCircle className="h-4 w-4" />
                 {error}
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-100">
-                      <Syringe className="h-5 w-5 text-blue-600" />
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="rounded-lg border border-blue-100 bg-blue-50 p-3">
+                  <div className="flex items-start gap-2">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-100 flex-shrink-0">
+                      <Syringe className="h-4 w-4 text-blue-600" />
                     </div>
-                    <div className="flex flex-1 items-start justify-between gap-4 text-sm text-slate-600">
-                      <div>
+                    <div className="flex flex-1 items-start justify-between gap-2 text-xs text-slate-600 min-w-0">
+                      <div className="min-w-0">
                         <p className="font-semibold text-slate-900">Vaccins à faire</p>
                         <p>
                           {dueCount > 0
@@ -453,44 +453,44 @@ export default function ChildDetailsModal({
                         </p>
                         {sortedDueEntries.length > 0 && (
                           <p className="mt-1 text-xs text-blue-600">
-                            Prochaine dose à prévoir : dose {sortedDueEntries[0].dose}
+                            Prochaine dose : dose {sortedDueEntries[0].dose}
                           </p>
                         )}
                       </div>
                     </div>
                   </div>
                 </div>
-                <div className="rounded-xl border border-amber-100 bg-amber-50 p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-100">
-                      <Calendar className="h-5 w-5 text-amber-600" />
+                <div className="rounded-lg border border-amber-100 bg-amber-50 p-3">
+                  <div className="flex items-start gap-2">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-100 flex-shrink-0">
+                      <Calendar className="h-4 w-4 text-amber-600" />
                     </div>
-                    <div className="text-sm text-slate-600">
+                    <div className="text-xs text-slate-600 min-w-0">
                       <p className="font-semibold text-slate-900">Prochain rendez-vous</p>
                       {currentNextAppointment ? (
-                        <p>{formatDate(currentNextAppointment, true)}</p>
+                        <p className="text-xs">{formatDate(currentNextAppointment, true)}</p>
                       ) : (
-                        <p className="text-sm text-slate-500">Non planifié</p>
+                        <p className="text-xs text-slate-500">Non planifié</p>
                       )}
                       {canSchedule && (
-                        <div className="mt-2">
+                        <div className="mt-1.5">
                           {scheduleOptions.length > 0 ? (
                             <button
                               type="button"
                               onClick={handleOpenSchedule}
-                              className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-semibold text-amber-700 transition hover:bg-amber-100"
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-amber-700 transition hover:bg-amber-100"
                             >
-                              <CalendarPlus className="h-4 w-4" />
-                              Programmer un rendez-vous
+                              <CalendarPlus className="h-3.5 w-3.5" />
+                              Programmer
                             </button>
                           ) : (
                             <p className="text-xs text-slate-400">
-                              Aucun vaccin à programmer pour le moment
+                              Aucun vaccin à programmer
                             </p>
                           )}
                           {scheduleError && scheduleOptions.length === 0 && (
-                            <div className="mt-2 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
-                              <AlertCircle className="h-4 w-4" />
+                            <div className="mt-1.5 flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs text-red-600">
+                              <AlertCircle className="h-3.5 w-3.5" />
                               {scheduleError}
                             </div>
                           )}
@@ -504,31 +504,31 @@ export default function ChildDetailsModal({
           </section>
         </div>
 
-        <div className="flex items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4">
+        <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-6 py-3 flex-shrink-0">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-white"
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-white"
           >
             Fermer
           </button>
           <button
             type="button"
             onClick={() => setShowDocumentsModal(true)}
-            className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
             disabled={loading || !!error}
           >
-            <FileImage className="h-4 w-4" />
+            <FileImage className="h-3.5 w-3.5" />
             Documents
           </button>
           <button
             type="button"
             onClick={() => setShowRecord(true)}
-            className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+            className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700"
             disabled={loading || !!error}
           >
-            <Syringe className="h-4 w-4" />
-            Voir le carnet complet
+            <Syringe className="h-3.5 w-3.5" />
+            Carnet complet
           </button>
         </div>
       </div>

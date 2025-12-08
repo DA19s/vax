@@ -8,15 +8,19 @@ import {
   Loader2,
   AlertCircle,
   X,
+  Upload,
+  FileText,
 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5050";
 
 type VaccinationProof = {
   id: string;
+  title: string;
   fileName: string;
   fileSize: number | null;
   mimeType: string | null;
+  uploadedBy: string | null;
   uploadedAt: string;
   createdAt: string;
 };
@@ -45,6 +49,11 @@ export default function ChildDocumentsModal({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [loadingFile, setLoadingFile] = useState(false);
+  const [showUploadForm, setShowUploadForm] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadTitle, setUploadTitle] = useState("");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const fetchProofs = useCallback(async () => {
     if (!token || !childId) {
@@ -156,7 +165,7 @@ export default function ChildDocumentsModal({
         setViewingProof(null);
       }
     } else if (token) {
-      // Pour les PDFs et autres fichiers, utiliser fetch puis ouvrir dans un nouvel onglet
+      // Pour les PDFs et autres fichiers, créer une URL blob pour affichage dans la modal
       try {
         const response = await fetch(
           `${API_URL}/api/vaccination-proofs/${proof.id}/file`,
@@ -172,38 +181,33 @@ export default function ChildDocumentsModal({
             throw new Error("Le fichier est vide");
           }
           
+          // Créer une URL blob pour afficher dans la modal
           const url = window.URL.createObjectURL(blob);
-          const newWindow = window.open(url, "_blank");
-          if (!newWindow) {
-            alert("Veuillez autoriser les pop-ups pour afficher le document");
-            window.URL.revokeObjectURL(url);
-          } else {
-            setTimeout(() => {
-              window.URL.revokeObjectURL(url);
-            }, 1000);
-          }
-          setViewingProof(null);
+          setFileUrl(url);
           setLoadingFile(false);
-          return;
         } else {
           const errorData = await response.json().catch(() => null);
           console.error("Erreur chargement fichier:", errorData);
           alert(errorData?.message || "Impossible de charger le fichier");
+          setLoadingFile(false);
+          setViewingProof(null);
         }
       } catch (err) {
         console.error("Erreur chargement fichier:", err);
         alert("Erreur lors du chargement du fichier");
-      } finally {
         setLoadingFile(false);
+        setViewingProof(null);
       }
     }
   };
 
   const handleCloseViewer = () => {
     setViewingProof(null);
-    // Nettoyer seulement si c'est un blob URL (pas base64)
-    if (fileUrl && !fileUrl.startsWith("data:")) {
-      window.URL.revokeObjectURL(fileUrl);
+    // Nettoyer les blob URLs pour libérer la mémoire
+    if (fileUrl) {
+      if (fileUrl.startsWith("blob:")) {
+        window.URL.revokeObjectURL(fileUrl);
+      }
     }
     setFileUrl(null);
     setLoadingFile(false);
@@ -309,6 +313,54 @@ export default function ChildDocumentsModal({
     return false;
   };
 
+  const handleUploadFile = async () => {
+    if (!uploadFile || !uploadTitle.trim()) {
+      setUploadError("Veuillez sélectionner un fichier et saisir un titre");
+      return;
+    }
+
+    try {
+      setUploading(true);
+      setUploadError(null);
+
+      const formData = new FormData();
+      formData.append("file", uploadFile);
+      formData.append("title", uploadTitle.trim());
+
+      const response = await fetch(
+        `${API_URL}/api/children/${childId}/vaccination-proofs/upload`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          body: formData,
+        },
+      );
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.message || "Impossible d'uploader le document");
+      }
+
+      // Réinitialiser le formulaire
+      setUploadTitle("");
+      setUploadFile(null);
+      setShowUploadForm(false);
+      
+      // Recharger la liste
+      await fetchProofs();
+    } catch (err) {
+      setUploadError(
+        err instanceof Error
+          ? err.message
+          : "Impossible d'uploader le document",
+      );
+    } finally {
+      setUploading(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -322,16 +374,99 @@ export default function ChildDocumentsModal({
               </h2>
               <p className="text-sm text-slate-500">{childName}</p>
             </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-full bg-slate-100 p-2 text-slate-600 transition hover:bg-slate-200"
-            >
-              <X className="h-5 w-5" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowUploadForm(!showUploadForm)}
+                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+              >
+                <Upload className="h-4 w-4" />
+                Ajouter un document
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-full bg-slate-100 p-2 text-slate-600 transition hover:bg-slate-200"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
           </div>
 
           <div className="max-h-[calc(90vh-120px)] overflow-auto p-6">
+            {showUploadForm && (
+              <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <h3 className="mb-4 text-sm font-semibold text-slate-900">
+                  Ajouter un nouveau document
+                </h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-700">
+                      Titre du document *
+                    </label>
+                    <input
+                      type="text"
+                      value={uploadTitle}
+                      onChange={(e) => setUploadTitle(e.target.value)}
+                      placeholder="Ex: Certificat de vaccination BCG"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-700">
+                      Fichier *
+                    </label>
+                    <input
+                      type="file"
+                      accept="image/*,.pdf"
+                      onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm file:mr-4 file:rounded-lg file:border-0 file:bg-blue-600 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-blue-700"
+                    />
+                    <p className="mt-1 text-xs text-slate-500">
+                      Formats acceptés: JPG, PNG, WebP, PDF (max 10MB)
+                    </p>
+                  </div>
+                  {uploadError && (
+                    <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
+                      {uploadError}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleUploadFile}
+                      disabled={uploading || !uploadFile || !uploadTitle.trim()}
+                      className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {uploading ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Upload en cours...
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="h-4 w-4" />
+                          Uploader
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowUploadForm(false);
+                        setUploadTitle("");
+                        setUploadFile(null);
+                        setUploadError(null);
+                      }}
+                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                    >
+                      Annuler
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {loading ? (
               <div className="flex items-center justify-center py-16">
                 <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
@@ -371,10 +506,10 @@ export default function ChildDocumentsModal({
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-semibold text-slate-900">
-                          {proof.fileName}
+                          {proof.title}
                         </p>
                         <p className="text-xs text-slate-500">
-                          {formatFileSize(proof.fileSize)} •{" "}
+                          {proof.fileName} • {formatFileSize(proof.fileSize)} •{" "}
                           {formatDate(proof.uploadedAt)}
                         </p>
                       </div>
@@ -473,9 +608,26 @@ export default function ChildDocumentsModal({
                       crossOrigin="anonymous"
                     />
                   </div>
+                ) : viewingProof.mimeType === "application/pdf" || viewingProof.fileName.toLowerCase().endsWith(".pdf") ? (
+                  <div className="flex items-center justify-center w-full h-full min-h-[60vh]">
+                    <iframe
+                      src={fileUrl}
+                      title={viewingProof.fileName}
+                      className="w-full rounded-lg shadow-lg"
+                      style={{ minHeight: "60vh", maxHeight: "70vh" }}
+                      onError={() => {
+                        console.error("Erreur chargement PDF");
+                        alert("Impossible d'afficher le PDF");
+                        setViewingProof(null);
+                        setFileUrl(null);
+                      }}
+                    />
+                  </div>
                 ) : (
-                  <div className="flex items-center justify-center py-16 text-slate-500">
-                    <p>Ce type de fichier ne peut pas être affiché directement</p>
+                  <div className="flex flex-col items-center justify-center py-16 text-slate-500">
+                    <FileText className="h-16 w-16 mb-4 text-slate-300" />
+                    <p className="mb-2">Ce type de fichier ne peut pas être affiché directement</p>
+                    <p className="text-sm text-slate-400">{viewingProof.fileName}</p>
                   </div>
                 )
               ) : (

@@ -1219,71 +1219,29 @@ const markVaccinesDone = async (req, res, next) => {
         }
       }
 
+      // Mettre à jour le statut de l'enfant si nécessaire
+      const hasLateOrOverdue = await tx.childVaccineLate.count({
+        where: { childId },
+      }) > 0 || await tx.childVaccineOverdue.count({
+        where: { childId },
+      }) > 0;
+
+      // Activer automatiquement le compte après sélection des vaccins et dates
+      await tx.children.update({
+        where: { id: childId },
+        data: {
+          status: hasLateOrOverdue ? "PAS_A_JOUR" : "A_JOUR",
+          isActive: true, // Activer automatiquement le compte
+        },
+      });
+
       await rebuildChildVaccinationBuckets(childId, tx);
     });
-
-    // Vérifier si des vaccins ont été sélectionnés
-    const hasSelectedVaccines = vaccines && vaccines.length > 0;
-    
-    // Récupérer l'enfant pour vérifier son état
-    const updatedChild = await prisma.children.findUnique({
-      where: { id: childId },
-      include: {
-        healthCenter: {
-          select: { name: true, id: true },
-        },
-      },
-    });
-
-    if (!updatedChild) {
-      return res.status(404).json({
-        success: false,
-        message: "Enfant non trouvé",
-      });
-    }
-
-    // Si aucun vaccin sélectionné, activer le compte directement
-    if (!hasSelectedVaccines) {
-      await prisma.children.update({
-        where: { id: childId },
-        data: { isActive: true },
-      });
-    } else {
-      // Si des vaccins ont été sélectionnés, le compte reste non activé
-      // Envoyer un email aux agents pour les informer qu'un compte est en attente
-      try {
-        const { sendChildAccountPendingEmail } = require("../services/emailService");
-        const agents = await prisma.user.findMany({
-          where: {
-            role: "AGENT",
-            agentLevel: "ADMIN",
-            healthCenterId: updatedChild.healthCenterId,
-          },
-          select: { email: true },
-        });
-
-        if (agents.length > 0) {
-          const agentEmails = agents.map((a) => a.email).filter(Boolean);
-          if (agentEmails.length > 0) {
-            await sendChildAccountPendingEmail({
-              agentEmails,
-              childName: `${updatedChild.firstName} ${updatedChild.lastName}`,
-              parentName: updatedChild.fatherName || updatedChild.motherName || "Parent",
-              healthCenterName: updatedChild.healthCenter?.name || "Non spécifié",
-            });
-          }
-        }
-      } catch (emailError) {
-        console.error("Erreur envoi email agents (compte en attente):", emailError);
-        // Ne pas bloquer le processus si l'email échoue
-      }
-    }
 
     res.json({
       success: true,
       message: "Vaccins marqués comme effectués",
-      isActive: !hasSelectedVaccines, // Actif si aucun vaccin sélectionné
-      needsVerification: hasSelectedVaccines, // Nécessite vérification si des vaccins sélectionnés
+      isActive: true, // Compte toujours activé maintenant
     });
   } catch (error) {
     next(error);
