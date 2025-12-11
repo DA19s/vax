@@ -19,3 +19,6 @@ CREATE INDEX "VaccinationProof_childId_idx" ON "VaccinationProof"("childId");
 -- AddForeignKey
 ALTER TABLE "VaccinationProof" ADD CONSTRAINT "VaccinationProof_childId_fkey" FOREIGN KEY ("childId") REFERENCES "Children"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
+
+
+

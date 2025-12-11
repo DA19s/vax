@@ -955,6 +955,199 @@ const getDistrictDetails = async (req, res, next) => {
 };
 
 /**
+ * GET /api/reports/district
+ * Rapports pour les utilisateurs DISTRICT (basé sur les centres de santé)
+ */
+const getDistrictReports = async (req, res, next) => {
+  if (req.user.role !== "DISTRICT" || !req.user.districtId) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  try {
+    const { period = "6months" } = req.query;
+    const { start, end } = getPeriodDates(period);
+    const districtId = req.user.districtId;
+
+    // Get district info
+    const district = await prisma.district.findUnique({
+      where: { id: districtId },
+      include: {
+        commune: {
+          include: {
+            region: true,
+          },
+        },
+        healthCenters: true,
+      },
+    });
+
+    if (!district) {
+      return res.status(404).json({ message: "District non trouvé" });
+    }
+
+    const totalCenters = district.healthCenters.length;
+
+    // Get all children in the district
+    const children = await prisma.children.findMany({
+      where: {
+        healthCenter: {
+          districtId,
+        },
+      },
+    });
+
+    const totalChildren = children.length;
+
+    // Total vaccinations
+    const totalVaccinations = await prisma.childVaccineCompleted.count({
+      where: {
+        child: {
+          healthCenter: {
+            districtId,
+          },
+        },
+      },
+    });
+
+    // Coverage rate
+    const totalDueVaccines = await prisma.childVaccineDue.count({
+      where: {
+        child: {
+          healthCenter: {
+            districtId,
+          },
+        },
+      },
+    });
+
+    const coverageRate = totalDueVaccines > 0
+      ? Math.round((totalVaccinations / (totalVaccinations + totalDueVaccines)) * 100)
+      : 100;
+
+    // Monthly trend
+    const vaccinations = await prisma.childVaccineCompleted.findMany({
+      where: {
+        child: {
+          healthCenter: {
+            districtId,
+          },
+        },
+        administeredAt: { gte: start, lte: end },
+      },
+      select: { administeredAt: true },
+    });
+    const monthlyTrendData = buildMonthlyVaccinationSeries(vaccinations, period);
+    const monthlyTrend = monthlyTrendData.map((item) => ({
+      month: item.month,
+      count: item.value,
+    }));
+
+    // Vaccine distribution
+    const vaccineStats = await prisma.childVaccineCompleted.groupBy({
+      by: ["vaccineId"],
+      where: {
+        child: {
+          healthCenter: {
+            districtId,
+          },
+        },
+      },
+      _count: { id: true },
+    });
+
+    const totalVaccineCount = vaccineStats.reduce((sum, v) => sum + v._count.id, 0);
+    const vaccineDistribution = await Promise.all(
+      vaccineStats.map(async (stat) => {
+        const vaccine = await prisma.vaccine.findUnique({
+          where: { id: stat.vaccineId },
+          select: { name: true },
+        });
+        return {
+          vaccine: vaccine?.name || "Inconnu",
+          total: stat._count.id,
+          percentage: totalVaccineCount > 0
+            ? Math.round((stat._count.id / totalVaccineCount) * 100)
+            : 0,
+        };
+      })
+    );
+
+    // Health center performance
+    const centerPerformance = await Promise.all(
+      district.healthCenters.map(async (hc) => {
+        const hcChildren = await prisma.children.count({
+          where: { healthCenterId: hc.id },
+        });
+
+        const hcVaccinations = await prisma.childVaccineCompleted.count({
+          where: {
+            child: { healthCenterId: hc.id },
+          },
+        });
+
+        const hcDue = await prisma.childVaccineDue.count({
+          where: {
+            child: { healthCenterId: hc.id },
+          },
+        });
+
+        const hcCoverage = (hcVaccinations + hcDue) > 0
+          ? Math.round((hcVaccinations / (hcVaccinations + hcDue)) * 100)
+          : 0;
+
+        // Check stock status for health center
+        const hcStocks = await prisma.stockHEALTHCENTER.findMany({
+          where: { healthCenterId: hc.id },
+        });
+
+        const totalStock = hcStocks.reduce((sum, s) => sum + (s.quantity || 0), 0);
+        let stockStatus = "good";
+        if (totalStock < 50) stockStatus = "critical";
+        else if (totalStock < 100) stockStatus = "warning";
+
+        return {
+          name: hc.name,
+          vaccinations: hcVaccinations,
+          coverage: hcCoverage,
+          stock: stockStatus,
+        };
+      })
+    );
+
+    // Alerts
+    const alerts = [];
+    if (coverageRate < 75) {
+      alerts.push({
+        type: "coverage",
+        message: `Taux de couverture faible: ${coverageRate}%`,
+        severity: "high",
+      });
+    }
+
+    const criticalStocks = centerPerformance.filter((c) => c.stock === "critical").length;
+    if (criticalStocks > 0) {
+      alerts.push({
+        type: "stock",
+        message: `${criticalStocks} centre(s) de santé avec stocks critiques`,
+        severity: "high",
+      });
+    }
+
+    res.json({
+      totalCenters,
+      totalVaccinations,
+      coverageRate,
+      centerPerformance,
+      vaccineDistribution,
+      monthlyTrend,
+      alerts,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * GET /api/reports/healthcenter/:regionName/:districtName/:healthCenterName
  * Détails d'un centre de santé spécifique
  */
@@ -1167,6 +1360,7 @@ module.exports = {
   getAgentReports,
   getRegionalReports,
   getNationalReports,
+  getDistrictReports,
   getRegionDetails,
   getDistrictDetails,
   getHealthCenterDetails,

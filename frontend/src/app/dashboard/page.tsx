@@ -5,8 +5,6 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   AlertCircle,
-  ArrowDownRight,
-  ArrowUpRight,
   LayoutDashboard,
   TrendingUp,
   Users,
@@ -113,11 +111,6 @@ type AgentDashboardStats = {
 };
 
 type AgentPeriod = "week" | "month" | "year";
-
-type HealthCenterMonthlySeries = {
-  name: string;
-  monthly: MonthlyVaccinationPoint[];
-};
 
 type DistrictDashboardStats = {
   district: string;
@@ -463,8 +456,6 @@ export default function DashboardPage() {
       icon: LucideIcon;
       bgColor: string;
       textColor: string;
-      trend: string;
-      trendUp: boolean;
     }[] = [
       {
         title: "Enfants enregistrés",
@@ -472,8 +463,6 @@ export default function DashboardPage() {
         icon: Users,
         bgColor: "bg-blue-50",
         textColor: "text-blue-600",
-        trend: "+12%",
-        trendUp: true,
       },
       {
         title: "Vaccinations totales",
@@ -481,8 +470,6 @@ export default function DashboardPage() {
         icon: Activity,
         bgColor: "bg-green-50",
         textColor: "text-green-600",
-        trend: "+8%",
-        trendUp: true,
       },
     ];
 
@@ -507,23 +494,9 @@ export default function DashboardPage() {
                   className="animate-slideUp cursor-pointer rounded-xl border border-gray-100 bg-white p-6 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md"
                   style={{ animationDelay: `${index * 100}ms` }}
                 >
-                  <div className="mb-4 flex items-start justify-between">
+                  <div className="mb-4">
                     <div className={`rounded-lg p-3 ${card.bgColor}`}>
                       <Icon className={`h-6 w-6 ${card.textColor}`} />
-                    </div>
-                    <div className="flex items-center gap-1 text-sm">
-                      {card.trendUp ? (
-                        <ArrowUpRight className="h-4 w-4 text-green-500" />
-                      ) : (
-                        <ArrowDownRight className="h-4 w-4 text-red-500" />
-                      )}
-                      <span
-                        className={`font-medium ${
-                          card.trendUp ? "text-green-600" : "text-red-600"
-                        }`}
-                      >
-                        {card.trend}
-                      </span>
                     </div>
                   </div>
                   <h3 className="mb-2 text-sm font-medium text-gray-600">

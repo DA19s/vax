@@ -10,6 +10,9 @@ router.get("/agent", requireAuth, reportController.getAgentReports);
 // Rapports pour les régions
 router.get("/regional", requireAuth, reportController.getRegionalReports);
 
+// Rapports pour les districts
+router.get("/district", requireAuth, reportController.getDistrictReports);
+
 // Rapports pour le niveau national
 router.get("/national", requireAuth, reportController.getNationalReports);
 

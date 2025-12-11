@@ -632,7 +632,7 @@ export default function ChildrenTab({
                         </td>
                         <td className="px-6 py-4 text-slate-600">{formatAgeLabel(child.birthDate)}</td>
                         <td className="px-6 py-4 text-slate-600">
-                          {showRegionFilter ? child.region || "-" : child.district || "-"}
+                          {normalizedRole === "NATIONAL" ? child.region || "-" : child.district || "-"}
                         </td>
                         <td className="px-6 py-4 text-slate-600">{child.healthCenter || "-"}</td>
                         <td className="px-6 py-4">
