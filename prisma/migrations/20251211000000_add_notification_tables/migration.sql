@@ -57,3 +57,4 @@ ALTER TABLE "StockExpirationNotification" ADD CONSTRAINT "StockExpirationNotific
 -- AddForeignKey
 ALTER TABLE "AppointmentNotification" ADD CONSTRAINT "AppointmentNotification_childId_fkey" FOREIGN KEY ("childId") REFERENCES "Children"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
+

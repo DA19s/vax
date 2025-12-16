@@ -1351,6 +1351,12 @@ const deleteChild = async (req, res, next) => {
       await tx.childVaccineLate.deleteMany({ where: { childId: id } });
       await tx.childVaccineOverdue.deleteMany({ where: { childId: id } });
 
+      // Supprimer les demandes de vaccin
+      await tx.vaccineRequest.deleteMany({ where: { childId: id } });
+
+      // Supprimer les enregistrements (Record utilise childrenId)
+      await tx.record.deleteMany({ where: { childrenId: id } });
+
       // Supprimer l'enfant
       await tx.children.delete({ where: { id } });
     });

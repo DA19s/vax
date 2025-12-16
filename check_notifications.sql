@@ -16,3 +16,4 @@ JOIN "User" u ON sen."userId" = u.id
 WHERE sl.id = '1e3c039e-a40b-44cd-87e1-8366b67a966d'
 ORDER BY sen."notifiedAt" DESC;
 
+

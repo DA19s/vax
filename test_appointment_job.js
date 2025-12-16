@@ -15,3 +15,4 @@ checkAppointmentNotifications()
     process.exit(1);
   });
 
+
