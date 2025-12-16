@@ -465,37 +465,35 @@ export default function ChildDetailsModal({
                     <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-100 flex-shrink-0">
                       <Calendar className="h-4 w-4 text-amber-600" />
                     </div>
-                    <div className="text-xs text-slate-600 min-w-0">
+                    <div className="text-xs text-slate-600 min-w-0 flex-1">
                       <p className="font-semibold text-slate-900">Prochain rendez-vous</p>
                       {currentNextAppointment ? (
-                        <p className="text-xs">{formatDate(currentNextAppointment, true)}</p>
+                        <p className="text-xs mt-0.5">{formatDate(currentNextAppointment, true)}</p>
                       ) : (
-                        <p className="text-xs text-slate-500">Non planifié</p>
+                        <p className="text-xs text-slate-500 mt-0.5">Non planifié</p>
                       )}
-                      {canSchedule && (
-                        <div className="mt-1.5">
-                          {scheduleOptions.length > 0 ? (
-                            <button
-                              type="button"
-                              onClick={handleOpenSchedule}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-amber-700 transition hover:bg-amber-100"
-                            >
-                              <CalendarPlus className="h-3.5 w-3.5" />
-                              Programmer
-                            </button>
-                          ) : (
-                            <p className="text-xs text-slate-400">
-                              Aucun vaccin à programmer
-                            </p>
-                          )}
-                          {scheduleError && scheduleOptions.length === 0 && (
-                            <div className="mt-1.5 flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs text-red-600">
-                              <AlertCircle className="h-3.5 w-3.5" />
-                              {scheduleError}
-                            </div>
-                          )}
-                        </div>
-                      )}
+                      <div className="mt-1.5">
+                        {scheduleOptions.length > 0 ? (
+                          <button
+                            type="button"
+                            onClick={handleOpenSchedule}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-amber-700 transition hover:bg-amber-100"
+                          >
+                            <CalendarPlus className="h-3.5 w-3.5" />
+                            Programmer
+                          </button>
+                        ) : (
+                          <p className="text-xs text-slate-400">
+                            Aucun vaccin à programmer
+                          </p>
+                        )}
+                        {scheduleError && scheduleOptions.length === 0 && (
+                          <div className="mt-1.5 flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs text-red-600">
+                            <AlertCircle className="h-3.5 w-3.5" />
+                            {scheduleError}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
