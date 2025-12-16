@@ -29,3 +29,4 @@ WHERE sl.expiration::date = '2025-12-18'
 ORDER BY sen."notifiedAt" DESC;
 
 
+
