@@ -109,6 +109,40 @@ export default function ChildDetailsModal({
   const [currentNextAppointment, setCurrentNextAppointment] = useState<string | null>(
     child.nextAppointment ?? null,
   );
+  const [agents, setAgents] = useState<Array<{ id: string; firstName: string; lastName: string; email: string; agentLevel: string | null }>>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [loadingAgents, setLoadingAgents] = useState(false);
+
+  // Charger les agents du centre de santé
+  const fetchAgents = useCallback(async () => {
+    setLoadingAgents(true);
+    try {
+      const response = await fetch(`${apiBase}/api/users/health-center/agents`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        console.error("Erreur chargement agents:", response.status);
+        return;
+      }
+
+      const data = await response.json();
+      setAgents(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Erreur chargement agents:", err);
+    } finally {
+      setLoadingAgents(false);
+    }
+  }, [apiBase, token]);
+
+  useEffect(() => {
+    if (canSchedule) {
+      fetchAgents();
+    }
+  }, [canSchedule, fetchAgents]);
 
   const fetchDetail = useCallback(async () => {
     setLoading(true);
@@ -275,6 +309,7 @@ export default function ChildDetailsModal({
     setScheduleDate("");
     setScheduleError(null);
     setScheduleSubmitting(false);
+    setSelectedAgentId(null);
   };
 
   const handleSubmitSchedule = async (event: React.FormEvent) => {
@@ -318,6 +353,7 @@ export default function ChildDetailsModal({
           vaccineId: selectedOption.vaccineId,
           vaccineCalendarId: selectedOption.calendarId,
           scheduledFor: scheduledFor.toISOString(),
+          administeredById: selectedAgentId || null,
         }),
       });
 
@@ -616,6 +652,36 @@ export default function ChildDetailsModal({
                   min={new Date().toISOString().slice(0, 16)}
                   required
                 />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="agentSelect"
+                  className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+                >
+                  Agent qui administrera le vaccin (optionnel)
+                </label>
+                {loadingAgents ? (
+                  <div className="mt-1 flex items-center gap-2 text-sm text-slate-500">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Chargement des agents...
+                  </div>
+                ) : (
+                  <select
+                    id="agentSelect"
+                    value={selectedAgentId ?? ""}
+                    onChange={(event) => setSelectedAgentId(event.target.value || null)}
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                  >
+                    <option value="">Aucun agent spécifié</option>
+                    {agents.map((agent) => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.firstName} {agent.lastName}
+                        {agent.agentLevel === "ADMIN" ? " (Admin)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
 
               {scheduleError && (

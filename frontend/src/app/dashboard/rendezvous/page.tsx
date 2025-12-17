@@ -137,6 +137,9 @@ export default function RendezvousPage() {
   const [scheduleRequestId, setScheduleRequestId] = useState<string | null>(null);
   const [scheduleRequestDate, setScheduleRequestDate] = useState<string>("");
   const [scheduleRequestLoading, setScheduleRequestLoading] = useState(false);
+  const [agents, setAgents] = useState<Array<{ id: string; firstName: string; lastName: string; email: string; agentLevel: string | null }>>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [loadingAgents, setLoadingAgents] = useState(false);
   const [search, setSearch] = useState<string>("");
   const [regionFilter, setRegionFilter] = useState<string>("Toutes");
   const [districtFilter, setDistrictFilter] = useState<string>("Tous");
@@ -231,6 +234,32 @@ export default function RendezvousPage() {
     }
   }, [accessToken]);
 
+  // Charger les agents du centre de santé
+  const fetchAgents = useCallback(async () => {
+    if (!accessToken || !canManage) return;
+    setLoadingAgents(true);
+    try {
+      const response = await fetch(`${API_URL}/api/users/health-center/agents`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        console.error("Erreur chargement agents:", response.status);
+        return;
+      }
+
+      const data = await response.json();
+      setAgents(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Erreur chargement agents:", err);
+    } finally {
+      setLoadingAgents(false);
+    }
+  }, [accessToken, canManage]);
+
   const handleScheduleRequest = async (requestId: string) => {
     if (!accessToken || !scheduleRequestDate) return;
 
@@ -250,6 +279,7 @@ export default function RendezvousPage() {
         },
         body: JSON.stringify({
           scheduledFor: date.toISOString(),
+          administeredById: selectedAgentId || null,
         }),
       });
 
@@ -262,6 +292,7 @@ export default function RendezvousPage() {
       await fetchRequests();
       setScheduleRequestId(null);
       setScheduleRequestDate("");
+      setSelectedAgentId(null);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur lors de la programmation");
@@ -274,8 +305,9 @@ export default function RendezvousPage() {
     fetchScheduled();
     if (canManage) {
       fetchRequests();
+      fetchAgents();
     }
-  }, [fetchScheduled, fetchRequests, canManage]);
+  }, [fetchScheduled, fetchRequests, fetchAgents, canManage]);
 
   useEffect(() => {
     if (!editTarget) {
@@ -1059,7 +1091,7 @@ export default function RendezvousPage() {
                       </p>
                     </div>
                   </div>
-                  <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+                  <div className="mt-6 space-y-3">
                     <div className="flex-1">
                       <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Date et heure du rendez-vous
@@ -1075,6 +1107,36 @@ export default function RendezvousPage() {
                         className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                       />
                     </div>
+                    <div className="flex-1">
+                      <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Agent qui administrera le vaccin (optionnel)
+                      </label>
+                      {loadingAgents ? (
+                        <div className="flex items-center gap-2 text-sm text-slate-500">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Chargement des agents...
+                        </div>
+                      ) : (
+                        <select
+                          value={scheduleRequestId === request.id ? (selectedAgentId ?? "") : ""}
+                          onChange={(e) => {
+                            setScheduleRequestId(request.id);
+                            setSelectedAgentId(e.target.value || null);
+                          }}
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                        >
+                          <option value="">Aucun agent spécifié</option>
+                          {agents.map((agent) => (
+                            <option key={agent.id} value={agent.id}>
+                              {agent.firstName} {agent.lastName}
+                              {agent.agentLevel === "ADMIN" ? " (Admin)" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  </div>
+                  <div className="mt-3 flex items-center justify-end">
                     <button
                       type="button"
                       onClick={() => handleScheduleRequest(request.id)}

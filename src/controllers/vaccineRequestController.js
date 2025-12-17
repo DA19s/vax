@@ -448,10 +448,43 @@ const getVaccineRequests = async (req, res, next) => {
  * POST /api/vaccine-requests/:id/schedule
  * Programmer un rendez-vous à partir d'une demande
  */
+// Helper pour valider qu'un agent appartient au centre de santé
+const validateAgentBelongsToHealthCenter = async (tx, agentId, healthCenterId) => {
+  if (!agentId) return null; // Si pas d'agent spécifié, c'est OK (optionnel)
+  
+  const agent = await tx.user.findUnique({
+    where: { id: agentId },
+    select: { id: true, role: true, healthCenterId: true, isActive: true },
+  });
+
+  if (!agent) {
+    throw Object.assign(new Error("Agent introuvable"), { status: 404 });
+  }
+
+  if (agent.role !== "AGENT") {
+    throw Object.assign(new Error("L'utilisateur sélectionné n'est pas un agent"), {
+      status: 400,
+    });
+  }
+
+  if (!agent.isActive) {
+    throw Object.assign(new Error("L'agent sélectionné n'est pas actif"), { status: 400 });
+  }
+
+  if (agent.healthCenterId !== healthCenterId) {
+    throw Object.assign(
+      new Error("L'agent sélectionné n'appartient pas au centre de santé de l'enfant"),
+      { status: 403 }
+    );
+  }
+
+  return agent;
+};
+
 const scheduleVaccineRequest = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { scheduledFor, notes } = req.body;
+    const { scheduledFor, notes, administeredById = null } = req.body;
 
     if (!scheduledFor) {
       return res.status(400).json({
@@ -521,6 +554,13 @@ const scheduleVaccineRequest = async (req, res, next) => {
 
     // Créer le rendez-vous programmé
     const result = await prisma.$transaction(async (tx) => {
+      // Valider que l'agent sélectionné appartient au centre de santé
+      let validatedAdministeredById = null;
+      if (administeredById) {
+        await validateAgentBelongsToHealthCenter(tx, administeredById, request.child.healthCenterId);
+        validatedAdministeredById = administeredById;
+      }
+
       // Vérifier et réserver le stock avant de créer le rendez-vous
       let reservation;
       try {
@@ -546,6 +586,7 @@ const scheduleVaccineRequest = async (req, res, next) => {
           vaccineCalendarId: request.vaccineCalendarId,
           scheduledFor: scheduledDate,
           plannerId: req.user.id,
+          administeredById: validatedAdministeredById,
           dose: request.dose ?? 1,
         },
       });

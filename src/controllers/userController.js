@@ -668,6 +668,42 @@ const listUsers = async (req, res, next) => {
 };
 
 /**
+ * GET /api/users/health-center/agents — récupérer les agents du centre de santé de l'utilisateur
+ */
+const getHealthCenterAgents = async (req, res, next) => {
+  try {
+    if (req.user.role !== "AGENT" || !req.user.healthCenterId) {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
+
+    const agents = await prisma.user.findMany({
+      where: {
+        role: "AGENT",
+        healthCenterId: req.user.healthCenterId,
+        isActive: true,
+      },
+      orderBy: [
+        { agentLevel: "asc" }, // ADMIN en premier
+        { lastName: "asc" },
+        { firstName: "asc" },
+      ],
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        phone: true,
+        agentLevel: true,
+      },
+    });
+
+    res.json(agents);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * PATCH /api/users/me — mise à jour du compte.
  */
 const updateSelf = async (req, res, next) => {
@@ -1341,6 +1377,7 @@ module.exports = {
   //createUser,
   activateUser,
   listUsers,
+  getHealthCenterAgents,
   updateSelf,
   verifyEmail,
   getUserDeletionSummary,
