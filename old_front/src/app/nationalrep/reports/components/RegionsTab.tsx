@@ -98,7 +98,7 @@ export default function RegionsTab({ regionPerformance, onRegionClick }: Regions
                   <div
                     className="h-full bg-gradient-to-r from-blue-500 to-blue-600 flex items-center justify-center text-white text-xs font-bold transition-all duration-500"
                     style={{
-                      width: `${Math.max((region.vaccinations / maxVaccinations) * 100, 5)}%`,
+                      width: `${region.vaccinations > 0 ? Math.max((region.vaccinations / maxVaccinations) * 100, 2) : 0}%`,
                       minWidth: region.vaccinations > 0 ? '40px' : '0'
                     }}
                   >

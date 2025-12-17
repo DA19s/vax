@@ -664,7 +664,12 @@ const createChildren = async (req, res, next) => {
       }
     });
 
-    await rebuildChildVaccinationBuckets(createdChild.id);
+    try {
+      await rebuildChildVaccinationBuckets(createdChild.id);
+    } catch (rebuildError) {
+      console.error("Erreur rebuildChildVaccinationBuckets:", rebuildError);
+      // Ne pas bloquer la création si le rebuild échoue
+    }
 
     const fullChild = await prisma.children.findUnique({
       where: { id: createdChild.id },
@@ -717,12 +722,17 @@ const createChildren = async (req, res, next) => {
 
     res.status(201).json(mapChildrenForResponse(fullChild));
 
-    await sendParentAccessCode({
-      to: fullChild.phoneParent,
-      parentName: fatherName || motherName || "Parent",
-      childName: `${fullChild.firstName} ${fullChild.lastName}`,
-      accessCode: fullChild.code,
-    });
+    try {
+      await sendParentAccessCode({
+        to: fullChild.phoneParent,
+        parentName: fatherName || motherName || "Parent",
+        childName: `${fullChild.firstName} ${fullChild.lastName}`,
+        accessCode: fullChild.code,
+      });
+    } catch (emailError) {
+      console.error("Erreur envoi email access code:", emailError);
+      // Ne pas bloquer la création si l'email échoue
+    }
   } catch (error) {
     next(error);
   }

@@ -212,7 +212,7 @@ export default function DistrictDetailView({ stats, onHealthCenterClick }: Distr
                   <div
                     className="h-full bg-gradient-to-r from-indigo-500 to-indigo-600 transition-all duration-500"
                     style={{
-                      width: `${Math.max((center.vaccinations / maxVaccinations) * 100, 5)}%`,
+                      width: `${center.vaccinations > 0 ? Math.max((center.vaccinations / maxVaccinations) * 100, 2) : 0}%`,
                       minWidth: center.vaccinations > 0 ? '20px' : '0'
                     }}
                   />

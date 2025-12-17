@@ -249,7 +249,7 @@ export default function HealthCenterDetailView({ stats }: HealthCenterDetailView
                   <div
                     className="h-full bg-gradient-to-r from-teal-500 to-teal-600 transition-all duration-500"
                     style={{
-                      width: `${Math.max((agent.vaccinations / maxVaccinations) * 100, 5)}%`,
+                      width: `${agent.vaccinations > 0 ? Math.max((agent.vaccinations / maxVaccinations) * 100, 2) : 0}%`,
                       minWidth: agent.vaccinations > 0 ? '20px' : '0'
                     }}
                   />

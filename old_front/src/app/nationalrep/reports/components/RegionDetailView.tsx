@@ -183,7 +183,7 @@ export default function RegionDetailView({ stats, onDistrictClick }: RegionDetai
                   <div
                     className="h-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-500"
                     style={{
-                      width: `${Math.max((district.vaccinations / maxVaccinations) * 100, 5)}%`,
+                      width: `${district.vaccinations > 0 ? Math.max((district.vaccinations / maxVaccinations) * 100, 2) : 0}%`,
                       minWidth: district.vaccinations > 0 ? '20px' : '0'
                     }}
                   />

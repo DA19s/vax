@@ -593,7 +593,7 @@ export default function NationalReportsPage() {
                           <div
                             className="h-full bg-gradient-to-r from-green-500 to-green-600 flex items-center justify-center text-white text-xs font-bold"
                             style={{
-                              width: `${Math.max((region.vaccinations / maxVaccinations) * 100, 5)}%`,
+                              width: `${region.vaccinations > 0 ? Math.max((region.vaccinations / maxVaccinations) * 100, 2) : 0}%`,
                               minWidth: region.vaccinations > 0 ? '40px' : '0'
                             }}
                           >
