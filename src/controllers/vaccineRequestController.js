@@ -255,13 +255,8 @@ const createVaccineRequest = async (req, res, next) => {
       resolvedDose = 1;
     }
 
-    if (resolvedDose > totalDoses) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Toutes les doses de ce vaccin ont déjà été administrées ou programmées.",
-      });
-    }
+    // Permet de programmer des doses supplémentaires même si dosesRequired est atteint
+    // La vérification resolvedDose > totalDoses a été supprimée pour plus de flexibilité
 
     const existingPendingRequest = await prisma.vaccineRequest.findFirst({
       where: {

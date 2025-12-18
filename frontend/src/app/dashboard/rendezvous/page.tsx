@@ -38,6 +38,11 @@ type ScheduledEntry = {
     maxAge: number | null;
     specificAge: number | null;
   } | null;
+  administeredBy: {
+    id: string;
+    firstName: string;
+    lastName: string;
+  } | null;
 };
 
 type ScheduleOption = {
@@ -62,17 +67,6 @@ const formatDateTime = (value: string) => {
   }
 };
 
-const computeAgeWindow = (entry: ScheduledEntry["vaccineCalendar"]) => {
-  if (!entry) return null;
-  const { specificAge, minAge, maxAge, ageUnit } = entry;
-  if (specificAge != null) {
-    return `Âge cible : ${specificAge} ${ageUnit?.toLowerCase() ?? ""}`;
-  }
-  if (minAge != null && maxAge != null) {
-    return `Âge recommandé : ${minAge} - ${maxAge} ${ageUnit?.toLowerCase() ?? ""}`;
-  }
-  return null;
-};
 
 type VaccineRequest = {
   id: string;
@@ -127,6 +121,7 @@ export default function RendezvousPage() {
   const [editTarget, setEditTarget] = useState<ScheduledEntry | null>(null);
   const [editDate, setEditDate] = useState<string>("");
   const [editVaccineId, setEditVaccineId] = useState<string>("");
+  const [editAdministeredById, setEditAdministeredById] = useState<string | null>(null);
   const [editOptionsLoading, setEditOptionsLoading] = useState(false);
   const [editOptions, setEditOptions] = useState<ScheduleOption[]>([]);
   const [editLoading, setEditLoading] = useState(false);
@@ -313,8 +308,11 @@ export default function RendezvousPage() {
     if (!editTarget) {
       setEditDate("");
       setEditVaccineId("");
+      setEditAdministeredById(null);
       setEditOptions([]);
       setEditOptionsLoading(false);
+    } else {
+      setEditAdministeredById(editTarget.administeredBy?.id ?? null);
     }
   }, [editTarget]);
 
@@ -777,7 +775,9 @@ export default function RendezvousPage() {
           const doseLabel = `Dose ${entry.dose ?? 1}${
             entry.vaccine?.dosesRequired ? ` / ${entry.vaccine.dosesRequired}` : ""
           }`;
-          const ageWindow = computeAgeWindow(entry.vaccineCalendar);
+          const agentName = entry.administeredBy
+            ? `${entry.administeredBy.firstName} ${entry.administeredBy.lastName}`.trim()
+            : null;
 
           return (
             <div
@@ -794,12 +794,16 @@ export default function RendezvousPage() {
                   </h2>
                   <p className="mt-1 text-sm text-slate-600">
                     {vaccineName}
-                    {ageWindow ? ` · ${ageWindow}` : ""}
                   </p>
                   <p className="mt-1 text-xs text-slate-500">{doseLabel}</p>
                   <p className="mt-1 text-sm text-slate-500">
                     Centre de santé : {healthCenterName}
                   </p>
+                  {agentName && (
+                    <p className="mt-1 text-sm text-slate-600">
+                      Agent : <span className="font-medium">{agentName}</span>
+                    </p>
+                  )}
                 </div>
                 <div className="text-right text-sm text-slate-600">
                   <p className="font-medium text-slate-900">
@@ -1217,6 +1221,7 @@ export default function RendezvousPage() {
                         scheduledFor: date.toISOString(),
                         vaccineId: editVaccineId,
                         vaccineCalendarId: selectedOption.calendarId,
+                        administeredById: editAdministeredById || null,
                       }),
                     },
                   );
@@ -1286,6 +1291,25 @@ export default function RendezvousPage() {
                   required
                 />
               </div>
+              {canManage && agents.length > 0 && (
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Agent qui va administrer le vaccin
+                  </label>
+                  <select
+                    value={editAdministeredById || ""}
+                    onChange={(event) => setEditAdministeredById(event.target.value || null)}
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                  >
+                    <option value="">— Aucun agent sélectionné —</option>
+                    {agents.map((agent) => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.firstName} {agent.lastName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               {editError && (
                 <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />

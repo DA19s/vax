@@ -1142,6 +1142,31 @@ class _ChildDashboardScreenState extends State<ChildDashboardScreen> {
                     ),
                   ],
                 ),
+                if (appointment['administeredBy'] != null) ...[
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.person,
+                        size: 14,
+                        color: Colors.blue[700],
+                      ),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          'Agent : ${appointment['administeredBy'] ?? ''}',
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            color: Colors.blue[700],
+                            fontWeight: FontWeight.w500,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),

@@ -1576,7 +1576,7 @@ const ScheduleVaccine = async (req, res, next) => {
       const totalDoses =
         Number.isFinite(dosesRequired) && dosesRequired > 0 ? dosesRequired : 1;
 
-      // Vérifier le nombre total de doses (complétées + programmées)
+      // Compter les doses complétées et programmées pour calculer le numéro de dose
       const completedCount = await tx.childVaccineCompleted.count({
         where: { childId, vaccineId },
       });
@@ -1585,14 +1585,8 @@ const ScheduleVaccine = async (req, res, next) => {
         where: { childId, vaccineId },
       });
 
-      if (completedCount + scheduledCount >= totalDoses) {
-        throw Object.assign(
-          new Error("Toutes les doses de ce vaccin ont déjà été administrées ou programmées."),
-          { status: 400 },
-        );
-      }
-
       // Calculer une dose initiale (sera réassignée après)
+      // Permet de programmer des doses supplémentaires même si dosesRequired est atteint
       const initialDose = completedCount + scheduledCount + 1;
 
       const reservation = await reserveDoseForHealthCenter(tx, {
@@ -1778,6 +1772,13 @@ const listScheduledVaccines = async (req, res, next) => {
             specificAge: true,
           },
         },
+        administeredBy: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
       },
       orderBy: [
         { scheduledFor: "asc" },
@@ -1835,6 +1836,13 @@ const listScheduledVaccines = async (req, res, next) => {
             }
           : null,
         dose: entry.dose ?? 1,
+        administeredBy: entry.administeredBy
+          ? {
+              id: entry.administeredBy.id,
+              firstName: entry.administeredBy.firstName,
+              lastName: entry.administeredBy.lastName,
+            }
+          : null,
       };
     });
 
@@ -2177,6 +2185,7 @@ const updateScheduledVaccine = async (req, res, next) => {
           vaccineId: true,
           vaccineCalendarId: true,
           dose: true,
+          administeredById: true,
           child: {
             select: {
               healthCenterId: true,
@@ -2220,6 +2229,7 @@ const updateScheduledVaccine = async (req, res, next) => {
         vaccineName: scheduled.vaccine?.name ?? null,
         vaccineCalendarId: scheduled.vaccineCalendarId,
         dose: scheduled.dose ?? 1,
+        administeredById: scheduled.administeredById,
       };
 
       if (scheduled.vaccineId !== vaccineId) {
@@ -2250,14 +2260,8 @@ const updateScheduledVaccine = async (req, res, next) => {
             vaccineId,
           },
         });
-        if (completedCount + scheduledCount >= totalDoses) {
-          throw Object.assign(
-            new Error(
-              "Toutes les doses de ce vaccin ont déjà été administrées ou programmées.",
-            ),
-            { code: "DOSE_LIMIT" },
-          );
-        }
+        // Calculer le numéro de dose initial (sera réassigné après)
+        // Permet de programmer des doses supplémentaires même si dosesRequired est atteint
         const initialDose = completedCount + scheduledCount + 1;
 
         const targetCalendarId =
@@ -2338,6 +2342,13 @@ const updateScheduledVaccine = async (req, res, next) => {
         data: updateData,
         include: {
           vaccine: { select: { id: true, name: true, dosesRequired: true } },
+          administeredBy: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
         },
       });
 
@@ -2349,6 +2360,13 @@ const updateScheduledVaccine = async (req, res, next) => {
         where: { id },
         include: {
           vaccine: { select: { id: true, name: true, dosesRequired: true } },
+          administeredBy: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
         },
       });
 
@@ -2413,6 +2431,24 @@ const updateScheduledVaccine = async (req, res, next) => {
           title: "Dose mise à jour",
           message: `La dose prévue pour ce rendez-vous est désormais la dose ${updated.dose ?? 1}.`,
         });
+      }
+
+      // Vérifier si l'agent a changé
+      const originalAdministeredById = originalSnapshot.administeredById ?? null;
+      const newAdministeredById = updated.administeredBy?.id ?? null;
+      if (originalAdministeredById !== newAdministeredById) {
+        if (newAdministeredById && updated.administeredBy) {
+          const agentName = `${updated.administeredBy.firstName} ${updated.administeredBy.lastName}`.trim();
+          updates.push({
+            title: "Agent modifié",
+            message: `L'agent qui va administrer le vaccin est désormais ${agentName}.`,
+          });
+        } else if (originalAdministeredById && !newAdministeredById) {
+          updates.push({
+            title: "Agent retiré",
+            message: "L'agent assigné à ce rendez-vous a été retiré.",
+          });
+        }
       }
 
       if (updates.length > 0) {

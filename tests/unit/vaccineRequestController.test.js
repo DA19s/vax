@@ -242,19 +242,41 @@ describe('vaccineRequestController', () => {
       });
     });
 
-    it('devrait retourner 400 si toutes les doses sont déjà administrées ou programmées', async () => {
+    it('devrait permettre de créer une demande même si toutes les doses sont déjà administrées ou programmées (flexibilité)', async () => {
       req.params.childId = 'child-1';
       req.body.vaccineId = 'vaccine-1';
       const mockChild = {
         id: 'child-1',
+        firstName: 'John',
+        lastName: 'Doe',
         gender: 'M',
         healthCenterId: 'healthcenter-1',
+        healthCenter: {
+          name: 'Centre de Santé Test',
+        },
       };
       const mockVaccine = {
         id: 'vaccine-1',
         name: 'BCG',
         dosesRequired: 1,
         gender: null,
+      };
+      const mockRequest = {
+        id: 'request-1',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        status: 'PENDING',
+        dose: 2,
+        child: {
+          firstName: 'John',
+          lastName: 'Doe',
+          healthCenter: {
+            name: 'Centre de Santé Test',
+          },
+        },
+        vaccine: {
+          name: 'BCG',
+        },
       };
       prisma.children.findUnique.mockResolvedValue(mockChild);
       prisma.vaccine.findUnique.mockResolvedValue(mockVaccine);
@@ -265,14 +287,19 @@ describe('vaccineRequestController', () => {
       prisma.childVaccineCompleted.aggregate.mockResolvedValue({ _max: { dose: 1 } });
       prisma.childVaccineScheduled.aggregate.mockResolvedValue({ _max: { dose: null } });
       prisma.vaccineRequest.aggregate.mockResolvedValue({ _max: { dose: null } });
+      prisma.vaccineRequest.findFirst.mockResolvedValue(null);
+      prisma.vaccineRequest.create.mockResolvedValue(mockRequest);
+      prisma.user.findMany.mockResolvedValue([]); // Aucun agent pour simplifier le test
 
       await createVaccineRequest(req, res, next);
 
-      expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({
-        success: false,
-        message: 'Toutes les doses de ce vaccin ont déjà été administrées ou programmées.',
-      });
+      // Le système permet maintenant de créer des demandes même si toutes les doses sont complétées
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+        })
+      );
     });
 
     it('devrait retourner 400 si une demande en attente existe déjà', async () => {
@@ -723,6 +750,7 @@ describe('vaccineRequestController', () => {
     });
   });
 });
+
 
 
 

@@ -20,6 +20,7 @@ const {
   deleteAgentAdmin,
   deleteAgentStaff,
   getSelf,
+  getHealthCenterAgents,
 } = require('../../src/controllers/userController');
 
 const prisma = require('../../src/config/prismaClient');
@@ -2623,7 +2624,104 @@ describe('userController', () => {
       expect(next).toHaveBeenCalledWith(error);
     });
   });
+
+  describe('getHealthCenterAgents', () => {
+    it('devrait retourner 403 si utilisateur n\'est pas AGENT', async () => {
+      req.user.role = 'NATIONAL';
+      req.user.healthCenterId = 'healthcenter-1';
+
+      await getHealthCenterAgents(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({ message: 'Accès refusé' });
+    });
+
+    it('devrait retourner 403 si agent n\'a pas de healthCenterId', async () => {
+      req.user.role = 'AGENT';
+      req.user.healthCenterId = null;
+
+      await getHealthCenterAgents(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({ message: 'Accès refusé' });
+    });
+
+    it('devrait retourner la liste des agents du centre de santé avec succès', async () => {
+      req.user.role = 'AGENT';
+      req.user.healthCenterId = 'healthcenter-1';
+
+      const mockAgents = [
+        {
+          id: 'agent-1',
+          firstName: 'John',
+          lastName: 'Doe',
+          email: 'john@test.com',
+          phone: '+221123456789',
+          agentLevel: 'ADMIN',
+        },
+        {
+          id: 'agent-2',
+          firstName: 'Jane',
+          lastName: 'Smith',
+          email: 'jane@test.com',
+          phone: '+221987654321',
+          agentLevel: 'STAFF',
+        },
+      ];
+
+      prisma.user.findMany.mockResolvedValue(mockAgents);
+
+      await getHealthCenterAgents(req, res, next);
+
+      expect(prisma.user.findMany).toHaveBeenCalledWith({
+        where: {
+          role: 'AGENT',
+          healthCenterId: 'healthcenter-1',
+          isActive: true,
+        },
+        orderBy: [
+          { agentLevel: 'asc' },
+          { lastName: 'asc' },
+          { firstName: 'asc' },
+        ],
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          agentLevel: true,
+        },
+      });
+      expect(res.json).toHaveBeenCalledWith(mockAgents);
+    });
+
+    it('devrait retourner une liste vide si aucun agent trouvé', async () => {
+      req.user.role = 'AGENT';
+      req.user.healthCenterId = 'healthcenter-1';
+
+      prisma.user.findMany.mockResolvedValue([]);
+
+      await getHealthCenterAgents(req, res, next);
+
+      expect(res.json).toHaveBeenCalledWith([]);
+    });
+
+    it('devrait gérer les erreurs', async () => {
+      req.user.role = 'AGENT';
+      req.user.healthCenterId = 'healthcenter-1';
+
+      const error = new Error('Erreur DB');
+      prisma.user.findMany.mockRejectedValue(error);
+
+      await getHealthCenterAgents(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(error);
+    });
+  });
 });
+
+
 
 
 

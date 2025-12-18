@@ -144,6 +144,9 @@ jest.mock('../../src/config/prismaClient', () => ({
   region: {
     findMany: jest.fn(),
   },
+  user: {
+    findUnique: jest.fn(),
+  },
   $transaction: jest.fn((callback) => {
     const mockPrisma = require('../../src/config/prismaClient');
     const mockTx = {
@@ -166,6 +169,7 @@ jest.mock('../../src/config/prismaClient', () => ({
       vaccineRequest: mockPrisma.vaccineRequest,
       stockTransfer: mockPrisma.stockTransfer,
       stockTransferLot: mockPrisma.stockTransferLot,
+      user: mockPrisma.user,
     };
     return callback(mockTx);
   }),
@@ -521,6 +525,13 @@ describe('vaccineController', () => {
   });
 
   describe('ScheduleVaccine', () => {
+    beforeEach(() => {
+      req.user.role = 'AGENT';
+      req.user.healthCenterId = 'healthcenter-1';
+      req.user.id = 'user-1';
+    });
+
+    // Tests d'autorisation
     it('devrait retourner 403 si utilisateur n\'est pas AGENT', async () => {
       req.user.role = 'NATIONAL';
       await ScheduleVaccine(req, res, next);
@@ -528,15 +539,228 @@ describe('vaccineController', () => {
     });
 
     it('devrait retourner 403 si agent n\'a pas de healthCenterId', async () => {
-      req.user.role = 'AGENT';
       req.user.healthCenterId = null;
       await ScheduleVaccine(req, res, next);
       expect(res.status).toHaveBeenCalledWith(403);
     });
 
-    it('devrait programmer un vaccin avec succès', async () => {
-      req.user.role = 'AGENT';
-      req.user.healthCenterId = 'healthcenter-1';
+    // Tests de validation des paramètres
+    it('devrait retourner 400 si tous les champs requis ne sont pas fournis', async () => {
+      req.body.childId = 'child-1';
+      // vaccineId et scheduledFor manquants
+      await ScheduleVaccine(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si childId manquant', async () => {
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      await ScheduleVaccine(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si vaccineId manquant', async () => {
+      req.body.childId = 'child-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      await ScheduleVaccine(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si scheduledFor manquant', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      await ScheduleVaccine(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si date invalide', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = 'date-invalide';
+      await ScheduleVaccine(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    // Tests de ressources introuvables
+    it('devrait retourner 404 si enfant introuvable', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(null),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await ScheduleVaccine(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('devrait retourner 404 si vaccin introuvable', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(null),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await ScheduleVaccine(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    // Tests d'accès
+    it('devrait retourner 403 si enfant n\'appartient pas au centre de santé de l\'agent', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-2' };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await ScheduleVaccine(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    // Tests de genre
+    it('devrait retourner 400 si vaccin spécifique au genre et genre incompatible', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 1, gender: 'F' };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await ScheduleVaccine(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait permettre la programmation si vaccin pour garçons et enfant garçon', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 1, gender: 'M' };
+      const mockScheduled = {
+        id: 'scheduled-1',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 1,
+        vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 1 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(0),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn().mockResolvedValue(mockScheduled),
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
+    it('devrait permettre la programmation si vaccin pour filles et enfant fille', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'F' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 1, gender: 'F' };
+      const mockScheduled = {
+        id: 'scheduled-1',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 1,
+        vaccine: { id: 'vaccine-1', name: 'HPV', dosesRequired: 1 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(0),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn().mockResolvedValue(mockScheduled),
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
+    it('devrait permettre la programmation si vaccin pour tous (gender null)', async () => {
       req.body.childId = 'child-1';
       req.body.vaccineId = 'vaccine-1';
       req.body.scheduledFor = '2025-12-31T10:00:00Z';
@@ -551,26 +775,21 @@ describe('vaccineController', () => {
         vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 1 },
         child: { id: 'child-1', phoneParent: '+221123456789' },
       };
-      prisma.children.findUnique.mockResolvedValue(mockChild);
-      prisma.vaccine.findUnique.mockResolvedValue(mockVaccine);
-      prisma.childVaccineCompleted.count.mockResolvedValue(0);
-      prisma.childVaccineScheduled.count.mockResolvedValue(0);
-      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
       prisma.$transaction.mockImplementation(async (callback) => {
         const mockTx = {
           children: {
-            findUnique: prisma.children.findUnique,
+            findUnique: jest.fn().mockResolvedValue(mockChild),
             update: jest.fn().mockResolvedValue({}),
           },
           vaccine: {
-            findUnique: prisma.vaccine.findUnique,
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
           },
           childVaccineCompleted: {
-            count: prisma.childVaccineCompleted.count,
+            count: jest.fn().mockResolvedValue(0),
             findMany: jest.fn().mockResolvedValue([]),
           },
           childVaccineScheduled: {
-            count: prisma.childVaccineScheduled.count,
+            count: jest.fn().mockResolvedValue(0),
             create: jest.fn().mockResolvedValue(mockScheduled),
             findUnique: jest.fn().mockResolvedValue(mockScheduled),
             findFirst: jest.fn().mockResolvedValue(mockScheduled),
@@ -582,35 +801,396 @@ describe('vaccineController', () => {
             create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
           },
         };
-        const result = await callback(mockTx);
-        return result;
+        return callback(mockTx);
       });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
+    // Tests de programmation - Scénarios de base
+    it('devrait programmer une première dose avec succès (aucune dose complétée/programmée)', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 3, gender: null };
+      const mockScheduled = {
+        id: 'scheduled-1',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 1,
+        vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 3 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(0),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn().mockResolvedValue(mockScheduled),
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
 
       await ScheduleVaccine(req, res, next);
 
       expect(res.status).toHaveBeenCalledWith(201);
-      expect(res.json).toHaveBeenCalled();
+      const response = res.json.mock.calls[0][0];
+      expect(response.dose).toBe(1);
     });
 
-    it('devrait retourner 400 si tous les champs requis ne sont pas fournis', async () => {
-      req.user.role = 'AGENT';
-      req.user.healthCenterId = 'healthcenter-1';
-      req.body.childId = 'child-1';
-      // vaccineId et scheduledFor manquants
-      await ScheduleVaccine(req, res, next);
-      expect(res.status).toHaveBeenCalledWith(400);
-    });
-
-    it('devrait retourner 404 si enfant introuvable', async () => {
-      req.user.role = 'AGENT';
-      req.user.healthCenterId = 'healthcenter-1';
+    it('devrait programmer une deuxième dose avec succès (1 dose complétée)', async () => {
       req.body.childId = 'child-1';
       req.body.vaccineId = 'vaccine-1';
       req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 3, gender: null };
+      const mockScheduled = {
+        id: 'scheduled-2',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 2,
+        vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 3 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
       prisma.$transaction.mockImplementation(async (callback) => {
         const mockTx = {
           children: {
-            findUnique: jest.fn().mockResolvedValue(null),
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(1),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn().mockResolvedValue(mockScheduled),
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
+    it('devrait programmer une troisième dose avec succès (2 doses complétées)', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 3, gender: null };
+      const mockScheduled = {
+        id: 'scheduled-3',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 3,
+        vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 3 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(2),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn().mockResolvedValue(mockScheduled),
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
+    // Tests de flexibilité - Programmer au-delà de dosesRequired
+    it('devrait permettre de programmer une dose supplémentaire même si dosesRequired est atteint (3 complétées, dosesRequired=3)', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 3, gender: null };
+      const mockScheduled = {
+        id: 'scheduled-4',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 4,
+        vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 3 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(3),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn().mockResolvedValue(mockScheduled),
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+      const response = res.json.mock.calls[0][0];
+      expect(response.dose).toBe(4);
+    });
+
+    it('devrait permettre de programmer une dose supplémentaire même si dosesRequired est atteint (2 complétées + 1 programmée, dosesRequired=3)', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 3, gender: null };
+      const mockScheduled = {
+        id: 'scheduled-4',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 4,
+        vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 3 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(2),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(1),
+            create: jest.fn().mockResolvedValue(mockScheduled),
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
+    it('devrait permettre de programmer plusieurs doses supplémentaires (5 complétées, dosesRequired=3)', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 3, gender: null };
+      const mockScheduled = {
+        id: 'scheduled-6',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 6,
+        vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 3 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(5),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn().mockResolvedValue(mockScheduled),
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
+    // Tests avec administeredById
+    it('devrait programmer avec administeredById si fourni', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      req.body.administeredById = 'agent-2';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 1, gender: null };
+      const mockAgent = { id: 'agent-2', role: 'AGENT', isActive: true, healthCenterId: 'healthcenter-1' };
+      const mockScheduled = {
+        id: 'scheduled-1',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 1,
+        administeredById: 'agent-2',
+        vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 1 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          user: {
+            findUnique: jest.fn().mockResolvedValue(mockAgent),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(0),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn().mockResolvedValue(mockScheduled),
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect(prisma.$transaction.mock.calls[0][0]).toBeDefined();
+    });
+
+    it('devrait retourner 400 si administeredById n\'est pas un agent', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      req.body.administeredById = 'user-2';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 1, gender: null };
+      const mockUser = { id: 'user-2', role: 'NATIONAL', isActive: true };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          user: {
+            findUnique: jest.fn().mockResolvedValue(mockUser),
           },
         };
         return callback(mockTx);
@@ -618,20 +1198,55 @@ describe('vaccineController', () => {
 
       await ScheduleVaccine(req, res, next);
 
-      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.status).toHaveBeenCalledWith(400);
     });
 
-    it('devrait retourner 403 si enfant n\'appartient pas au centre de santé de l\'agent', async () => {
-      req.user.role = 'AGENT';
-      req.user.healthCenterId = 'healthcenter-1';
+    it('devrait retourner 400 si administeredById n\'est pas actif', async () => {
       req.body.childId = 'child-1';
       req.body.vaccineId = 'vaccine-1';
       req.body.scheduledFor = '2025-12-31T10:00:00Z';
-      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-2' }; // Différent
+      req.body.administeredById = 'agent-2';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 1, gender: null };
+      const mockAgent = { id: 'agent-2', role: 'AGENT', isActive: false, healthCenterId: 'healthcenter-1' };
       prisma.$transaction.mockImplementation(async (callback) => {
         const mockTx = {
           children: {
             findUnique: jest.fn().mockResolvedValue(mockChild),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          user: {
+            findUnique: jest.fn().mockResolvedValue(mockAgent),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await ScheduleVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 403 si administeredById n\'appartient pas au centre de santé', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      req.body.administeredById = 'agent-2';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 1, gender: null };
+      const mockAgent = { id: 'agent-2', role: 'AGENT', isActive: true, healthCenterId: 'healthcenter-2' };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          user: {
+            findUnique: jest.fn().mockResolvedValue(mockAgent),
           },
         };
         return callback(mockTx);
@@ -640,6 +1255,486 @@ describe('vaccineController', () => {
       await ScheduleVaccine(req, res, next);
 
       expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    // Tests avec vaccineCalendarId
+    it('devrait programmer avec vaccineCalendarId si fourni', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.vaccineCalendarId = 'calendar-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 1, gender: null };
+      const mockScheduled = {
+        id: 'scheduled-1',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        vaccineCalendarId: 'calendar-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 1,
+        vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 1 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(0),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn().mockResolvedValue(mockScheduled),
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
+    it('devrait programmer sans vaccineCalendarId si non fourni', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 1, gender: null };
+      const mockScheduled = {
+        id: 'scheduled-1',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        vaccineCalendarId: null,
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 1,
+        vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 1 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(0),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn().mockResolvedValue(mockScheduled),
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
+    // Tests de calcul de dose
+    it('devrait calculer correctement le numéro de dose initial (0 complétées, 0 programmées = dose 1)', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 3, gender: null };
+      const mockScheduled = {
+        id: 'scheduled-1',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 1,
+        vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 3 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
+      const mockCreate = jest.fn().mockResolvedValue(mockScheduled);
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(0),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(0),
+            create: mockCreate,
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            dose: 1,
+          }),
+        })
+      );
+    });
+
+    it('devrait calculer correctement le numéro de dose initial (2 complétées, 1 programmée = dose 4)', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 3, gender: null };
+      const mockScheduled = {
+        id: 'scheduled-4',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 4,
+        vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 3 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
+      const mockCreate = jest.fn().mockResolvedValue(mockScheduled);
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(2),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(1),
+            create: mockCreate,
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            dose: 4,
+          }),
+        })
+      );
+    });
+
+    // Tests de cas limites
+    it('devrait gérer dosesRequired = 1', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 1, gender: null };
+      const mockScheduled = {
+        id: 'scheduled-1',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 1,
+        vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 1 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(0),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn().mockResolvedValue(mockScheduled),
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
+    it('devrait gérer dosesRequired très élevé (10)', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 10, gender: null };
+      const mockScheduled = {
+        id: 'scheduled-1',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 1,
+        vaccine: { id: 'vaccine-1', name: 'Vaccin', dosesRequired: 10 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(0),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn().mockResolvedValue(mockScheduled),
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
+    it('devrait gérer dosesRequired invalide (défaut à 1)', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 'invalid', gender: null };
+      const mockScheduled = {
+        id: 'scheduled-1',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 1,
+        vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 1 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(0),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn().mockResolvedValue(mockScheduled),
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
+    // Tests de réservation de stock
+    it('devrait réserver le stock correctement', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 1, gender: null };
+      const mockScheduled = {
+        id: 'scheduled-1',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 1,
+        vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 1 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(0),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn().mockResolvedValue(mockScheduled),
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+
+      expect(stockLotService.reserveDoseForHealthCenter).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          vaccineId: 'vaccine-1',
+          healthCenterId: 'healthcenter-1',
+          quantity: 1,
+        })
+      );
+    });
+
+    // Tests de notification
+    it('devrait envoyer une notification au parent après programmation', async () => {
+      req.body.childId = 'child-1';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.scheduledFor = '2025-12-31T10:00:00Z';
+      const mockChild = { id: 'child-1', healthCenterId: 'healthcenter-1', gender: 'M' };
+      const mockVaccine = { id: 'vaccine-1', dosesRequired: 1, gender: null };
+      const mockScheduled = {
+        id: 'scheduled-1',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        dose: 1,
+        vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 1 },
+        child: { id: 'child-1', phoneParent: '+221123456789' },
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          children: {
+            findUnique: jest.fn().mockResolvedValue(mockChild),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          vaccine: {
+            findUnique: jest.fn().mockResolvedValue(mockVaccine),
+          },
+          childVaccineCompleted: {
+            count: jest.fn().mockResolvedValue(0),
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineScheduled: {
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn().mockResolvedValue(mockScheduled),
+            findUnique: jest.fn().mockResolvedValue(mockScheduled),
+            findFirst: jest.fn().mockResolvedValue(mockScheduled),
+            findMany: jest.fn().mockResolvedValue([mockScheduled]),
+            update: jest.fn().mockResolvedValue(mockScheduled),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          stockReservation: {
+            create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+          },
+        };
+        return callback(mockTx);
+      });
+      stockLotService.reserveDoseForHealthCenter.mockResolvedValue({ lotId: 'lot-1', quantity: 1 });
+
+      await ScheduleVaccine(req, res, next);
+
+      // La notification est envoyée de manière asynchrone, donc on vérifie juste que le code s'exécute
+      expect(res.status).toHaveBeenCalledWith(201);
     });
   });
 
@@ -862,7 +1957,511 @@ describe('vaccineController', () => {
       expect(response.warnings).toBeDefined();
     });
   });
+
+  describe('updateVaccineCalendar', () => {
+    it('devrait retourner 403 si utilisateur n\'est pas NATIONAL', async () => {
+      req.user.role = 'REGIONAL';
+      req.params.id = 'calendar-1';
+      await updateVaccineCalendar(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    it('devrait retourner 400 si id manquant', async () => {
+      req.user.role = 'NATIONAL';
+      req.params.id = null;
+      await updateVaccineCalendar(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si description manquante', async () => {
+      req.user.role = 'NATIONAL';
+      req.params.id = 'calendar-1';
+      req.body = { ageUnit: 'MONTHS' };
+      await updateVaccineCalendar(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si ageUnit invalide', async () => {
+      req.user.role = 'NATIONAL';
+      req.params.id = 'calendar-1';
+      req.body = { description: 'Test', ageUnit: 'INVALID' };
+      await updateVaccineCalendar(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait mettre à jour un calendrier avec succès', async () => {
+      req.user.role = 'NATIONAL';
+      req.params.id = 'calendar-1';
+      req.body = {
+        description: 'Test Calendar',
+        ageUnit: 'MONTHS',
+        specificAge: 2,
+        vaccine: [{ vaccineId: 'vaccine-1', count: 1 }],
+      };
+
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          vaccineCalendarDose: {
+            findMany: jest.fn().mockResolvedValue([]),
+            deleteMany: jest.fn().mockResolvedValue({}),
+            createMany: jest.fn().mockResolvedValue({}),
+            groupBy: jest.fn().mockResolvedValue([]),
+          },
+          vaccineCalendar: {
+            update: jest.fn().mockResolvedValue({ id: 'calendar-1' }),
+          },
+          vaccine: {
+            findMany: jest.fn().mockResolvedValue([
+              { id: 'vaccine-1', name: 'BCG', dosesRequired: 1 },
+            ]),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      prisma.vaccineCalendar.findUnique.mockResolvedValue({
+        id: 'calendar-1',
+        description: 'Test Calendar',
+        ageUnit: 'MONTHS',
+        specificAge: 2,
+        doseAssignments: [],
+      });
+
+      // Mock pour reassignVaccineDoseNumbers
+      prisma.vaccineCalendarDose.findMany.mockResolvedValue([]);
+      prisma.$transaction.mockImplementationOnce(async (callback) => {
+        const mockTx = {
+          vaccineCalendarDose: {
+            findMany: jest.fn().mockResolvedValue([]),
+            deleteMany: jest.fn().mockResolvedValue({}),
+            createMany: jest.fn().mockResolvedValue({}),
+            groupBy: jest.fn().mockResolvedValue([]),
+          },
+          vaccineCalendar: {
+            update: jest.fn().mockResolvedValue({ id: 'calendar-1' }),
+          },
+          vaccine: {
+            findMany: jest.fn().mockResolvedValue([
+              { id: 'vaccine-1', name: 'BCG', dosesRequired: 1 },
+            ]),
+          },
+        };
+        return callback(mockTx);
+      }).mockImplementationOnce(async (updates) => {
+        // Pour reassignVaccineDoseNumbers qui fait un $transaction avec un tableau de promises
+        return Promise.all(updates);
+      });
+
+      await updateVaccineCalendar(req, res, next);
+
+      expect(res.json).toHaveBeenCalled();
+    });
+  });
+
+  describe('deleteVaccineCalendar', () => {
+    it('devrait retourner 403 si utilisateur n\'est pas NATIONAL', async () => {
+      req.user.role = 'REGIONAL';
+      req.params.id = 'calendar-1';
+      await deleteVaccineCalendar(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    it('devrait retourner 400 si id manquant', async () => {
+      req.user.role = 'NATIONAL';
+      req.params.id = null;
+      await deleteVaccineCalendar(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait supprimer un calendrier avec succès', async () => {
+      req.user.role = 'NATIONAL';
+      req.params.id = 'calendar-1';
+
+      // Mock pour reassignVaccineDoseNumbers (appelé après la transaction principale)
+      prisma.vaccineCalendarDose.findMany.mockResolvedValue([]);
+
+      let callCount = 0;
+      prisma.$transaction.mockImplementation(async (arg) => {
+        callCount++;
+        if (Array.isArray(arg)) {
+          // reassignVaccineDoseNumbers passe un tableau de promises
+          return Promise.all(arg);
+        }
+        // Transaction principale
+        const mockTx = {
+          vaccineCalendarDose: {
+            findMany: jest.fn().mockResolvedValue([]),
+            deleteMany: jest.fn().mockResolvedValue({}),
+          },
+          childVaccineDue: {
+            findMany: jest.fn().mockResolvedValue([]),
+            deleteMany: jest.fn().mockResolvedValue({}),
+          },
+          childVaccineLate: {
+            findMany: jest.fn().mockResolvedValue([]),
+            deleteMany: jest.fn().mockResolvedValue({}),
+          },
+          childVaccineOverdue: {
+            findMany: jest.fn().mockResolvedValue([]),
+            deleteMany: jest.fn().mockResolvedValue({}),
+          },
+          childVaccineScheduled: {
+            findMany: jest.fn().mockResolvedValue([]),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          childVaccineCompleted: {
+            findMany: jest.fn().mockResolvedValue([]),
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          vaccineRequest: {
+            updateMany: jest.fn().mockResolvedValue({}),
+          },
+          vaccineCalendar: {
+            delete: jest.fn().mockResolvedValue({ id: 'calendar-1' }),
+          },
+        };
+        return arg(mockTx);
+      });
+
+      vaccineBucketService.rebuildChildVaccinationBuckets.mockResolvedValue();
+
+      await deleteVaccineCalendar(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(204);
+      expect(res.end).toHaveBeenCalled();
+    });
+  });
+
+  describe('downloadVaccineCalendarPdf', () => {
+    it('devrait retourner 403 si utilisateur n\'a pas les permissions', async () => {
+      req.user.role = 'INVALID_ROLE';
+      await downloadVaccineCalendarPdf(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    it('devrait générer un PDF avec succès pour NATIONAL', async () => {
+      req.user.role = 'NATIONAL';
+
+      prisma.vaccineCalendar.findMany.mockResolvedValue([
+        {
+          id: 'calendar-1',
+          description: 'Test',
+          ageUnit: 'MONTHS',
+          specificAge: 2,
+          doseAssignments: [
+            {
+              vaccine: { id: 'vaccine-1', name: 'BCG' },
+              doseNumber: 1,
+            },
+          ],
+        },
+      ]);
+
+      await downloadVaccineCalendarPdf(req, res, next);
+
+      expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'application/pdf');
+      expect(res.setHeader).toHaveBeenCalledWith(
+        'Content-Disposition',
+        'attachment; filename="calendrier-vaccinal.pdf"',
+      );
+    });
+
+    it('devrait générer un PDF avec succès pour AGENT ADMIN', async () => {
+      req.user.role = 'AGENT';
+      req.user.agentLevel = 'ADMIN';
+
+      prisma.vaccineCalendar.findMany.mockResolvedValue([]);
+
+      await downloadVaccineCalendarPdf(req, res, next);
+
+      expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'application/pdf');
+    });
+  });
+
+  describe('listScheduledVaccines', () => {
+    it('devrait retourner une liste vide si AGENT sans healthCenterId', async () => {
+      req.user.role = 'AGENT';
+      req.user.healthCenterId = null;
+
+      await listScheduledVaccines(req, res, next);
+
+      expect(res.json).toHaveBeenCalledWith({ items: [] });
+    });
+
+    it('devrait retourner les rendez-vous programmés pour AGENT', async () => {
+      req.user.role = 'AGENT';
+      req.user.healthCenterId = 'healthcenter-1';
+
+      const mockScheduled = [
+        {
+          id: 'scheduled-1',
+          scheduledFor: new Date('2025-12-31'),
+          dose: 1,
+          child: {
+            id: 'child-1',
+            firstName: 'John',
+            lastName: 'Doe',
+            healthCenterId: 'healthcenter-1',
+          },
+          vaccine: { id: 'vaccine-1', name: 'BCG' },
+          administeredBy: { id: 'agent-1', firstName: 'Agent', lastName: 'Test' },
+        },
+      ];
+
+      prisma.childVaccineScheduled.findMany.mockResolvedValue(mockScheduled);
+
+      await listScheduledVaccines(req, res, next);
+
+      expect(res.json).toHaveBeenCalled();
+    });
+
+    it('devrait retourner une liste vide si DISTRICT sans districtId', async () => {
+      req.user.role = 'DISTRICT';
+      req.user.districtId = null;
+
+      await listScheduledVaccines(req, res, next);
+
+      expect(res.json).toHaveBeenCalledWith({ items: [] });
+    });
+
+    it('devrait retourner les rendez-vous programmés pour DISTRICT', async () => {
+      req.user.role = 'DISTRICT';
+      req.user.districtId = 'district-1';
+
+      prisma.childVaccineScheduled.findMany.mockResolvedValue([]);
+
+      await listScheduledVaccines(req, res, next);
+
+      expect(res.json).toHaveBeenCalled();
+    });
+
+    it('devrait retourner une liste vide si REGIONAL sans regionId', async () => {
+      req.user.role = 'REGIONAL';
+      req.user.regionId = null;
+
+      await listScheduledVaccines(req, res, next);
+
+      expect(res.json).toHaveBeenCalledWith({ items: [] });
+    });
+
+    it('devrait retourner les rendez-vous programmés pour REGIONAL', async () => {
+      req.user.role = 'REGIONAL';
+      req.user.regionId = 'region-1';
+
+      prisma.childVaccineScheduled.findMany.mockResolvedValue([]);
+
+      await listScheduledVaccines(req, res, next);
+
+      expect(res.json).toHaveBeenCalled();
+    });
+  });
+
+  describe('updateScheduledVaccine', () => {
+    it('devrait retourner 403 si utilisateur n\'est pas AGENT', async () => {
+      req.user.role = 'NATIONAL';
+      req.params.id = 'scheduled-1';
+      await updateScheduledVaccine(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    it('devrait retourner 403 si agent n\'a pas de healthCenterId', async () => {
+      req.user.role = 'AGENT';
+      req.user.healthCenterId = null;
+      req.params.id = 'scheduled-1';
+      await updateScheduledVaccine(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    it('devrait retourner 400 si scheduledFor ou vaccineId manquants', async () => {
+      req.user.role = 'AGENT';
+      req.user.healthCenterId = 'healthcenter-1';
+      req.params.id = 'scheduled-1';
+      req.body = {};
+      await updateScheduledVaccine(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si date invalide', async () => {
+      req.user.role = 'AGENT';
+      req.user.healthCenterId = 'healthcenter-1';
+      req.params.id = 'scheduled-1';
+      req.body = { scheduledFor: 'invalid-date', vaccineId: 'vaccine-1' };
+      await updateScheduledVaccine(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait mettre à jour un rendez-vous avec succès', async () => {
+      req.user.role = 'AGENT';
+      req.user.healthCenterId = 'healthcenter-1';
+      req.user.id = 'agent-1';
+      req.params.id = 'scheduled-1';
+      req.body = {
+        scheduledFor: '2025-12-31T10:00:00Z',
+        vaccineId: 'vaccine-1',
+        administeredById: 'agent-2',
+      };
+
+      const updatedSchedule = {
+        id: 'scheduled-1',
+        childId: 'child-1',
+        scheduledFor: new Date('2025-12-31T10:00:00Z'),
+        vaccineId: 'vaccine-1',
+        vaccineCalendarId: null,
+        dose: 1,
+        administeredById: 'agent-2',
+        vaccine: { id: 'vaccine-1', name: 'BCG', dosesRequired: 1 },
+        administeredBy: { id: 'agent-2', firstName: 'Agent', lastName: 'Test' },
+      };
+
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          childVaccineScheduled: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce({
+                id: 'scheduled-1',
+                childId: 'child-1',
+                scheduledFor: new Date('2025-12-30'),
+                vaccineId: 'vaccine-1',
+                vaccineCalendarId: null,
+                dose: 1,
+                administeredById: null,
+                child: { healthCenterId: 'healthcenter-1' },
+                vaccine: { id: 'vaccine-1', name: 'BCG' },
+              })
+              .mockResolvedValueOnce(updatedSchedule),
+            findMany: jest.fn().mockResolvedValue([{
+              id: 'scheduled-1',
+              scheduledFor: new Date('2025-12-31T10:00:00Z'),
+              dose: 1,
+            }]),
+            update: jest.fn().mockResolvedValue(updatedSchedule),
+            findFirst: jest.fn().mockResolvedValue({
+              id: 'scheduled-1',
+              scheduledFor: new Date('2025-12-31T10:00:00Z'),
+              vaccineId: 'vaccine-1',
+              plannerId: 'agent-1',
+            }),
+          },
+          childVaccineCompleted: {
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          user: {
+            findUnique: jest.fn().mockResolvedValue({
+              id: 'agent-2',
+              role: 'AGENT',
+              healthCenterId: 'healthcenter-1',
+              isActive: true,
+            }),
+          },
+          children: {
+            findFirst: jest.fn().mockResolvedValue({ id: 'child-1' }),
+            update: jest.fn().mockResolvedValue({}),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await updateScheduledVaccine(req, res, next);
+
+      expect(res.json).toHaveBeenCalled();
+    });
+  });
+
+  describe('missVaccine', () => {
+    it('devrait retourner 403 si utilisateur n\'est pas AGENT', async () => {
+      req.user.role = 'NATIONAL';
+      req.params.id = 'scheduled-1';
+      await missVaccine(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    it('devrait marquer un vaccin comme manqué avec succès', async () => {
+      req.user.role = 'AGENT';
+      req.params.id = 'scheduled-1';
+
+      const mockOverdue = {
+        id: 'overdue-1',
+        childId: 'child-1',
+        vaccineId: 'vaccine-1',
+        vaccineCalendarId: 'calendar-1',
+        dose: 1,
+      };
+
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          childVaccineScheduled: {
+            findUnique: jest.fn().mockResolvedValue({
+              id: 'scheduled-1',
+              childId: 'child-1',
+              vaccineId: 'vaccine-1',
+              vaccineCalendarId: 'calendar-1',
+              scheduledFor: new Date('2025-01-01'),
+              plannerId: 'planner-1',
+              dose: 1,
+            }),
+            findMany: jest.fn().mockResolvedValue([]),
+            delete: jest.fn().mockResolvedValue({}),
+            update: jest.fn().mockResolvedValue({}),
+            findFirst: jest.fn().mockResolvedValue(null), // Pas de prochain rendez-vous
+          },
+          childVaccineCompleted: {
+            findMany: jest.fn().mockResolvedValue([]),
+          },
+          childVaccineOverdue: {
+            upsert: jest.fn().mockResolvedValue(mockOverdue),
+            count: jest.fn().mockResolvedValue(0),
+          },
+          stockReservation: {
+            findUnique: jest.fn().mockResolvedValue({
+              id: 'reservation-1',
+              stockLot: { id: 'lot-1', ownerType: 'HEALTHCENTER', ownerId: 'healthcenter-1', vaccineId: 'vaccine-1' },
+              quantity: 1,
+            }),
+            delete: jest.fn().mockResolvedValue({}),
+          },
+          stockLot: {
+            findUnique: jest.fn().mockResolvedValue({ id: 'lot-1' }),
+          },
+          children: {
+            findFirst: jest.fn().mockResolvedValue({ id: 'child-1' }),
+            update: jest.fn().mockResolvedValue({}),
+          },
+          childVaccineLate: {
+            count: jest.fn().mockResolvedValue(0),
+          },
+        };
+        const result = await callback(mockTx);
+        return result;
+      });
+
+      stockLotService.releaseDoseForHealthCenter.mockResolvedValue();
+
+      await missVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect(res.json).toHaveBeenCalled();
+    });
+
+    it('devrait retourner 404 si rendez-vous introuvable', async () => {
+      req.user.role = 'AGENT';
+      req.params.id = 'scheduled-1';
+
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          childVaccineScheduled: {
+            findUnique: jest.fn().mockResolvedValue(null),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await missVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+  });
 });
+
 
 
 

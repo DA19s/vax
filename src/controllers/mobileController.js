@@ -1703,6 +1703,13 @@ const getAppointments = async (req, res, next) => {
             lastName: true,
           },
         },
+        administeredBy: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
       },
       orderBy: {
         scheduledFor: "asc",
@@ -1718,6 +1725,9 @@ const getAppointments = async (req, res, next) => {
       dose: scheduled.dose ?? 1,
       planner: scheduled.planner
         ? `${scheduled.planner.firstName} ${scheduled.planner.lastName}`
+        : null,
+      administeredBy: scheduled.administeredBy
+        ? `${scheduled.administeredBy.firstName} ${scheduled.administeredBy.lastName}`
         : null,
       status: "scheduled",
     }));
