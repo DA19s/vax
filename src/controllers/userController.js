@@ -567,15 +567,16 @@ const activateUser = async (req, res, next) => {
 
     const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
-    await prisma.user.update({
-      where: { id },
-      data: {
-        password: hashedPassword,
-        isActive: true,
-        activationToken: null,
-        activationExpires: null,
-      },
-    });
+      await prisma.user.update({
+        where: { id },
+        data: {
+          password: hashedPassword,
+          isActive: true,
+          emailVerified: true,
+          activationToken: null,
+          activationExpires: null,
+        },
+      });
 
     res.status(204).send();
   } catch (error) {

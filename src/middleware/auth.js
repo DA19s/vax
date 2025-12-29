@@ -23,7 +23,8 @@ const requireAuth = async (req, res, next) => {
     req.user = user;
     next();
   } catch (error) {
-    next(error);
+    // Si erreur JWT (token mal formé, expiré, etc.), renvoie 401
+    return res.status(401).json({ message: "Token invalide" });
   }
 };
 

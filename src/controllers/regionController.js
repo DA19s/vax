@@ -228,16 +228,30 @@ const formatRegionDeletionSummary = (data) => ({
   },
 });
 
+
 const createRegion = async (req, res, next) => {
 
-  if (req.user.role !== "NATIONAL") {
+    if (!req.user || req.user.role !== "NATIONAL") {
     return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  if (typeof req.body.name === "undefined" || req.body.name === null) {
+    return res.status(400).json({ message: "Le nom de la région est requis" });
+  }
+  if (typeof req.body.name !== "string" || req.body.name.trim() === "") {
+    return res.status(400).json({ message: "Le nom de la région ne peut pas être vide" });
+  }
+
+  // 3. Vérification du doublon
+  const existing = await prisma.region.findFirst({ where: { name: req.body.name.trim() } });
+  if (existing) {
+    return res.status(409).json({ message: "Cette région existe déjà" });
   }
 
   try {
     const newRegion = await prisma.region.create({
       data: {
-        name: req.body.name,
+        name: req.body.name.trim(),
       },
     });
 
