@@ -1,0 +1,601 @@
+﻿
+> vax@1.0.0 test:integration
+> jest --config=jest.integration.config.js children.crud.test.js --verbose
+
+  console.log
+    [dotenv@17.2.3] injecting env (2) from .env.test -- tip: ÔÜÖ´©Å  load multiple .env files with { path: ['.env.local', '.env'] }
+
+      at _log (node_modules/dotenv/lib/main.js:142:11)
+
+  console.log
+    Ô£à Configuration de test charg├®e depuis .env.test
+
+      at Object.<anonymous> (tests/integration/jest.env.js:26:9)
+
+  console.log
+    [dotenv@17.2.3] injecting env (18) from .env -- tip: ­ƒöÉ encrypt with Dotenvx: https://dotenvx.com
+
+      at _log (node_modules/dotenv/lib/main.js:142:11)
+
+  console.error
+    Error: PrismaClientValidationError: 
+    Invalid `tx.children.create()` invocation in
+    C:\Users\daibr\vax\src\controllers\childrenController.js:555:40
+    
+      552 let createdChild;
+      553 
+      554 await prisma.$transaction(async (tx) => {
+    ÔåÆ 555   createdChild = await tx.children.create({
+              data: {
+                firstName: "Child1",
+                lastName: "Test1",
+                birthDate: new Date("2024-01-01T00:00:00.000Z"),
+                birthPlace: "Dakar",
+                address: "123 Test St",
+                gender: "M",
+                healthCenterId: "dfcfb338-ffb8-4cb3-8124-b4c92f5619de",
+                status: "A_JOUR",
+                phoneParent: "+221111111111",
+                fatherName: "Father1",
+                motherName: "Mother1",
+                code: "518835",
+                isActive: false,
+                photosRequested: false,
+            +   emailParent: String
+              }
+            })
+    
+    Argument `emailParent` is missing.
+        at tr (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:14:1379)
+        at $r.handleRequestError (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6990)
+        at $r.handleAndLogRequestError (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6642)
+        at $r.request (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6349)
+        at processTicksAndRejections (node:internal/process/task_queues:105:5)
+        at a (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:79:5816)
+        at C:\Users\daibr\vax\src\controllers\childrenController.js:555:22
+        at Proxy._transactionWithCallback (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:79:4390)
+        at createChildren (C:\Users\daibr\vax\src\controllers\childrenController.js:554:5) {
+      clientVersion: '7.0.0'
+    }
+
+    [0m [90m 1 |[39m [36mconst[39m errorHandler [33m=[39m (error[33m,[39m _req[33m,[39m res[33m,[39m _next) [33m=>[39m {
+    [31m[1m>[22m[39m[90m 2 |[39m   console[33m.[39merror([32m"Error:"[39m[33m,[39m error)[33m;[39m
+     [90m   |[39m           [31m[1m^[22m[39m
+     [90m 3 |[39m   console[33m.[39merror([32m"Stack:"[39m[33m,[39m error[33m.[39mstack)[33m;[39m
+     [90m 4 |[39m   
+     [90m 5 |[39m   [36mlet[39m status [33m=[39m error[33m.[39mstatus [33m||[39m [35m500[39m[33m;[39m[0m
+
+      at error (src/middleware/errorHandler.js:2:11)
+      at Layer.handleError (node_modules/router/lib/layer.js:116:17)
+      at trimPrefix (node_modules/router/index.js:340:13)
+      at node_modules/router/index.js:297:9
+      at processParams (node_modules/router/index.js:582:12)
+      at next (node_modules/router/index.js:291:5)
+      at node_modules/router/index.js:688:15
+      at next (node_modules/router/index.js:276:14)
+      at node_modules/router/index.js:688:15
+      at next (node_modules/router/index.js:276:14)
+      at next (node_modules/router/lib/route.js:132:14)
+      at next (src/controllers/childrenController.js:737:5)
+
+  console.error
+    Stack: PrismaClientValidationError: 
+    Invalid `tx.children.create()` invocation in
+    C:\Users\daibr\vax\src\controllers\childrenController.js:555:40
+    
+      552 let createdChild;
+      553 
+      554 await prisma.$transaction(async (tx) => {
+    ÔåÆ 555   createdChild = await tx.children.create({
+              data: {
+                firstName: "Child1",
+                lastName: "Test1",
+                birthDate: new Date("2024-01-01T00:00:00.000Z"),
+                birthPlace: "Dakar",
+                address: "123 Test St",
+                gender: "M",
+                healthCenterId: "dfcfb338-ffb8-4cb3-8124-b4c92f5619de",
+                status: "A_JOUR",
+                phoneParent: "+221111111111",
+                fatherName: "Father1",
+                motherName: "Mother1",
+                code: "518835",
+                isActive: false,
+                photosRequested: false,
+            +   emailParent: String
+              }
+            })
+    
+    Argument `emailParent` is missing.
+        at tr (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:14:1379)
+        at $r.handleRequestError (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6990)
+        at $r.handleAndLogRequestError (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6642)
+        at $r.request (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6349)
+        at processTicksAndRejections (node:internal/process/task_queues:105:5)
+        at a (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:79:5816)
+        at C:\Users\daibr\vax\src\controllers\childrenController.js:555:22
+        at Proxy._transactionWithCallback (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:79:4390)
+        at createChildren (C:\Users\daibr\vax\src\controllers\childrenController.js:554:5)
+
+    [0m [90m 1 |[39m [36mconst[39m errorHandler [33m=[39m (error[33m,[39m _req[33m,[39m res[33m,[39m _next) [33m=>[39m {
+     [90m 2 |[39m   console[33m.[39merror([32m"Error:"[39m[33m,[39m error)[33m;[39m
+    [31m[1m>[22m[39m[90m 3 |[39m   console[33m.[39merror([32m"Stack:"[39m[33m,[39m error[33m.[39mstack)[33m;[39m
+     [90m   |[39m           [31m[1m^[22m[39m
+     [90m 4 |[39m   
+     [90m 5 |[39m   [36mlet[39m status [33m=[39m error[33m.[39mstatus [33m||[39m [35m500[39m[33m;[39m
+     [90m 6 |[39m   [36mlet[39m message [33m=[39m error[33m.[39mmessage [33m||[39m [32m"Une erreur est survenue"[39m[33m;[39m[0m
+
+      at error (src/middleware/errorHandler.js:3:11)
+      at Layer.handleError (node_modules/router/lib/layer.js:116:17)
+      at trimPrefix (node_modules/router/index.js:340:13)
+      at node_modules/router/index.js:297:9
+      at processParams (node_modules/router/index.js:582:12)
+      at next (node_modules/router/index.js:291:5)
+      at node_modules/router/index.js:688:15
+      at next (node_modules/router/index.js:276:14)
+      at node_modules/router/index.js:688:15
+      at next (node_modules/router/index.js:276:14)
+      at next (node_modules/router/lib/route.js:132:14)
+      at next (src/controllers/childrenController.js:737:5)
+
+  console.error
+    Error: PrismaClientValidationError: 
+    Invalid `tx.children.create()` invocation in
+    C:\Users\daibr\vax\src\controllers\childrenController.js:555:40
+    
+      552 let createdChild;
+      553 
+      554 await prisma.$transaction(async (tx) => {
+    ÔåÆ 555   createdChild = await tx.children.create({
+              data: {
+                firstName: "Child2",
+                lastName: "Test2",
+                birthDate: new Date("2024-01-01T00:00:00.000Z"),
+                birthPlace: "Thi├¿s",
+                address: "456 Test Ave",
+                gender: "F",
+                healthCenterId: "dfcfb338-ffb8-4cb3-8124-b4c92f5619de",
+                status: "A_JOUR",
+                phoneParent: "+221222222222",
+                fatherName: "Father2",
+                motherName: "Mother2",
+                code: "499491",
+                isActive: false,
+                photosRequested: false,
+            +   emailParent: String
+              }
+            })
+    
+    Argument `emailParent` is missing.
+        at tr (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:14:1379)
+        at $r.handleRequestError (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6990)
+        at $r.handleAndLogRequestError (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6642)
+        at $r.request (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6349)
+        at processTicksAndRejections (node:internal/process/task_queues:105:5)
+        at a (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:79:5816)
+        at C:\Users\daibr\vax\src\controllers\childrenController.js:555:22
+        at Proxy._transactionWithCallback (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:79:4390)
+        at createChildren (C:\Users\daibr\vax\src\controllers\childrenController.js:554:5) {
+      clientVersion: '7.0.0'
+    }
+
+    [0m [90m 1 |[39m [36mconst[39m errorHandler [33m=[39m (error[33m,[39m _req[33m,[39m res[33m,[39m _next) [33m=>[39m {
+    [31m[1m>[22m[39m[90m 2 |[39m   console[33m.[39merror([32m"Error:"[39m[33m,[39m error)[33m;[39m
+     [90m   |[39m           [31m[1m^[22m[39m
+     [90m 3 |[39m   console[33m.[39merror([32m"Stack:"[39m[33m,[39m error[33m.[39mstack)[33m;[39m
+     [90m 4 |[39m   
+     [90m 5 |[39m   [36mlet[39m status [33m=[39m error[33m.[39mstatus [33m||[39m [35m500[39m[33m;[39m[0m
+
+      at error (src/middleware/errorHandler.js:2:11)
+      at Layer.handleError (node_modules/router/lib/layer.js:116:17)
+      at trimPrefix (node_modules/router/index.js:340:13)
+      at node_modules/router/index.js:297:9
+      at processParams (node_modules/router/index.js:582:12)
+      at next (node_modules/router/index.js:291:5)
+      at node_modules/router/index.js:688:15
+      at next (node_modules/router/index.js:276:14)
+      at node_modules/router/index.js:688:15
+      at next (node_modules/router/index.js:276:14)
+      at next (node_modules/router/lib/route.js:132:14)
+      at next (src/controllers/childrenController.js:737:5)
+
+  console.error
+    Stack: PrismaClientValidationError: 
+    Invalid `tx.children.create()` invocation in
+    C:\Users\daibr\vax\src\controllers\childrenController.js:555:40
+    
+      552 let createdChild;
+      553 
+      554 await prisma.$transaction(async (tx) => {
+    ÔåÆ 555   createdChild = await tx.children.create({
+              data: {
+                firstName: "Child2",
+                lastName: "Test2",
+                birthDate: new Date("2024-01-01T00:00:00.000Z"),
+                birthPlace: "Thi├¿s",
+                address: "456 Test Ave",
+                gender: "F",
+                healthCenterId: "dfcfb338-ffb8-4cb3-8124-b4c92f5619de",
+                status: "A_JOUR",
+                phoneParent: "+221222222222",
+                fatherName: "Father2",
+                motherName: "Mother2",
+                code: "499491",
+                isActive: false,
+                photosRequested: false,
+            +   emailParent: String
+              }
+            })
+    
+    Argument `emailParent` is missing.
+        at tr (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:14:1379)
+        at $r.handleRequestError (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6990)
+        at $r.handleAndLogRequestError (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6642)
+        at $r.request (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6349)
+        at processTicksAndRejections (node:internal/process/task_queues:105:5)
+        at a (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:79:5816)
+        at C:\Users\daibr\vax\src\controllers\childrenController.js:555:22
+        at Proxy._transactionWithCallback (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:79:4390)
+        at createChildren (C:\Users\daibr\vax\src\controllers\childrenController.js:554:5)
+
+    [0m [90m 1 |[39m [36mconst[39m errorHandler [33m=[39m (error[33m,[39m _req[33m,[39m res[33m,[39m _next) [33m=>[39m {
+     [90m 2 |[39m   console[33m.[39merror([32m"Error:"[39m[33m,[39m error)[33m;[39m
+    [31m[1m>[22m[39m[90m 3 |[39m   console[33m.[39merror([32m"Stack:"[39m[33m,[39m error[33m.[39mstack)[33m;[39m
+     [90m   |[39m           [31m[1m^[22m[39m
+     [90m 4 |[39m   
+     [90m 5 |[39m   [36mlet[39m status [33m=[39m error[33m.[39mstatus [33m||[39m [35m500[39m[33m;[39m
+     [90m 6 |[39m   [36mlet[39m message [33m=[39m error[33m.[39mmessage [33m||[39m [32m"Une erreur est survenue"[39m[33m;[39m[0m
+
+      at error (src/middleware/errorHandler.js:3:11)
+      at Layer.handleError (node_modules/router/lib/layer.js:116:17)
+      at trimPrefix (node_modules/router/index.js:340:13)
+      at node_modules/router/index.js:297:9
+      at processParams (node_modules/router/index.js:582:12)
+      at next (node_modules/router/index.js:291:5)
+      at node_modules/router/index.js:688:15
+      at next (node_modules/router/index.js:276:14)
+      at node_modules/router/index.js:688:15
+      at next (node_modules/router/index.js:276:14)
+      at next (node_modules/router/lib/route.js:132:14)
+      at next (src/controllers/childrenController.js:737:5)
+
+  console.error
+    Error: PrismaClientKnownRequestError: 
+    Invalid `prisma.children.update()` invocation in
+    C:\Users\daibr\vax\src\controllers\childrenController.js:758:48
+    
+      755   return res.status(404).json({ message: "Enfant non trouv├®" });
+      756 }
+      757 
+    ÔåÆ 758 const updatedChild = await prisma.children.update(
+    Foreign key constraint violated on the constraint: `Children_nextVaccineId_fkey`
+        at $r.handleRequestError (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:7347)
+        at $r.handleAndLogRequestError (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6642)
+        at $r.request (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6349)
+        at processTicksAndRejections (node:internal/process/task_queues:105:5)
+        at a (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:79:5816)
+        at updateChildren (C:\Users\daibr\vax\src\controllers\childrenController.js:758:26) {
+      code: 'P2003',
+      meta: {
+        modelName: 'Children',
+        driverAdapterError: DriverAdapterError: ForeignKeyConstraintViolation
+            at PrismaPgAdapter.onError (C:\Users\daibr\vax\node_modules\@prisma\adapter-pg\dist\index.js:693:11)
+            at PrismaPgAdapter.performIO (C:\Users\daibr\vax\node_modules\@prisma\adapter-pg\dist\index.js:688:12)
+            at processTicksAndRejections (node:internal/process/task_queues:105:5)
+            at PrismaPgAdapter.queryRaw (C:\Users\daibr\vax\node_modules\@prisma\adapter-pg\dist\index.js:608:30)
+            at C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:15:23732
+            at mr (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:15:23571)
+            at e.interpretNode (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:15:41866)
+            at e.interpretNode (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:15:42290)
+            at e.interpretNode (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:15:41116)
+            at e.interpretNode (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:15:43464)
+            at e.run (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:15:40736)
+            at execute (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:61:670)
+            at Dt.request (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:62:2186)
+            at Object.singleLoader (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:5744)
+            at $r.request (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6236)
+            at a (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:79:5816)
+            at updateChildren (C:\Users\daibr\vax\src\controllers\childrenController.js:758:26) {
+          cause: [Object]
+        }
+      },
+      clientVersion: '7.0.0'
+    }
+
+    [0m [90m 1 |[39m [36mconst[39m errorHandler [33m=[39m (error[33m,[39m _req[33m,[39m res[33m,[39m _next) [33m=>[39m {
+    [31m[1m>[22m[39m[90m 2 |[39m   console[33m.[39merror([32m"Error:"[39m[33m,[39m error)[33m;[39m
+     [90m   |[39m           [31m[1m^[22m[39m
+     [90m 3 |[39m   console[33m.[39merror([32m"Stack:"[39m[33m,[39m error[33m.[39mstack)[33m;[39m
+     [90m 4 |[39m   
+     [90m 5 |[39m   [36mlet[39m status [33m=[39m error[33m.[39mstatus [33m||[39m [35m500[39m[33m;[39m[0m
+
+      at error (src/middleware/errorHandler.js:2:11)
+      at Layer.handleError (node_modules/router/lib/layer.js:116:17)
+      at trimPrefix (node_modules/router/index.js:340:13)
+      at node_modules/router/index.js:297:9
+      at processParams (node_modules/router/index.js:582:12)
+      at next (node_modules/router/index.js:291:5)
+      at node_modules/router/index.js:688:15
+      at next (node_modules/router/index.js:276:14)
+      at node_modules/router/index.js:688:15
+      at next (node_modules/router/index.js:276:14)
+      at next (node_modules/router/lib/route.js:132:14)
+      at next (src/controllers/childrenController.js:769:5)
+
+  console.error
+    Stack: PrismaClientKnownRequestError: 
+    Invalid `prisma.children.update()` invocation in
+    C:\Users\daibr\vax\src\controllers\childrenController.js:758:48
+    
+      755   return res.status(404).json({ message: "Enfant non trouv├®" });
+      756 }
+      757 
+    ÔåÆ 758 const updatedChild = await prisma.children.update(
+    Foreign key constraint violated on the constraint: `Children_nextVaccineId_fkey`
+        at $r.handleRequestError (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:7347)
+        at $r.handleAndLogRequestError (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6642)
+        at $r.request (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6349)
+        at processTicksAndRejections (node:internal/process/task_queues:105:5)
+        at a (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:79:5816)
+        at updateChildren (C:\Users\daibr\vax\src\controllers\childrenController.js:758:26)
+
+    [0m [90m 1 |[39m [36mconst[39m errorHandler [33m=[39m (error[33m,[39m _req[33m,[39m res[33m,[39m _next) [33m=>[39m {
+     [90m 2 |[39m   console[33m.[39merror([32m"Error:"[39m[33m,[39m error)[33m;[39m
+    [31m[1m>[22m[39m[90m 3 |[39m   console[33m.[39merror([32m"Stack:"[39m[33m,[39m error[33m.[39mstack)[33m;[39m
+     [90m   |[39m           [31m[1m^[22m[39m
+     [90m 4 |[39m   
+     [90m 5 |[39m   [36mlet[39m status [33m=[39m error[33m.[39mstatus [33m||[39m [35m500[39m[33m;[39m
+     [90m 6 |[39m   [36mlet[39m message [33m=[39m error[33m.[39mmessage [33m||[39m [32m"Une erreur est survenue"[39m[33m;[39m[0m
+
+      at error (src/middleware/errorHandler.js:3:11)
+      at Layer.handleError (node_modules/router/lib/layer.js:116:17)
+      at trimPrefix (node_modules/router/index.js:340:13)
+      at node_modules/router/index.js:297:9
+      at processParams (node_modules/router/index.js:582:12)
+      at next (node_modules/router/index.js:291:5)
+      at node_modules/router/index.js:688:15
+      at next (node_modules/router/index.js:276:14)
+      at node_modules/router/index.js:688:15
+      at next (node_modules/router/index.js:276:14)
+      at next (node_modules/router/lib/route.js:132:14)
+      at next (src/controllers/childrenController.js:769:5)
+
+  console.error
+    Error: PrismaClientKnownRequestError: 
+    Invalid `prisma.children.update()` invocation in
+    C:\Users\daibr\vax\src\controllers\childrenController.js:758:48
+    
+      755   return res.status(404).json({ message: "Enfant non trouv├®" });
+      756 }
+      757 
+    ÔåÆ 758 const updatedChild = await prisma.children.update(
+    Foreign key constraint violated on the constraint: `Children_nextVaccineId_fkey`
+        at $r.handleRequestError (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:7347)
+        at $r.handleAndLogRequestError (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6642)
+        at $r.request (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6349)
+        at processTicksAndRejections (node:internal/process/task_queues:105:5)
+        at a (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:79:5816)
+        at updateChildren (C:\Users\daibr\vax\src\controllers\childrenController.js:758:26) {
+      code: 'P2003',
+      meta: {
+        modelName: 'Children',
+        driverAdapterError: DriverAdapterError: ForeignKeyConstraintViolation
+            at PrismaPgAdapter.onError (C:\Users\daibr\vax\node_modules\@prisma\adapter-pg\dist\index.js:693:11)
+            at PrismaPgAdapter.performIO (C:\Users\daibr\vax\node_modules\@prisma\adapter-pg\dist\index.js:688:12)
+            at processTicksAndRejections (node:internal/process/task_queues:105:5)
+            at PrismaPgAdapter.queryRaw (C:\Users\daibr\vax\node_modules\@prisma\adapter-pg\dist\index.js:608:30)
+            at C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:15:23732
+            at mr (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:15:23571)
+            at e.interpretNode (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:15:41866)
+            at e.interpretNode (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:15:42290)
+            at e.interpretNode (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:15:41116)
+            at e.interpretNode (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:15:43464)
+            at e.run (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:15:40736)
+            at execute (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:61:670)
+            at Dt.request (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:62:2186)
+            at Object.singleLoader (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:5744)
+            at $r.request (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6236)
+            at a (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:79:5816)
+            at updateChildren (C:\Users\daibr\vax\src\controllers\childrenController.js:758:26) {
+          cause: [Object]
+        }
+      },
+      clientVersion: '7.0.0'
+    }
+
+    [0m [90m 1 |[39m [36mconst[39m errorHandler [33m=[39m (error[33m,[39m _req[33m,[39m res[33m,[39m _next) [33m=>[39m {
+    [31m[1m>[22m[39m[90m 2 |[39m   console[33m.[39merror([32m"Error:"[39m[33m,[39m error)[33m;[39m
+     [90m   |[39m           [31m[1m^[22m[39m
+     [90m 3 |[39m   console[33m.[39merror([32m"Stack:"[39m[33m,[39m error[33m.[39mstack)[33m;[39m
+     [90m 4 |[39m   
+     [90m 5 |[39m   [36mlet[39m status [33m=[39m error[33m.[39mstatus [33m||[39m [35m500[39m[33m;[39m[0m
+
+      at error (src/middleware/errorHandler.js:2:11)
+      at Layer.handleError (node_modules/router/lib/layer.js:116:17)
+      at trimPrefix (node_modules/router/index.js:340:13)
+      at node_modules/router/index.js:297:9
+      at processParams (node_modules/router/index.js:582:12)
+      at next (node_modules/router/index.js:291:5)
+      at node_modules/router/index.js:688:15
+      at next (node_modules/router/index.js:276:14)
+      at node_modules/router/index.js:688:15
+      at next (node_modules/router/index.js:276:14)
+      at next (node_modules/router/lib/route.js:132:14)
+      at next (src/controllers/childrenController.js:769:5)
+
+  console.error
+    Stack: PrismaClientKnownRequestError: 
+    Invalid `prisma.children.update()` invocation in
+    C:\Users\daibr\vax\src\controllers\childrenController.js:758:48
+    
+      755   return res.status(404).json({ message: "Enfant non trouv├®" });
+      756 }
+      757 
+    ÔåÆ 758 const updatedChild = await prisma.children.update(
+    Foreign key constraint violated on the constraint: `Children_nextVaccineId_fkey`
+        at $r.handleRequestError (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:7347)
+        at $r.handleAndLogRequestError (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6642)
+        at $r.request (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:69:6349)
+        at processTicksAndRejections (node:internal/process/task_queues:105:5)
+        at a (C:\Users\daibr\vax\node_modules\.prisma\client\runtime\client.js:79:5816)
+        at updateChildren (C:\Users\daibr\vax\src\controllers\childrenController.js:758:26)
+
+    [0m [90m 1 |[39m [36mconst[39m errorHandler [33m=[39m (error[33m,[39m _req[33m,[39m res[33m,[39m _next) [33m=>[39m {
+     [90m 2 |[39m   console[33m.[39merror([32m"Error:"[39m[33m,[39m error)[33m;[39m
+    [31m[1m>[22m[39m[90m 3 |[39m   console[33m.[39merror([32m"Stack:"[39m[33m,[39m error[33m.[39mstack)[33m;[39m
+     [90m   |[39m           [31m[1m^[22m[39m
+     [90m 4 |[39m   
+     [90m 5 |[39m   [36mlet[39m status [33m=[39m error[33m.[39mstatus [33m||[39m [35m500[39m[33m;[39m
+     [90m 6 |[39m   [36mlet[39m message [33m=[39m error[33m.[39mmessage [33m||[39m [32m"Une erreur est survenue"[39m[33m;[39m[0m
+
+      at error (src/middleware/errorHandler.js:3:11)
+      at Layer.handleError (node_modules/router/lib/layer.js:116:17)
+      at trimPrefix (node_modules/router/index.js:340:13)
+      at node_modules/router/index.js:297:9
+      at processParams (node_modules/router/index.js:582:12)
+      at next (node_modules/router/index.js:291:5)
+      at node_modules/router/index.js:688:15
+      at next (node_modules/router/index.js:276:14)
+      at node_modules/router/index.js:688:15
+      at next (node_modules/router/index.js:276:14)
+      at next (node_modules/router/lib/route.js:132:14)
+      at next (src/controllers/childrenController.js:769:5)
+
+node.exe : FAIL tests/integration/children.crud.test.js (15.219 s)
+Au caractère Ligne:1 : 1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (FAIL tests/inte...t.js (15.219 s) 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  Children API - CRUD
+    POST /api/children - Cr├®ation
+      Authentification
+        ÔêÜ Retourne 401 si non authentifi├® (383 ms)
+        ÔêÜ Retourne 403 si utilisateur n'est pas AGENT (NATIONAL) (405 ms)
+        ÔêÜ Retourne 403 si utilisateur n'est pas AGENT (REGIONAL) (342 ms)
+        ÔêÜ Retourne 400 si AGENT sans healthCenterId (508 ms)
+      Succ├¿s
+        ÔêÜ Cr├®e un enfant avec succ├¿s (AGENT ADMIN) (535 ms)
+        ÔêÜ Cr├®e un enfant avec succ├¿s (AGENT STAFF) (414 ms)
+    GET /api/children - Liste
+      Authentification
+        ÔêÜ Retourne 401 si non authentifi├® (366 ms)
+        ÔêÜ Retourne 403 si utilisateur n'est pas autoris├® (346 ms)
+      Autorisation et Scopes
+        ├ù Retourne toutes les enfants pour NATIONAL (478 ms)
+        ÔêÜ Retourne seulement les enfants de sa r├®gion pour REGIONAL (391 ms)
+        ÔêÜ Retourne seulement les enfants de son district pour DISTRICT (389 
+ms)
+        ÔêÜ Retourne seulement les enfants de son healthCenter pour AGENT (402 
+ms)
+        ÔêÜ Retourne une liste vide si REGIONAL sans regionId (500 ms)
+      Filtres
+        ÔêÜ Filtre par status=active (411 ms)
+        ÔêÜ Filtre par status=inactive (412 ms)
+    PUT /api/children/:id - Modification
+      Authentification
+        ÔêÜ Retourne 401 si non authentifi├® (389 ms)
+        ÔêÜ Retourne 403 si utilisateur n'est pas AGENT ou DISTRICT (NATIONAL) 
+(418 ms)
+        ÔêÜ Retourne 403 si utilisateur n'est pas AGENT ou DISTRICT (REGIONAL) 
+(377 ms)
+      Validation
+        ÔêÜ Retourne 404 si enfant non trouv├® (378 ms)
+      Succ├¿s
+        ├ù Modifie nextVaccineId avec succ├¿s (AGENT) (390 ms)
+        ÔêÜ Modifie nextAgentId avec succ├¿s (AGENT) (437 ms)
+        ÔêÜ Modifie nextAppointment avec succ├¿s (AGENT) (441 ms)
+        ├ù Modifie avec succ├¿s (DISTRICT) (391 ms)
+    DELETE /api/children/:id - Suppression
+      Authentification
+        ÔêÜ Retourne 401 si non authentifi├® (427 ms)
+        ÔêÜ Retourne 403 si utilisateur n'est pas AGENT (NATIONAL) (401 ms)
+        ÔêÜ Retourne 403 si utilisateur n'est pas AGENT (REGIONAL) (379 ms)
+        ÔêÜ Retourne 400 si AGENT sans healthCenterId (494 ms)
+      Validation
+        ÔêÜ Retourne 404 si enfant non trouv├® (373 ms)
+        ÔêÜ Retourne 403 si AGENT essaie de supprimer un enfant d'un autre 
+healthCenter (539 ms)
+      Succ├¿s
+        ÔêÜ Supprime un enfant avec succ├¿s (AGENT ADMIN) (397 ms)
+        ÔêÜ Supprime un enfant avec succ├¿s (AGENT STAFF) (421 ms)
+        ÔêÜ Supprime un enfant avec cascade (vaccinations, r├®servations, 
+records) (404 ms)
+
+  ÔùÅ Children API - CRUD ÔÇ║ GET /api/children - Liste ÔÇ║ Autorisation et 
+Scopes ÔÇ║ Retourne toutes les enfants pour NATIONAL
+
+    expect(received).toBeGreaterThanOrEqual(expected)
+
+    Expected: >= 2
+    Received:    0
+
+    [0m [90m 669 |[39m         expect(res[33m.[39mbody)[33m.[39mtoHavePr
+operty([32m"items"[39m)[33m;[39m
+     [90m 670 |[39m         expect([33mArray[39m[33m.[39misArray(res[33m
+.[39mbody[33m.[39mitems))[33m.[39mtoBe([36mtrue[39m)[33m;[39m
+    [31m[1m>[22m[39m[90m 671 |[39m         expect(res[33m.[39mbody[33m
+.[39mtotal)[33m.[39mtoBeGreaterThanOrEqual([35m2[39m)[33m;[39m
+     [90m     |[39m                                [31m[1m^[22m[39m
+     [90m 672 |[39m       })[33m;[39m
+     [90m 673 |[39m
+     [90m 674 |[39m       it([32m"Retourne seulement les enfants de sa 
+r├®gion pour REGIONAL"[39m[33m,[39m [36masync[39m () [33m=>[39m {[0m
+
+      at Object.toBeGreaterThanOrEqual 
+(tests/integration/children.crud.test.js:671:32)
+
+  ÔùÅ Children API - CRUD ÔÇ║ PUT /api/children/:id - Modification ÔÇ║ Succ├¿s 
+ÔÇ║ Modifie nextVaccineId avec succ├¿s (AGENT)
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 200
+    Received: 400
+
+    [0m [90m 961 |[39m           [33m.[39msend({ nextVaccineId[33m:[39m 
+vaccineId })[33m;[39m
+     [90m 962 |[39m
+    [31m[1m>[22m[39m[90m 963 |[39m         
+expect(res[33m.[39mstatusCode)[33m.[39mtoBe([35m200[39m)[33m;[39m
+     [90m     |[39m                                [31m[1m^[22m[39m
+     [90m 964 |[39m         expect(res[33m.[39mbody[33m.[39mnextVaccineId
+)[33m.[39mtoBe(vaccineId)[33m;[39m
+     [90m 965 |[39m
+     [90m 966 |[39m         [90m// V├®rifier en DB[39m[0m
+
+      at Object.toBe (tests/integration/children.crud.test.js:963:32)
+
+  ÔùÅ Children API - CRUD ÔÇ║ PUT /api/children/:id - Modification ÔÇ║ Succ├¿s 
+ÔÇ║ Modifie avec succ├¿s (DISTRICT)
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 200
+    Received: 400
+
+    [0m [90m 1007 |[39m           [33m.[39msend({ 
+nextVaccineId[33m:[39m vaccineId })[33m;[39m
+     [90m 1008 |[39m
+    [31m[1m>[22m[39m[90m 1009 |[39m         
+expect(res[33m.[39mstatusCode)[33m.[39mtoBe([35m200[39m)[33m;[39m
+     [90m      |[39m                                [31m[1m^[22m[39m
+     [90m 1010 |[39m         expect(res[33m.[39mbody[33m.[39mnextVaccineI
+d)[33m.[39mtoBe(vaccineId)[33m;[39m
+     [90m 1011 |[39m       })[33m;[39m
+     [90m 1012 |[39m     })[33m;[39m[0m
+
+      at Object.toBe (tests/integration/children.crud.test.js:1009:32)
+
+Test Suites: 1 failed, 1 total
+Tests:       3 failed, 29 passed, 32 total
+Snapshots:   0 total
+Time:        15.277 s, estimated 16 s
+Ran all test suites matching children.crud.test.js.
+Jest did not exit one second after the test run has completed.
+
+'This usually means that there are asynchronous operations that weren't 
+stopped in your tests. Consider running Jest with `--detectOpenHandles` to 
+troubleshoot this issue.

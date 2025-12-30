@@ -103,3 +103,5 @@ await prisma.user.update({
 2. **Vérifier les résultats** : Si des tests échouent encore, les logs de débogage aideront à identifier le problème
 3. **Corriger le contrôleur si nécessaire** : Si `regionId` est vraiment perdu, corriger `activateUser` dans `src/controllers/userController.js`
 
+
+

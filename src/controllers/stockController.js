@@ -6,7 +6,9 @@ const {
   consumeLots,
   recordTransfer,
   deleteLotCascade,
+  deleteLotDirect,
   updateNearestExpiration,
+  restoreOrRecreateLotForRejectedTransfer,
 } = require("../services/stockLotService");
 
 const resolveRegionIdForUser = async (user) => {
@@ -121,6 +123,9 @@ const fetchLotsForOwner = async ({ vaccineId, ownerType, ownerId }) => {
       vaccineId,
       ownerType,
       ownerId: normalizedOwnerId,
+      // Ne pas afficher les lots vides (quantity: 0) ou PENDING
+      quantity: { gt: 0 },
+      status: { not: LOT_STATUS.PENDING },
     },
     orderBy: [
       { status: "asc" },
@@ -134,6 +139,41 @@ const fetchLotsForOwner = async ({ vaccineId, ownerType, ownerId }) => {
       },
     },
   });
+};
+
+// Helper pour récupérer le nom d'un owner (expéditeur/destinataire)
+const getOwnerName = async (tx, ownerType, ownerId) => {
+  if (!ownerId) {
+    return ownerType === OWNER_TYPES.NATIONAL ? "Stock National" : null;
+  }
+
+  switch (ownerType) {
+    case OWNER_TYPES.NATIONAL:
+      return "Stock National";
+    case OWNER_TYPES.REGIONAL: {
+      const region = await tx.region.findUnique({
+        where: { id: ownerId },
+        select: { name: true },
+      });
+      return region?.name || null;
+    }
+    case OWNER_TYPES.DISTRICT: {
+      const district = await tx.district.findUnique({
+        where: { id: ownerId },
+        select: { name: true },
+      });
+      return district?.name || null;
+    }
+    case OWNER_TYPES.HEALTHCENTER: {
+      const healthCenter = await tx.healthCenter.findUnique({
+        where: { id: ownerId },
+        select: { name: true },
+      });
+      return healthCenter?.name || null;
+    }
+    default:
+      return null;
+  }
 };
 
 const ensureHealthCenterAccessible = async (user, healthCenterId) => {
@@ -241,8 +281,9 @@ const deleteStockForOwner = async ({ ownerType, ownerId, vaccineId }) => {
       select: { id: true },
     });
 
+    // Supprimer les lots directement (sans cascade) pour ne supprimer que localement
     for (const lot of lots) {
-      await deleteLotCascade(tx, lot.id);
+      await deleteLotDirect(tx, lot.id);
     }
 
     switch (ownerType) {
@@ -1132,13 +1173,33 @@ const addStockREGIONAL = async (req, res, next) => {
         quantity: qty,
       });
 
+      // Vérifier et supprimer les lots qui se sont vidés
+      for (const allocation of allocations) {
+        const lot = await tx.stockLot.findUnique({
+          where: { id: allocation.lotId },
+          select: { remainingQuantity: true, quantity: true },
+        });
+        if (lot && lot.remainingQuantity === 0 && lot.quantity === 0) {
+          await deleteLotDirect(tx, allocation.lotId);
+        }
+      }
+
       // Soustraire du stock national
       await tx.stockNATIONAL.update({
         where: { vaccineId },
         data: { quantity: (nationalStock.quantity ?? 0) - qty },
       });
 
-      // NE PAS modifier le stock régional - créer un transfert en attente
+      // Récupérer la date d'expiration du premier lot source (ou date par défaut)
+      const firstLot = allocations.length > 0 
+        ? await tx.stockLot.findUnique({
+            where: { id: allocations[0].lotId },
+            select: { expiration: true },
+          })
+        : null;
+      const lotExpiration = firstLot?.expiration || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+
+      // Créer le transfert en attente
       pendingTransfer = await tx.pendingStockTransfer.create({
         data: {
           vaccineId,
@@ -1163,6 +1224,18 @@ const addStockREGIONAL = async (req, res, next) => {
             },
           },
         },
+      });
+
+      // Créer un lot vide PENDING au destinataire avec la date d'expiration
+      await createLot(tx, {
+        vaccineId,
+        ownerType: OWNER_TYPES.REGIONAL,
+        ownerId: regionId,
+        quantity: 0,
+        expiration: lotExpiration,
+        sourceLotId: allocations[0]?.lotId || null,
+        status: LOT_STATUS.PENDING,
+        pendingTransferId: pendingTransfer.id,
       });
 
       updatedNational = await tx.stockNATIONAL.findUnique({
@@ -1304,13 +1377,33 @@ const addStockDISTRICT = async (req, res, next) => {
         quantity: qty,
       });
 
+      // Vérifier et supprimer les lots qui se sont vidés
+      for (const allocation of allocations) {
+        const lot = await tx.stockLot.findUnique({
+          where: { id: allocation.lotId },
+          select: { remainingQuantity: true, quantity: true },
+        });
+        if (lot && lot.remainingQuantity === 0 && lot.quantity === 0) {
+          await deleteLotDirect(tx, allocation.lotId);
+        }
+      }
+
       // Soustraire du stock régional
       await tx.stockREGIONAL.update({
         where: { vaccineId_regionId: { vaccineId, regionId: regionIdPayload } },
         data: { quantity: (regionalStock.quantity ?? 0) - qty },
       });
 
-      // NE PAS modifier le stock district - créer un transfert en attente
+      // Récupérer la date d'expiration du premier lot source (ou date par défaut)
+      const firstLot = allocations.length > 0 
+        ? await tx.stockLot.findUnique({
+            where: { id: allocations[0].lotId },
+            select: { expiration: true },
+          })
+        : null;
+      const lotExpiration = firstLot?.expiration || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+
+      // Créer le transfert en attente
       pendingTransfer = await tx.pendingStockTransfer.create({
         data: {
           vaccineId,
@@ -1335,6 +1428,18 @@ const addStockDISTRICT = async (req, res, next) => {
             },
           },
         },
+      });
+
+      // Créer un lot vide PENDING au destinataire avec la date d'expiration
+      await createLot(tx, {
+        vaccineId,
+        ownerType: OWNER_TYPES.DISTRICT,
+        ownerId: districtId,
+        quantity: 0,
+        expiration: lotExpiration,
+        sourceLotId: allocations[0]?.lotId || null,
+        status: LOT_STATUS.PENDING,
+        pendingTransferId: pendingTransfer.id,
       });
 
       updatedRegional = await tx.stockREGIONAL.findUnique({
@@ -1469,13 +1574,33 @@ const addStockHEALTHCENTER = async (req, res, next) => {
         quantity: qty,
       });
 
+      // Vérifier et supprimer les lots qui se sont vidés
+      for (const allocation of allocations) {
+        const lot = await tx.stockLot.findUnique({
+          where: { id: allocation.lotId },
+          select: { remainingQuantity: true, quantity: true },
+        });
+        if (lot && lot.remainingQuantity === 0 && lot.quantity === 0) {
+          await deleteLotDirect(tx, allocation.lotId);
+        }
+      }
+
       // Soustraire du stock district
       await tx.stockDISTRICT.update({
         where: { vaccineId_districtId: { vaccineId, districtId } },
         data: { quantity: (districtStock.quantity ?? 0) - qty },
       });
 
-      // NE PAS modifier le stock health center - créer un transfert en attente
+      // Récupérer la date d'expiration du premier lot source (ou date par défaut)
+      const firstLot = allocations.length > 0 
+        ? await tx.stockLot.findUnique({
+            where: { id: allocations[0].lotId },
+            select: { expiration: true },
+          })
+        : null;
+      const lotExpiration = firstLot?.expiration || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+
+      // Créer le transfert en attente
       pendingTransfer = await tx.pendingStockTransfer.create({
         data: {
           vaccineId,
@@ -1500,6 +1625,18 @@ const addStockHEALTHCENTER = async (req, res, next) => {
             },
           },
         },
+      });
+
+      // Créer un lot vide PENDING au destinataire avec la date d'expiration
+      await createLot(tx, {
+        vaccineId,
+        ownerType: OWNER_TYPES.HEALTHCENTER,
+        ownerId: healthCenterId,
+        quantity: 0,
+        expiration: lotExpiration,
+        sourceLotId: allocations[0]?.lotId || null,
+        status: LOT_STATUS.PENDING,
+        pendingTransferId: pendingTransfer.id,
       });
 
       updatedDistrict = await tx.stockDISTRICT.findUnique({
@@ -2005,7 +2142,12 @@ const reduceLotNATIONAL = async (req, res, next) => {
 };
 
 const deleteLot = async (req, res, next) => {
-  if (req.user.role !== "NATIONAL") {
+  if (!["NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  // Pour les agents, seuls les ADMIN peuvent supprimer
+  if (req.user.role === "AGENT" && req.user.agentLevel !== "ADMIN") {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -2016,7 +2158,7 @@ const deleteLot = async (req, res, next) => {
   }
 
   try {
-    let deletedIds = [];
+    let deletedId = null;
 
     await prisma.$transaction(async (tx) => {
       const existing = await tx.stockLot.findUnique({ where: { id } });
@@ -2024,10 +2166,47 @@ const deleteLot = async (req, res, next) => {
         throw Object.assign(new Error("Lot introuvable"), { status: 404 });
       }
 
-      deletedIds = await deleteLotCascade(tx, id);
+      // Vérifier que l'utilisateur a accès à ce lot
+      const normalizedOwnerId = normalizeOwnerIdValue(
+        existing.ownerType,
+        existing.ownerId,
+      );
+
+      if (req.user.role === "REGIONAL") {
+        const regionId = await resolveRegionIdForUser(req.user);
+        if (
+          existing.ownerType !== OWNER_TYPES.REGIONAL ||
+          existing.ownerId !== regionId
+        ) {
+          throw Object.assign(new Error("Accès refusé"), { status: 403 });
+        }
+      } else if (req.user.role === "DISTRICT") {
+        const districtId = await resolveDistrictIdForUser(req.user);
+        if (
+          existing.ownerType !== OWNER_TYPES.DISTRICT ||
+          existing.ownerId !== districtId
+        ) {
+          throw Object.assign(new Error("Accès refusé"), { status: 403 });
+        }
+      } else if (req.user.role === "AGENT") {
+        const healthCenterId = await resolveHealthCenterIdForUser(req.user);
+        if (
+          existing.ownerType !== OWNER_TYPES.HEALTHCENTER ||
+          existing.ownerId !== healthCenterId
+        ) {
+          throw Object.assign(new Error("Accès refusé"), { status: 403 });
+        }
+      } else if (req.user.role === "NATIONAL") {
+        if (existing.ownerType !== OWNER_TYPES.NATIONAL) {
+          throw Object.assign(new Error("Accès refusé"), { status: 403 });
+        }
+      }
+
+      // Supprimer le lot directement (sans cascade)
+      deletedId = await deleteLotDirect(tx, id);
     });
 
-    res.json({ deletedIds });
+    res.json({ deletedId });
   } catch (error) {
     if (error.status) {
       return res.status(error.status).json({ message: error.message });
@@ -2962,18 +3141,57 @@ const confirmPendingTransfer = async (req, res, next) => {
         }
       }
 
-      // Créer les lots pour le stock destination
-      for (const transferLot of pendingTransfer.lots) {
-        await createLot(tx, {
-          vaccineId: pendingTransfer.vaccineId,
+      // Trouver le lot PENDING existant lié à ce transfert
+      const normalizedToId = toType === OWNER_TYPES.NATIONAL ? null : toId;
+      const pendingLot = await tx.stockLot.findFirst({
+        where: {
+          pendingTransferId: transferId,
+          status: LOT_STATUS.PENDING,
           ownerType: toType,
-          ownerId: toId,
-          quantity: transferLot.quantity,
-          expiration: transferLot.lot.expiration,
-          sourceLotId: transferLot.lot.id,
-          status: transferLot.lot.status,
-        });
+          ownerId: normalizedToId,
+        },
+      });
+
+      if (!pendingLot) {
+        throw Object.assign(
+          new Error("Lot PENDING introuvable pour ce transfert"),
+          { status: 404 },
+        );
       }
+
+      // Récupérer la date d'expiration du premier lot source (ou utiliser celle du lot PENDING)
+      const firstValidLot = pendingTransfer.lots.find((tl) => tl.lot);
+      let lotExpiration = firstValidLot 
+        ? firstValidLot.lot.expiration 
+        : pendingLot.expiration;
+      
+      // Déterminer le statut : vérifier si le lot est expiré
+      const now = new Date();
+      let lotStatus;
+      if (firstValidLot) {
+        // Si le lot source existe, utiliser son statut s'il est EXPIRED, sinon vérifier l'expiration
+        if (firstValidLot.lot.status === LOT_STATUS.EXPIRED) {
+          lotStatus = LOT_STATUS.EXPIRED;
+        } else {
+          lotStatus = lotExpiration <= now ? LOT_STATUS.EXPIRED : LOT_STATUS.VALID;
+        }
+      } else {
+        // Si le lot source n'existe plus, vérifier uniquement l'expiration
+        lotStatus = lotExpiration <= now ? LOT_STATUS.EXPIRED : LOT_STATUS.VALID;
+      }
+
+      // Mettre à jour le lot PENDING avec la quantité et changer le statut
+      await tx.stockLot.update({
+        where: { id: pendingLot.id },
+        data: {
+          quantity: pendingTransfer.quantity,
+          remainingQuantity: pendingTransfer.quantity,
+          expiration: lotExpiration,
+          status: lotStatus,
+          sourceLotId: firstValidLot?.lot.id || null,
+          pendingTransferId: null, // Retirer le lien une fois confirmé
+        },
+      });
 
       // Mettre à jour le stock destination
       if (toType === OWNER_TYPES.REGIONAL) {
@@ -3050,14 +3268,9 @@ const confirmPendingTransfer = async (req, res, next) => {
         });
       }
 
-      // Marquer le transfert comme confirmé
-      confirmedTransfer = await tx.pendingStockTransfer.update({
+      // Récupérer les informations du transfert avant suppression (pour les notifications)
+      confirmedTransfer = await tx.pendingStockTransfer.findUnique({
         where: { id: transferId },
-        data: {
-          status: "CONFIRMED",
-          confirmedAt: new Date(),
-          confirmedById: req.user.id,
-        },
         include: {
           vaccine: true,
           confirmedBy: {
@@ -3072,18 +3285,61 @@ const confirmPendingTransfer = async (req, res, next) => {
       });
 
       // Créer un enregistrement de transfert final
-      await recordTransfer(tx, {
-        vaccineId: pendingTransfer.vaccineId,
-        fromType: pendingTransfer.fromType,
-        fromId: pendingTransfer.fromId,
-        toType: toType,
-        toId: toId,
-        allocations: pendingTransfer.lots.map((tl) => ({
+      // Filtrer les lots qui existent encore (certains peuvent avoir été supprimés)
+      const validAllocations = pendingTransfer.lots
+        .filter((tl) => tl.lot) // Ne garder que les lots qui existent encore
+        .map((tl) => ({
           lotId: tl.lot.id,
           quantity: tl.quantity,
           expiration: tl.lot.expiration,
           status: tl.lot.status,
-        })),
+        }));
+
+      if (validAllocations.length > 0) {
+        await recordTransfer(tx, {
+          vaccineId: pendingTransfer.vaccineId,
+          fromType: pendingTransfer.fromType,
+          fromId: pendingTransfer.fromId,
+          toType: toType,
+          toId: toId,
+          allocations: validAllocations,
+        });
+      }
+
+      // Récupérer les noms pour l'historique
+      const fromName = await getOwnerName(tx, pendingTransfer.fromType, pendingTransfer.fromId);
+      const toName = await getOwnerName(tx, toType, toId);
+      const confirmedByName = req.user.firstName && req.user.lastName
+        ? `${req.user.firstName} ${req.user.lastName}`
+        : req.user.email || null;
+
+      // lotExpiration et lotStatus sont déjà définis plus haut lors de la mise à jour du lot PENDING
+
+      // Enregistrer dans l'historique
+      await tx.stockTransferHistory.create({
+        data: {
+          vaccineId: pendingTransfer.vaccineId,
+          vaccineName: pendingTransfer.vaccine.name,
+          fromType: pendingTransfer.fromType,
+          fromId: pendingTransfer.fromId,
+          fromName: fromName,
+          toType: toType,
+          toId: toId,
+          toName: toName,
+          quantity: pendingTransfer.quantity,
+          sentAt: pendingTransfer.createdAt,
+          confirmedAt: new Date(),
+          confirmedById: req.user.id,
+          confirmedByName: confirmedByName,
+          lotExpiration: lotExpiration,
+          lotStatus: lotStatus,
+          status: "CONFIRMED",
+        },
+      });
+
+      // Supprimer le transfert en attente après enregistrement dans l'historique
+      await tx.pendingStockTransfer.delete({
+        where: { id: transferId },
       });
     });
 
@@ -3100,6 +3356,720 @@ const confirmPendingTransfer = async (req, res, next) => {
     if (error.status) {
       return res.status(error.status).json({ message: error.message });
     }
+    next(error);
+  }
+};
+
+// Refuser un transfert en attente (destinataire)
+const rejectPendingTransfer = async (req, res, next) => {
+  if (!["REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  try {
+    const { transferId } = req.params;
+
+    // Vérifier les permissions selon le rôle
+    let toId = null;
+    let toType = null;
+
+    if (req.user.role === "REGIONAL") {
+      toId = await resolveRegionIdForUser(req.user);
+      if (!toId) {
+        return res.status(400).json({ message: "Votre compte n'est pas rattaché à une région" });
+      }
+      toType = OWNER_TYPES.REGIONAL;
+    } else if (req.user.role === "DISTRICT") {
+      toId = await resolveDistrictIdForUser(req.user);
+      if (!toId) {
+        return res.status(400).json({ message: "Votre compte n'est pas rattaché à un district" });
+      }
+      toType = OWNER_TYPES.DISTRICT;
+    } else if (req.user.role === "AGENT") {
+      if (req.user.agentLevel !== "ADMIN") {
+        return res.status(403).json({ message: "Accès refusé" });
+      }
+      if (!req.user.healthCenterId) {
+        return res.status(400).json({ message: "Votre compte n'est pas rattaché à un centre de santé" });
+      }
+      toId = req.user.healthCenterId;
+      toType = OWNER_TYPES.HEALTHCENTER;
+    }
+
+    // Stocker les données pour les notifications avant la transaction
+    let transferDataForNotification = null;
+
+    await prisma.$transaction(async (tx) => {
+      // Vérifier que le transfert existe et appartient à cet utilisateur
+      const pendingTransfer = await tx.pendingStockTransfer.findUnique({
+        where: { id: transferId },
+        include: {
+          vaccine: true,
+          lots: {
+            include: {
+              lot: true,
+            },
+          },
+        },
+      });
+
+      if (!pendingTransfer) {
+        throw Object.assign(new Error("Transfert introuvable"), { status: 404 });
+      }
+
+      if (pendingTransfer.toType !== toType || pendingTransfer.toId !== toId) {
+        throw Object.assign(new Error("Ce transfert ne vous appartient pas"), { status: 403 });
+      }
+
+      if (pendingTransfer.status !== "PENDING") {
+        throw Object.assign(
+          new Error(`Ce transfert a déjà été ${pendingTransfer.status === "CONFIRMED" ? "confirmé" : "annulé"}`),
+          { status: 400 },
+        );
+      }
+
+      // Stocker les données pour les notifications
+      transferDataForNotification = {
+        vaccineId: pendingTransfer.vaccineId,
+        vaccineName: pendingTransfer.vaccine.name,
+        fromType: pendingTransfer.fromType,
+        fromId: pendingTransfer.fromId,
+        toType: toType,
+        toId: toId,
+        quantity: pendingTransfer.quantity,
+      };
+
+      // Supprimer le lot vide PENDING au destinataire
+      const normalizedToId = toType === OWNER_TYPES.NATIONAL ? null : toId;
+      const pendingLot = await tx.stockLot.findFirst({
+        where: {
+          pendingTransferId: transferId,
+          status: LOT_STATUS.PENDING,
+          ownerType: toType,
+          ownerId: normalizedToId,
+        },
+      });
+
+      if (pendingLot) {
+        await deleteLotDirect(tx, pendingLot.id);
+      }
+
+      // Restaurer ou recréer les lots pour chaque lot du transfert
+      // Note: Si le lot source a été supprimé, transferLot.lot sera null
+      // Dans ce cas, on recrée le lot avec les informations disponibles
+      for (const transferLot of pendingTransfer.lots) {
+        if (transferLot.lot) {
+          // Le lot existe encore : restaurer la quantité
+          await restoreOrRecreateLotForRejectedTransfer(tx, {
+            lotId: transferLot.lot.id,
+            quantity: transferLot.quantity,
+            vaccineId: pendingTransfer.vaccineId,
+            ownerType: pendingTransfer.fromType,
+            ownerId: pendingTransfer.fromId,
+            expiration: transferLot.lot.expiration,
+            status: transferLot.lot.status,
+          });
+        } else {
+          // Le lot a été supprimé : recréer le lot
+          await restoreOrRecreateLotForRejectedTransfer(tx, {
+            lotId: transferLot.lotId, // ID du lot supprimé (pour référence)
+            quantity: transferLot.quantity,
+            vaccineId: pendingTransfer.vaccineId,
+            ownerType: pendingTransfer.fromType,
+            ownerId: pendingTransfer.fromId,
+            expiration: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // Par défaut 1 an
+            status: LOT_STATUS.VALID,
+          });
+        }
+      }
+
+      // Récupérer les informations pour l'historique avant de marquer comme annulé
+      const fromName = await getOwnerName(tx, pendingTransfer.fromType, pendingTransfer.fromId);
+      const toName = await getOwnerName(tx, toType, toId);
+      const cancelledByName = req.user.firstName && req.user.lastName
+        ? `${req.user.firstName} ${req.user.lastName}`
+        : req.user.email || null;
+
+      // Récupérer la date d'expiration du premier lot source (ou date par défaut)
+      const firstValidLot = pendingTransfer.lots.find((tl) => tl.lot);
+      const lotExpiration = firstValidLot 
+        ? firstValidLot.lot.expiration 
+        : (pendingLot?.expiration || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000));
+      const lotStatus = firstValidLot 
+        ? firstValidLot.lot.status 
+        : (pendingLot?.status || LOT_STATUS.VALID);
+
+      // Enregistrer dans l'historique avec le statut CANCELLED
+      await tx.stockTransferHistory.create({
+        data: {
+          vaccineId: pendingTransfer.vaccineId,
+          vaccineName: pendingTransfer.vaccine.name,
+          fromType: pendingTransfer.fromType,
+          fromId: pendingTransfer.fromId,
+          fromName: fromName,
+          toType: toType,
+          toId: toId,
+          toName: toName,
+          quantity: pendingTransfer.quantity,
+          sentAt: pendingTransfer.createdAt,
+          confirmedAt: null, // Pas de confirmation pour un transfert annulé
+          confirmedById: req.user.id,
+          confirmedByName: cancelledByName,
+          lotExpiration: lotExpiration,
+          lotStatus: lotStatus,
+          status: "CANCELLED",
+        },
+      });
+
+      // Supprimer le transfert en attente après enregistrement dans l'historique
+      await tx.pendingStockTransfer.delete({
+        where: { id: transferId },
+      });
+    });
+
+    // Envoyer notification à l'expéditeur
+    try {
+      const { sendTransferRejectedEmail } = require("../services/emailService");
+      
+      if (transferDataForNotification) {
+        const fromName = await getOwnerName(prisma, transferDataForNotification.fromType, transferDataForNotification.fromId);
+        const toName = await getOwnerName(prisma, transferDataForNotification.toType, transferDataForNotification.toId);
+        
+        // Récupérer les utilisateurs expéditeurs
+        let senderUsers = [];
+        if (transferDataForNotification.fromType === OWNER_TYPES.NATIONAL) {
+          senderUsers = await prisma.user.findMany({
+            where: { role: "NATIONAL", isActive: true },
+            select: { email: true },
+          });
+        } else if (transferDataForNotification.fromType === OWNER_TYPES.REGIONAL) {
+          senderUsers = await prisma.user.findMany({
+            where: { role: "REGIONAL", regionId: transferDataForNotification.fromId, isActive: true },
+            select: { email: true },
+          });
+        } else if (transferDataForNotification.fromType === OWNER_TYPES.DISTRICT) {
+          senderUsers = await prisma.user.findMany({
+            where: { role: "DISTRICT", districtId: transferDataForNotification.fromId, isActive: true },
+            select: { email: true },
+          });
+        }
+
+        if (senderUsers.length > 0) {
+          const emails = senderUsers.map((u) => u.email).filter(Boolean);
+          if (emails.length > 0) {
+            await sendTransferRejectedEmail({
+              emails,
+              vaccineName: transferDataForNotification.vaccineName,
+              quantity: transferDataForNotification.quantity,
+              fromName: fromName || "Expéditeur",
+              toName: toName || "Destinataire",
+            });
+          }
+        }
+      }
+    } catch (emailError) {
+      console.error("Erreur envoi email refus transfert:", emailError);
+      // Ne pas bloquer la réponse si l'email échoue
+    }
+
+    res.json({
+      success: true,
+      message: "Transfert refusé. Les quantités ont été restaurées.",
+    });
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    next(error);
+  }
+};
+
+// Annuler un transfert en attente (expéditeur)
+const cancelPendingTransfer = async (req, res, next) => {
+  if (!["NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  try {
+    const { transferId } = req.params;
+
+    // Vérifier les permissions selon le rôle
+    let fromId = null;
+    let fromType = null;
+
+    if (req.user.role === "NATIONAL") {
+      fromType = OWNER_TYPES.NATIONAL;
+      fromId = null;
+    } else if (req.user.role === "REGIONAL") {
+      fromId = await resolveRegionIdForUser(req.user);
+      if (!fromId) {
+        return res.status(400).json({ message: "Votre compte n'est pas rattaché à une région" });
+      }
+      fromType = OWNER_TYPES.REGIONAL;
+    } else if (req.user.role === "DISTRICT") {
+      fromId = await resolveDistrictIdForUser(req.user);
+      if (!fromId) {
+        return res.status(400).json({ message: "Votre compte n'est pas rattaché à un district" });
+      }
+      fromType = OWNER_TYPES.DISTRICT;
+    }
+
+    // Stocker les données pour les notifications avant la transaction
+    let transferDataForNotification = null;
+
+    await prisma.$transaction(async (tx) => {
+      // Vérifier que le transfert existe et appartient à cet utilisateur
+      const pendingTransfer = await tx.pendingStockTransfer.findUnique({
+        where: { id: transferId },
+        include: {
+          vaccine: true,
+          lots: {
+            include: {
+              lot: true,
+            },
+          },
+        },
+      });
+
+      if (!pendingTransfer) {
+        throw Object.assign(new Error("Transfert introuvable"), { status: 404 });
+      }
+
+      if (pendingTransfer.fromType !== fromType || pendingTransfer.fromId !== fromId) {
+        throw Object.assign(new Error("Ce transfert ne vous appartient pas"), { status: 403 });
+      }
+
+      if (pendingTransfer.status !== "PENDING") {
+        throw Object.assign(
+          new Error(`Ce transfert a déjà été ${pendingTransfer.status === "CONFIRMED" ? "confirmé" : "annulé"}`),
+          { status: 400 },
+        );
+      }
+
+      // Stocker les données pour les notifications
+      transferDataForNotification = {
+        vaccineId: pendingTransfer.vaccineId,
+        vaccineName: pendingTransfer.vaccine.name,
+        fromType: pendingTransfer.fromType,
+        fromId: pendingTransfer.fromId,
+        toType: pendingTransfer.toType,
+        toId: pendingTransfer.toId,
+        quantity: pendingTransfer.quantity,
+      };
+
+      // Supprimer le lot vide PENDING au destinataire
+      const normalizedToId = pendingTransfer.toType === OWNER_TYPES.NATIONAL ? null : pendingTransfer.toId;
+      const pendingLot = await tx.stockLot.findFirst({
+        where: {
+          pendingTransferId: transferId,
+          status: LOT_STATUS.PENDING,
+          ownerType: pendingTransfer.toType,
+          ownerId: normalizedToId,
+        },
+      });
+
+      if (pendingLot) {
+        await deleteLotDirect(tx, pendingLot.id);
+      }
+
+      // Restaurer ou recréer les lots pour chaque lot du transfert
+      // Note: Si le lot source a été supprimé, transferLot.lot sera null
+      // Dans ce cas, on recrée le lot avec les informations disponibles
+      for (const transferLot of pendingTransfer.lots) {
+        if (transferLot.lot) {
+          // Le lot existe encore : restaurer la quantité
+          await restoreOrRecreateLotForRejectedTransfer(tx, {
+            lotId: transferLot.lot.id,
+            quantity: transferLot.quantity,
+            vaccineId: pendingTransfer.vaccineId,
+            ownerType: pendingTransfer.fromType,
+            ownerId: pendingTransfer.fromId,
+            expiration: transferLot.lot.expiration,
+            status: transferLot.lot.status,
+          });
+        } else {
+          // Le lot a été supprimé : recréer le lot
+          await restoreOrRecreateLotForRejectedTransfer(tx, {
+            lotId: transferLot.lotId, // ID du lot supprimé (pour référence)
+            quantity: transferLot.quantity,
+            vaccineId: pendingTransfer.vaccineId,
+            ownerType: pendingTransfer.fromType,
+            ownerId: pendingTransfer.fromId,
+            expiration: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // Par défaut 1 an
+            status: LOT_STATUS.VALID,
+          });
+        }
+      }
+
+      // Récupérer les informations pour l'historique avant de marquer comme annulé
+      const fromName = await getOwnerName(tx, pendingTransfer.fromType, pendingTransfer.fromId);
+      const toName = await getOwnerName(tx, pendingTransfer.toType, pendingTransfer.toId);
+      const cancelledByName = req.user.firstName && req.user.lastName
+        ? `${req.user.firstName} ${req.user.lastName}`
+        : req.user.email || null;
+
+      // Récupérer la date d'expiration du premier lot source (ou date par défaut)
+      const firstValidLot = pendingTransfer.lots.find((tl) => tl.lot);
+      const lotExpiration = firstValidLot 
+        ? firstValidLot.lot.expiration 
+        : (pendingLot?.expiration || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000));
+      const lotStatus = firstValidLot 
+        ? firstValidLot.lot.status 
+        : (pendingLot?.status || LOT_STATUS.VALID);
+
+      // Enregistrer dans l'historique avec le statut CANCELLED
+      await tx.stockTransferHistory.create({
+        data: {
+          vaccineId: pendingTransfer.vaccineId,
+          vaccineName: pendingTransfer.vaccine.name,
+          fromType: pendingTransfer.fromType,
+          fromId: pendingTransfer.fromId,
+          fromName: fromName,
+          toType: pendingTransfer.toType,
+          toId: pendingTransfer.toId,
+          toName: toName,
+          quantity: pendingTransfer.quantity,
+          sentAt: pendingTransfer.createdAt,
+          confirmedAt: null, // Pas de confirmation pour un transfert annulé
+          confirmedById: req.user.id,
+          confirmedByName: cancelledByName,
+          lotExpiration: lotExpiration,
+          lotStatus: lotStatus,
+          status: "CANCELLED",
+        },
+      });
+
+      // Supprimer le transfert en attente après enregistrement dans l'historique
+      await tx.pendingStockTransfer.delete({
+        where: { id: transferId },
+      });
+    });
+
+    // Envoyer notification au destinataire
+    try {
+      const { sendTransferCancelledEmail } = require("../services/emailService");
+      
+      if (transferDataForNotification) {
+        const fromName = await getOwnerName(prisma, transferDataForNotification.fromType, transferDataForNotification.fromId);
+        const toName = await getOwnerName(prisma, transferDataForNotification.toType, transferDataForNotification.toId);
+        
+        // Récupérer les utilisateurs destinataires
+        let recipientUsers = [];
+        if (transferDataForNotification.toType === OWNER_TYPES.REGIONAL) {
+          recipientUsers = await prisma.user.findMany({
+            where: { role: "REGIONAL", regionId: transferDataForNotification.toId, isActive: true },
+            select: { email: true },
+          });
+        } else if (transferDataForNotification.toType === OWNER_TYPES.DISTRICT) {
+          recipientUsers = await prisma.user.findMany({
+            where: { role: "DISTRICT", districtId: transferDataForNotification.toId, isActive: true },
+            select: { email: true },
+          });
+        } else if (transferDataForNotification.toType === OWNER_TYPES.HEALTHCENTER) {
+          recipientUsers = await prisma.user.findMany({
+            where: { role: "AGENT", agentLevel: "ADMIN", healthCenterId: transferDataForNotification.toId, isActive: true },
+            select: { email: true },
+          });
+        }
+
+        if (recipientUsers.length > 0) {
+          const emails = recipientUsers.map((u) => u.email).filter(Boolean);
+          if (emails.length > 0) {
+            await sendTransferCancelledEmail({
+              emails,
+              vaccineName: transferDataForNotification.vaccineName,
+              quantity: transferDataForNotification.quantity,
+              fromName: fromName || "Expéditeur",
+              toName: toName || "Destinataire",
+            });
+          }
+        }
+      }
+    } catch (emailError) {
+      console.error("Erreur envoi email annulation transfert:", emailError);
+      // Ne pas bloquer la réponse si l'email échoue
+    }
+
+    res.json({
+      success: true,
+      message: "Transfert annulé. Les quantités ont été restaurées.",
+    });
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    next(error);
+  }
+};
+
+// Obtenir l'historique des transferts avec filtres et pagination
+const getTransferHistory = async (req, res, next) => {
+  if (!["NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  // Pour les agents, seuls les ADMIN peuvent voir l'historique
+  if (req.user.role === "AGENT" && req.user.agentLevel !== "ADMIN") {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  try {
+    const {
+      page = "1",
+      limit = "20",
+      vaccineId,
+      fromType,
+      toType,
+      fromId,
+      toId,
+      sentStartDate,
+      sentEndDate,
+      confirmedStartDate,
+      confirmedEndDate,
+      search,
+    } = req.query;
+
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    // Construire la clause where
+    const whereClause = {};
+    const andConditions = [];
+
+    // Filtre par rôle utilisateur
+    let roleFilter = null;
+    if (req.user.role === "REGIONAL") {
+      const regionId = await resolveRegionIdForUser(req.user);
+      if (regionId) {
+        const roleConditions = [
+          { fromType: OWNER_TYPES.REGIONAL, fromId: regionId },
+          { toType: OWNER_TYPES.REGIONAL, toId: regionId },
+        ];
+        // Appliquer les filtres fromType/toType si présents
+        if (fromType) {
+          roleConditions[0].fromType = fromType;
+        }
+        if (toType) {
+          roleConditions[1].toType = toType;
+        }
+        roleFilter = { OR: roleConditions };
+      } else {
+        return res.json({ history: [], total: 0, page: pageNum, limit: limitNum });
+      }
+    } else if (req.user.role === "DISTRICT") {
+      const districtId = await resolveDistrictIdForUser(req.user);
+      if (districtId) {
+        const roleConditions = [
+          { fromType: OWNER_TYPES.DISTRICT, fromId: districtId },
+          { toType: OWNER_TYPES.DISTRICT, toId: districtId },
+        ];
+        if (fromType) {
+          roleConditions[0].fromType = fromType;
+        }
+        if (toType) {
+          roleConditions[1].toType = toType;
+        }
+        roleFilter = { OR: roleConditions };
+      } else {
+        return res.json({ history: [], total: 0, page: pageNum, limit: limitNum });
+      }
+    } else if (req.user.role === "AGENT") {
+      const healthCenterId = await resolveHealthCenterIdForUser(req.user);
+      if (healthCenterId) {
+        const roleConditions = [
+          { fromType: OWNER_TYPES.HEALTHCENTER, fromId: healthCenterId },
+          { toType: OWNER_TYPES.HEALTHCENTER, toId: healthCenterId },
+        ];
+        if (fromType) {
+          roleConditions[0].fromType = fromType;
+        }
+        if (toType) {
+          roleConditions[1].toType = toType;
+        }
+        roleFilter = { OR: roleConditions };
+      } else {
+        return res.json({ history: [], total: 0, page: pageNum, limit: limitNum });
+      }
+    }
+    // NATIONAL peut voir tout
+
+    // Ajouter le filtre de rôle si présent
+    if (roleFilter) {
+      andConditions.push(roleFilter);
+    }
+
+    // Filtres additionnels simples (seulement pour NATIONAL)
+    if (req.user.role === "NATIONAL") {
+      if (vaccineId) {
+        whereClause.vaccineId = vaccineId;
+      }
+      if (fromType) {
+        whereClause.fromType = fromType;
+      }
+      if (toType) {
+        whereClause.toType = toType;
+      }
+      if (fromId) {
+        whereClause.fromId = fromId;
+      }
+      if (toId) {
+        whereClause.toId = toId;
+      }
+    } else {
+      // Pour les autres rôles, on peut filtrer par vaccineId et fromId/toId
+      if (vaccineId) {
+        whereClause.vaccineId = vaccineId;
+      }
+      if (fromId) {
+        whereClause.fromId = fromId;
+      }
+      if (toId) {
+        whereClause.toId = toId;
+      }
+    }
+
+    // Filtre de recherche
+    if (search) {
+      const searchConditions = {
+        OR: [
+          { vaccineName: { contains: search, mode: "insensitive" } },
+          { fromName: { contains: search, mode: "insensitive" } },
+          { toName: { contains: search, mode: "insensitive" } },
+        ],
+      };
+      andConditions.push(searchConditions);
+    }
+
+    // Filtre de date d'envoi
+    if (sentStartDate || sentEndDate) {
+      const sentDateFilter = {};
+      if (sentStartDate) {
+        sentDateFilter.gte = new Date(sentStartDate);
+      }
+      if (sentEndDate) {
+        sentDateFilter.lte = new Date(sentEndDate);
+      }
+      if (Object.keys(sentDateFilter).length > 0) {
+        whereClause.sentAt = sentDateFilter;
+      }
+    }
+
+    // Filtre de date de confirmation
+    if (confirmedStartDate || confirmedEndDate) {
+      const confirmedDateFilter = {};
+      if (confirmedStartDate) {
+        confirmedDateFilter.gte = new Date(confirmedStartDate);
+      }
+      if (confirmedEndDate) {
+        confirmedDateFilter.lte = new Date(confirmedEndDate);
+      }
+      if (Object.keys(confirmedDateFilter).length > 0) {
+        whereClause.confirmedAt = confirmedDateFilter;
+      }
+    }
+
+    // Combiner toutes les conditions
+    if (andConditions.length > 0) {
+      whereClause.AND = andConditions;
+    }
+
+    // Si whereClause est vide, utiliser undefined pour récupérer tous les enregistrements
+    const finalWhere = Object.keys(whereClause).length > 0 ? whereClause : undefined;
+
+    const [history, total] = await Promise.all([
+      prisma.stockTransferHistory.findMany({
+        where: finalWhere,
+        orderBy: [
+          { sentAt: "desc" }, // Trier par date d'envoi (plus récent en premier)
+          { createdAt: "desc" }, // En cas d'égalité, trier par date de création
+        ],
+        skip,
+        take: limitNum,
+      }),
+      prisma.stockTransferHistory.count({
+        where: finalWhere,
+      }),
+    ]);
+
+    res.json({
+      history,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Adapter getPendingTransfers pour inclure les expéditeurs
+const getPendingTransfersForSender = async (req, res, next) => {
+  if (!["NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  try {
+    let whereClause = { status: "PENDING" };
+
+    if (req.user.role === "NATIONAL") {
+      whereClause.fromType = OWNER_TYPES.NATIONAL;
+      whereClause.fromId = null;
+    } else if (req.user.role === "REGIONAL") {
+      const regionId = await resolveRegionIdForUser(req.user);
+      if (!regionId) {
+        return res.json({ transfers: [] });
+      }
+      whereClause.fromType = OWNER_TYPES.REGIONAL;
+      whereClause.fromId = regionId;
+    } else if (req.user.role === "DISTRICT") {
+      const districtId = await resolveDistrictIdForUser(req.user);
+      if (!districtId) {
+        return res.json({ transfers: [] });
+      }
+      whereClause.fromType = OWNER_TYPES.DISTRICT;
+      whereClause.fromId = districtId;
+    }
+
+    const transfers = await prisma.pendingStockTransfer.findMany({
+      where: whereClause,
+      include: {
+        vaccine: true,
+        lots: {
+          include: {
+            lot: {
+              select: {
+                id: true,
+                expiration: true,
+                quantity: true,
+                remainingQuantity: true,
+                status: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    // Ajouter le nom du destinataire pour chaque transfert
+    const transfersWithNames = await Promise.all(
+      transfers.map(async (transfer) => {
+        const toName = await getOwnerName(prisma, transfer.toType, transfer.toId);
+        return {
+          ...transfer,
+          toName: toName || (transfer.toType === OWNER_TYPES.REGIONAL ? "Région" : 
+                            transfer.toType === OWNER_TYPES.DISTRICT ? "District" : 
+                            transfer.toType === OWNER_TYPES.HEALTHCENTER ? "Centre de santé" : "Inconnu"),
+        };
+      })
+    );
+
+    res.json({ transfers: transfersWithNames });
+  } catch (error) {
     next(error);
   }
 };
@@ -3141,5 +4111,9 @@ module.exports = {
   deleteLot,
   getHealthCenterReservations,
   getPendingTransfers,
+  getPendingTransfersForSender,
   confirmPendingTransfer,
+  rejectPendingTransfer,
+  cancelPendingTransfer,
+  getTransferHistory,
 };

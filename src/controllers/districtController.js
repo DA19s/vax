@@ -313,24 +313,6 @@ const createDistrict = async (req, res, next) => {
 
     await ensureCommuneBelongsToRegion(communeId, req.user.regionId);
 
-    // Vérifier si la commune a déjà un district
-    const existingDistrict = await prisma.district.findUnique({
-      where: { communeId },
-      include: {
-        commune: {
-          select: {
-            name: true,
-          },
-        },
-      },
-    });
-
-    if (existingDistrict) {
-      return res.status(400).json({
-        message: `La commune "${existingDistrict.commune.name}" a déjà un district associé (${existingDistrict.name}). Une commune ne peut avoir qu'un seul district.`,
-      });
-    }
-
     const district = await prisma.district.create({
       data: {
         name: name.trim(),
@@ -349,12 +331,6 @@ const createDistrict = async (req, res, next) => {
 
     res.status(201).json(district);
   } catch (error) {
-    // Gérer aussi l'erreur de contrainte unique au cas où
-    if (error.code === "P2002") {
-      return res.status(400).json({
-        message: "Cette commune a déjà un district associé. Une commune ne peut avoir qu'un seul district.",
-      });
-    }
     next(error);
   }
 };
@@ -376,25 +352,6 @@ const updateDistrict = async (req, res, next) => {
 
     if (communeId && communeId !== district.communeId) {
       await ensureCommuneBelongsToRegion(communeId, req.user.regionId);
-      
-      // Vérifier si la nouvelle commune a déjà un district
-      const existingDistrict = await prisma.district.findUnique({
-        where: { communeId },
-        include: {
-          commune: {
-            select: {
-              name: true,
-            },
-          },
-        },
-      });
-
-      if (existingDistrict) {
-        return res.status(400).json({
-          message: `La commune "${existingDistrict.commune.name}" a déjà un district associé (${existingDistrict.name}). Une commune ne peut avoir qu'un seul district.`,
-        });
-      }
-
       updateData.communeId = communeId;
     }
 
@@ -418,12 +375,6 @@ const updateDistrict = async (req, res, next) => {
 
     res.json(updated);
   } catch (error) {
-    // Gérer l'erreur de contrainte unique au cas où
-    if (error.code === "P2002") {
-      return res.status(400).json({
-        message: "Cette commune a déjà un district associé. Une commune ne peut avoir qu'un seul district.",
-      });
-    }
     next(error);
   }
 };

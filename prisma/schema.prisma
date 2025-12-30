@@ -165,13 +165,13 @@ model Commune {
   name        String
   regionId    String
   region      Region @relation(fields: [regionId], references: [id])
-  district    District?
+  districts   District[]
 }
 
 model District {
   id                String          @id @default(uuid())
   name              String
-  communeId         String          @unique
+  communeId         String
   commune           Commune         @relation(fields: [communeId], references: [id])
 
   healthCenters     HealthCenter[]
@@ -392,6 +392,7 @@ enum StockLotOwnerType {
 enum StockLotStatus {
   VALID
   EXPIRED
+  PENDING
 }
 
 model StockLot {
@@ -407,6 +408,8 @@ model StockLot {
   sourceLotId       String?
   sourceLot         StockLot?         @relation("LotDerivedFrom", fields: [sourceLotId], references: [id])
   derivedLots       StockLot[]        @relation("LotDerivedFrom")
+  pendingTransferId String?
+  pendingTransfer   PendingStockTransfer? @relation(fields: [pendingTransferId], references: [id], onDelete: Cascade)
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
@@ -457,6 +460,7 @@ model PendingStockTransfer {
   confirmedBy       User?              @relation(fields: [confirmedById], references: [id])
 
   lots              PendingStockTransferLot[]
+  pendingLots       StockLot[]
 }
 
 model PendingStockTransferLot {
@@ -483,6 +487,42 @@ enum PendingTransferStatus {
   PENDING
   CONFIRMED
   CANCELLED
+}
+
+model StockTransferHistory {
+  id                String            @id @default(uuid())
+  // Informations du vaccin (brut, sans clé étrangère)
+  vaccineId         String
+  vaccineName       String
+  // Informations de l'expéditeur (brut)
+  fromType          StockLotOwnerType
+  fromId            String?
+  fromName          String?
+  // Informations du destinataire (brut)
+  toType            StockLotOwnerType
+  toId              String?
+  toName            String?
+  // Quantité envoyée
+  quantity          Int
+  // Dates
+  sentAt            DateTime          // Date d'envoi (createdAt du pending)
+  confirmedAt       DateTime?         // Date de confirmation (null si annulé)
+  // Informations du confirmateur/annulateur (brut)
+  confirmedById     String?
+  confirmedByName   String?
+  // Informations du lot envoyé (brut)
+  lotExpiration     DateTime?         // Date d'expiration du lot envoyé
+  lotStatus         String?           // Status du lot (VALID/EXPIRED)
+  // Statut du transfert
+  status            String            @default("CONFIRMED") // "CONFIRMED" ou "CANCELLED"
+  // Métadonnées
+  createdAt         DateTime          @default(now())
+
+  @@index([fromType, fromId])
+  @@index([toType, toId])
+  @@index([vaccineId])
+  @@index([confirmedAt])
+  @@index([sentAt])
 }
 
 model Advice {

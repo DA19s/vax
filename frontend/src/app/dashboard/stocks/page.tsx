@@ -93,6 +93,55 @@ type LotModalContext = {
   ownerId?: string | null;
 };
 
+type PendingTransfer = {
+  id: string;
+  vaccineId: string;
+  vaccine: VaccineInfo;
+  fromType: string;
+  fromId: string | null;
+  toType: string;
+  toId: string | null;
+  toName?: string | null;
+  quantity: number;
+  status: "PENDING" | "CONFIRMED" | "CANCELLED";
+  createdAt: string;
+  confirmedAt: string | null;
+  confirmedById: string | null;
+  lots: Array<{
+    id: string;
+    lotId: string;
+    quantity: number;
+    lot: {
+      id: string;
+      expiration: string;
+      quantity: number;
+      remainingQuantity: number;
+      status?: string;
+    } | null;
+  }>;
+};
+
+type TransferHistoryItem = {
+  id: string;
+  vaccineId: string;
+  vaccineName: string;
+  fromType: string;
+  fromId: string | null;
+  fromName: string | null;
+  toType: string;
+  toId: string | null;
+  toName: string | null;
+  quantity: number;
+  sentAt: string;
+  confirmedAt: string | null;
+  confirmedById: string | null;
+  confirmedByName: string | null;
+  lotExpiration: string | null;
+  lotStatus: string | null;
+  status: string;
+  createdAt: string;
+};
+
 const formatExpirationDate = (value: string) => {
   try {
     return new Intl.DateTimeFormat("fr-FR", {
@@ -176,6 +225,35 @@ function NationalStocksPage() {
   const [stats, setStats] = useState<StockStats>(emptyStats);
   const [statsLoading, setStatsLoading] = useState(true);
   const [statsError, setStatsError] = useState<string | null>(null);
+
+  // États pour les onglets
+  const [activeTab, setActiveTab] = useState<"stocks" | "pending-received" | "pending-sent" | "history">("stocks");
+  
+  // États pour les envois en attente (reçus) - toujours vide pour NATIONAL
+  const [pendingTransfers, setPendingTransfers] = useState<PendingTransfer[]>([]);
+  const [pendingTransfersLoading, setPendingTransfersLoading] = useState(false);
+  
+  // États pour les envois en cours (envoyés)
+  const [sentTransfers, setSentTransfers] = useState<PendingTransfer[]>([]);
+  const [sentTransfersLoading, setSentTransfersLoading] = useState(false);
+  const [cancellingTransferId, setCancellingTransferId] = useState<string | null>(null);
+  
+  // États pour l'historique
+  const [transferHistory, setTransferHistory] = useState<TransferHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyTotalPages, setHistoryTotalPages] = useState(0);
+  const [historyFilters, setHistoryFilters] = useState({
+    vaccineId: "",
+    fromType: "",
+    toType: "",
+    sentStartDate: "",
+    sentEndDate: "",
+    confirmedStartDate: "",
+    confirmedEndDate: "",
+    search: "",
+  });
 
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const currentQuantityValue = updateContext?.currentQuantity ?? 0;
@@ -283,10 +361,7 @@ function NationalStocksPage() {
     }
   }, [accessToken]);
 
-  useEffect(() => {
-    fetchNationalStocks();
-    fetchNationalStats();
-  }, [fetchNationalStocks, fetchNationalStats]);
+  // Supprimé - remplacé par le nouveau useEffect plus bas
 
   const availableVaccinesForCreation = useMemo(() => {
     const withStock = new Set(stocks.map((stock) => stock.vaccineId));
@@ -976,26 +1051,216 @@ function NationalStocksPage() {
     ],
   );
 
+  // Fonction pour récupérer les transferts envoyés
+  const fetchSentTransfers = useCallback(async () => {
+    if (!accessToken) {
+      setSentTransfers([]);
+      setSentTransfersLoading(false);
+      return;
+    }
+    try {
+      setSentTransfersLoading(true);
+      const response = await fetch(`${API_URL}/api/stock/pending-transfers/sent`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      const payload = (await response.json()) as { transfers?: PendingTransfer[] };
+      setSentTransfers(Array.isArray(payload?.transfers) ? payload.transfers : []);
+    } catch (err) {
+      console.error("Erreur chargement envois envoyés:", err);
+      setSentTransfers([]);
+    } finally {
+      setSentTransfersLoading(false);
+    }
+  }, [accessToken]);
+
+  // Fonction pour récupérer l'historique
+  const fetchTransferHistory = useCallback(async () => {
+    if (!accessToken) return;
+    try {
+      setHistoryLoading(true);
+      const params = new URLSearchParams({
+        page: historyPage.toString(),
+        limit: "20",
+      });
+      
+      if (historyFilters.vaccineId) params.append("vaccineId", historyFilters.vaccineId);
+      if (historyFilters.fromType) params.append("fromType", historyFilters.fromType);
+      if (historyFilters.toType) params.append("toType", historyFilters.toType);
+      if (historyFilters.sentStartDate) params.append("sentStartDate", historyFilters.sentStartDate);
+      if (historyFilters.sentEndDate) params.append("sentEndDate", historyFilters.sentEndDate);
+      if (historyFilters.confirmedStartDate) params.append("confirmedStartDate", historyFilters.confirmedStartDate);
+      if (historyFilters.confirmedEndDate) params.append("confirmedEndDate", historyFilters.confirmedEndDate);
+      if (historyFilters.search) params.append("search", historyFilters.search);
+
+      const response = await fetch(`${API_URL}/api/stock/transfer-history?${params.toString()}`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const errorMessage = payload?.message ?? `Erreur ${response.status}`;
+        console.error("Erreur API historique:", errorMessage, payload);
+        throw new Error(errorMessage);
+      }
+
+      const payload = (await response.json()) as {
+        history?: TransferHistoryItem[];
+        total?: number;
+        page?: number;
+        limit?: number;
+        totalPages?: number;
+      };
+      
+      setTransferHistory(Array.isArray(payload?.history) ? payload.history : []);
+      setHistoryTotal(payload?.total ?? 0);
+      setHistoryTotalPages(payload?.totalPages ?? 0);
+    } catch (err) {
+      console.error("Erreur chargement historique:", err);
+      setTransferHistory([]);
+      setHistoryTotal(0);
+      setHistoryTotalPages(0);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [accessToken, historyPage, historyFilters]);
+
+  // Fonction pour annuler un transfert
+  const handleCancelTransfer = useCallback(
+    async (transferId: string) => {
+      if (!accessToken) return;
+      const confirmed = window.confirm(
+        "Êtes-vous sûr de vouloir annuler ce transfert ? Les quantités seront restaurées dans votre stock."
+      );
+      if (!confirmed) return;
+
+      try {
+        setCancellingTransferId(transferId);
+        const response = await fetch(
+          `${API_URL}/api/stock/pending-transfers/${transferId}/cancel`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        await Promise.all([
+          fetchSentTransfers(),
+          fetchNationalStocks(),
+          fetchNationalStats(),
+        ]);
+      } catch (err) {
+        console.error("Erreur annulation transfert:", err);
+        alert(
+          err instanceof Error
+            ? err.message
+            : "Impossible d'annuler le transfert.",
+        );
+      } finally {
+        setCancellingTransferId(null);
+      }
+    },
+    [accessToken, fetchSentTransfers, fetchNationalStocks, fetchNationalStats],
+  );
+
+  useEffect(() => {
+    fetchNationalStocks();
+    fetchNationalStats();
+    if (activeTab === "pending-sent") {
+      fetchSentTransfers();
+    } else if (activeTab === "history") {
+      fetchTransferHistory();
+    }
+  }, [fetchNationalStocks, fetchNationalStats, activeTab, fetchSentTransfers, fetchTransferHistory]);
+
   return (
     <DashboardShell active="/dashboard/stocks">
       <div className="space-y-8">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-2xl font-semibold text-slate-900">Stocks & lots</h2>
             <p className="text-sm text-slate-500">
               Suivi des stocks nationaux et distribution vers les régions.
             </p>
           </div>
-
-          <button
-            type="button"
-            onClick={() => setCreateModalOpen(true)}
-            className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
-          >
-            <Plus className="h-4 w-4" />
-            Nouveau lot
-          </button>
+          
+          {/* Boutons d'action et onglets */}
+          <div className="flex flex-col gap-3 md:flex-row md:items-center">
+            {/* Bouton Nouveau lot */}
+            {activeTab === "stocks" && (
+              <button
+                type="button"
+                onClick={() => setCreateModalOpen(true)}
+                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
+              >
+                <Plus className="h-4 w-4" />
+                Nouveau lot
+              </button>
+            )}
+            
+            {/* Onglets */}
+            <div className="border-b border-slate-200 md:border-b-0">
+              <nav className="-mb-px flex space-x-4">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("stocks")}
+                  className={`whitespace-nowrap border-b-2 px-1 py-2 text-sm font-medium transition ${
+                    activeTab === "stocks"
+                      ? "border-emerald-500 text-emerald-600"
+                      : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                  }`}
+                >
+                  Stocks
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("pending-sent")}
+                  className={`whitespace-nowrap border-b-2 px-1 py-2 text-sm font-medium transition ${
+                    activeTab === "pending-sent"
+                      ? "border-emerald-500 text-emerald-600"
+                      : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                  }`}
+                >
+                  Envois en cours
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("history")}
+                  className={`whitespace-nowrap border-b-2 px-1 py-2 text-sm font-medium transition ${
+                    activeTab === "history"
+                      ? "border-emerald-500 text-emerald-600"
+                      : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                  }`}
+                >
+                  Historique
+                </button>
+              </nav>
+            </div>
+          </div>
         </div>
+
+        {/* Contenu des onglets */}
+        {activeTab === "stocks" && (
+          <>
 
         <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
           <StatCard
@@ -1034,6 +1299,33 @@ function NationalStocksPage() {
         {error && (
           <div className="rounded-3xl border border-red-200 bg-red-50/80 p-4 text-sm text-red-700">
             {error}
+          </div>
+        )}
+
+        {pendingTransfers.length > 0 && (
+          <div className="rounded-3xl border border-blue-200 bg-blue-50/80 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-500">
+                  <PackageOpen className="h-4 w-4 text-white" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-blue-900">
+                    {pendingTransfers.length} envoi{pendingTransfers.length > 1 ? "s" : ""} en attente de confirmation
+                  </p>
+                  <p className="text-xs text-blue-700">
+                    Veuillez confirmer ou refuser les transferts reçus
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab("pending-received")}
+                className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
+              >
+                Voir les envois
+              </button>
+            </div>
           </div>
         )}
 
@@ -1180,6 +1472,500 @@ function NationalStocksPage() {
             </tbody>
           </table>
         </div>
+          </>
+        )}
+
+        {activeTab === "pending-sent" && (
+          <div className="space-y-6">
+            {sentTransfersLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+              </div>
+            ) : sentTransfers.length === 0 ? (
+              <div className="rounded-3xl border border-slate-200 bg-white p-12 text-center">
+                <PackageOpen className="mx-auto h-12 w-12 text-slate-400" />
+                <p className="mt-4 text-sm font-medium text-slate-900">Aucun envoi en cours</p>
+                <p className="mt-2 text-sm text-slate-500">
+                  Vous n'avez aucun transfert en attente de confirmation.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                <table className="min-w-full divide-y divide-slate-200">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Vaccin
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Destinataire
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Quantité
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Date d'envoi
+                      </th>
+                      <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 bg-white">
+                    {sentTransfers.map((transfer) => {
+                      const sentDate = new Date(transfer.createdAt);
+                      return (
+                        <tr key={transfer.id} className="hover:bg-slate-50">
+                          <td className="px-6 py-4">
+                            <div className="text-sm font-medium text-slate-900">
+                              {transfer.vaccine?.name ?? "Vaccin inconnu"}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-700">
+                            {transfer.toName || (transfer.toType === "REGIONAL" ? "Région" : transfer.toType === "DISTRICT" ? "District" : transfer.toType === "HEALTHCENTER" ? "Centre de santé" : "Inconnu")}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-700">
+                            {transfer.quantity.toLocaleString("fr-FR")} doses
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-600">
+                            {sentDate.toLocaleDateString("fr-FR", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() => handleCancelTransfer(transfer.id)}
+                                disabled={cancellingTransferId === transfer.id}
+                                className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                              >
+                                {cancellingTransferId === transfer.id ? (
+                                  <>
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
+                                    Annulation...
+                                  </>
+                                ) : (
+                                  <>
+                                    <X className="h-4 w-4" />
+                                    Annuler
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "pending-received" && (
+          <div className="space-y-6">
+            {pendingTransfersLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+              </div>
+            ) : pendingTransfers.length === 0 ? (
+              <div className="rounded-3xl border border-slate-200 bg-white p-12 text-center">
+                <PackageOpen className="mx-auto h-12 w-12 text-slate-400" />
+                <p className="mt-4 text-sm font-medium text-slate-900">Aucun envoi en attente</p>
+                <p className="mt-2 text-sm text-slate-500">
+                  Vous n'avez aucun transfert en attente de confirmation.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                <table className="min-w-full divide-y divide-slate-200">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Vaccin
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Expéditeur
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Quantité
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Date d'envoi
+                      </th>
+                      <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 bg-white">
+                    {pendingTransfers.map((transfer) => {
+                      const sentDate = new Date(transfer.createdAt);
+                      return (
+                        <tr key={transfer.id} className="hover:bg-slate-50">
+                          <td className="px-6 py-4">
+                            <div className="text-sm font-medium text-slate-900">
+                              {transfer.vaccine?.name ?? "Vaccin inconnu"}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-700">
+                            {transfer.fromName || (transfer.fromType === "NATIONAL" ? "Stock National" : transfer.fromType === "REGIONAL" ? "Région" : transfer.fromType === "DISTRICT" ? "District" : "Inconnu")}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-700">
+                            {transfer.quantity.toLocaleString("fr-FR")} doses
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-600">
+                            {sentDate.toLocaleDateString("fr-FR", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleRejectTransfer(transfer.id)}
+                                disabled={rejectingTransferId === transfer.id}
+                                className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                              >
+                                {rejectingTransferId === transfer.id ? (
+                                  <>
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
+                                    Refus...
+                                  </>
+                                ) : (
+                                  <>
+                                    <X className="h-4 w-4" />
+                                    Refuser
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleConfirmTransfer(transfer.id)}
+                                disabled={confirmingTransferId === transfer.id}
+                                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                              >
+                                {confirmingTransferId === transfer.id ? (
+                                  <>
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                    Confirmation...
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle className="h-4 w-4" />
+                                    Confirmer
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "history" && (
+          <div className="space-y-6">
+            {/* Filtres */}
+            <div className="rounded-3xl border border-slate-200 bg-white p-4">
+              <div className="mb-4">
+                <h3 className="text-lg font-semibold text-slate-900">Historique des envois</h3>
+                <p className="text-sm text-slate-500">
+                  Tous les transferts de stock confirmés
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-4">
+                <div className="w-[180px]">
+                  <label className="mb-1 block text-xs font-medium text-slate-600">
+                    Rechercher
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Rechercher..."
+                    value={historyFilters.search}
+                    onChange={(e) => setHistoryFilters({ ...historyFilters, search: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  />
+                </div>
+                
+                {/* Bloc Date d'envoi */}
+                <div className="w-[280px] rounded-xl border-2 border-blue-200 bg-blue-50/30 p-3">
+                  <label className="mb-2 block text-xs font-semibold text-blue-700">
+                    Date d'envoi
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Du
+                      </label>
+                      <input
+                        type="date"
+                        value={historyFilters.sentStartDate}
+                        onChange={(e) => setHistoryFilters({ ...historyFilters, sentStartDate: e.target.value })}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Au
+                      </label>
+                      <input
+                        type="date"
+                        value={historyFilters.sentEndDate}
+                        onChange={(e) => setHistoryFilters({ ...historyFilters, sentEndDate: e.target.value })}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Bloc Date de confirmation */}
+                <div className="w-[280px] rounded-xl border-2 border-green-200 bg-green-50/30 p-3">
+                  <label className="mb-2 block text-xs font-semibold text-green-700">
+                    Date de confirmation
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Du
+                      </label>
+                      <input
+                        type="date"
+                        value={historyFilters.confirmedStartDate}
+                        onChange={(e) => setHistoryFilters({ ...historyFilters, confirmedStartDate: e.target.value })}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Au
+                      </label>
+                      <input
+                        type="date"
+                        value={historyFilters.confirmedEndDate}
+                        onChange={(e) => setHistoryFilters({ ...historyFilters, confirmedEndDate: e.target.value })}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="w-[140px]">
+                  <label className="mb-1 block text-xs font-medium text-slate-600">
+                    Expéditeur
+                  </label>
+                  <select
+                    value={historyFilters.fromType}
+                    onChange={(e) => setHistoryFilters({ ...historyFilters, fromType: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  >
+                    <option value="">Tous expéditeurs</option>
+                    <option value="NATIONAL">National</option>
+                    <option value="REGIONAL">Régional</option>
+                    <option value="DISTRICT">District</option>
+                    <option value="HEALTHCENTER">Centre de santé</option>
+                  </select>
+                </div>
+                <div className="w-[140px]">
+                  <label className="mb-1 block text-xs font-medium text-slate-600">
+                    Destinataire
+                  </label>
+                  <select
+                    value={historyFilters.toType}
+                    onChange={(e) => setHistoryFilters({ ...historyFilters, toType: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  >
+                    <option value="">Tous destinataires</option>
+                    <option value="REGIONAL">Régional</option>
+                    <option value="DISTRICT">District</option>
+                    <option value="HEALTHCENTER">Centre de santé</option>
+                  </select>
+                </div>
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Validation : si une date de début est remplie, la date de fin doit l'être aussi
+                      if (
+                        (historyFilters.sentStartDate && !historyFilters.sentEndDate) ||
+                        (!historyFilters.sentStartDate && historyFilters.sentEndDate) ||
+                        (historyFilters.confirmedStartDate && !historyFilters.confirmedEndDate) ||
+                        (!historyFilters.confirmedStartDate && historyFilters.confirmedEndDate)
+                      ) {
+                        alert("Veuillez remplir les deux dates (du et au) pour chaque période de filtrage.");
+                        return;
+                      }
+                      setHistoryPage(1);
+                      fetchTransferHistory();
+                    }}
+                    className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
+                  >
+                    <Search className="h-4 w-4" />
+                    Filtrer
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {historyLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+              </div>
+            ) : transferHistory.length === 0 ? (
+              <div className="rounded-3xl border border-slate-200 bg-white p-12 text-center">
+                <PackageOpen className="mx-auto h-12 w-12 text-slate-400" />
+                <p className="mt-4 text-sm font-medium text-slate-900">Aucun historique</p>
+                <p className="mt-2 text-sm text-slate-500">
+                  Aucun transfert confirmé pour le moment.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                  <table className="min-w-full divide-y divide-slate-200">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Vaccin
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Expéditeur
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Destinataire
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Quantité
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Date envoi
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Date confirmation
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Expiration lot
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Statut
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 bg-white">
+                      {transferHistory.map((item) => {
+                        const sentDate = new Date(item.sentAt);
+                        const confirmedDate = item.confirmedAt ? new Date(item.confirmedAt) : null;
+                        const expirationDate = item.lotExpiration ? new Date(item.lotExpiration) : null;
+                        return (
+                          <tr key={item.id} className="hover:bg-slate-50">
+                            <td className="px-6 py-4">
+                              <div className="text-sm font-medium text-slate-900">
+                                {item.vaccineName}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-700">
+                              {item.fromName || "Non spécifié"}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-700">
+                              {item.toName || "Non spécifié"}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-700">
+                              {item.quantity.toLocaleString("fr-FR")} doses
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-600">
+                              {sentDate.toLocaleDateString("fr-FR", {
+                                day: "2-digit",
+                                month: "2-digit",
+                                year: "numeric",
+                              })}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-600">
+                              {confirmedDate
+                                ? confirmedDate.toLocaleDateString("fr-FR", {
+                                    day: "2-digit",
+                                    month: "2-digit",
+                                    year: "numeric",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })
+                                : "N/A"}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-600">
+                              {expirationDate
+                                ? expirationDate.toLocaleDateString("fr-FR", {
+                                    day: "2-digit",
+                                    month: "2-digit",
+                                    year: "numeric",
+                                  })
+                                : "N/A"}
+                            </td>
+                            <td className="px-6 py-4">
+                              <span
+                                className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                                  item.status === "CONFIRMED"
+                                    ? "bg-green-100 text-green-800"
+                                    : "bg-red-100 text-red-800"
+                                }`}
+                              >
+                                {item.status === "CONFIRMED" ? "Confirmé" : "Annulé"}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination */}
+                {historyTotalPages > 1 && (
+                  <div className="flex items-center justify-between rounded-3xl border border-slate-200 bg-white px-6 py-4">
+                    <div className="text-sm text-slate-700">
+                      Page {historyPage} sur {historyTotalPages} ({historyTotal} résultats)
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHistoryPage((p) => Math.max(1, p - 1));
+                        }}
+                        disabled={historyPage === 1}
+                        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        Précédent
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHistoryPage((p) => Math.min(historyTotalPages, p + 1));
+                        }}
+                        disabled={historyPage === historyTotalPages}
+                        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        Suivant
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {createModalOpen && (
@@ -1634,12 +2420,8 @@ function NationalStocksPage() {
                               <button
                                 type="button"
                                 onClick={() => handleDeleteLot(lot.id)}
-                                disabled={!expired || lotDeletingId === lot.id}
-                                className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
-                                  expired
-                                    ? "border-red-200 bg-red-50 text-red-600 hover:bg-red-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
-                                    : "border-slate-200 bg-slate-100 text-slate-400"
-                                }`}
+                                disabled={lotDeletingId === lot.id}
+                                className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
                               >
                                 <Trash2 className="h-4 w-4" />
                                 {lotDeletingId === lot.id ? "Suppression…" : "Supprimer"}
@@ -1724,6 +2506,55 @@ type HealthCenterOption = {
   districtId?: string | null;
 };
 
+type PendingTransfer = {
+  id: string;
+  vaccineId: string;
+  vaccine: VaccineInfo;
+  fromType: string;
+  fromId: string | null;
+  toType: string;
+  toId: string | null;
+  toName?: string | null;
+  quantity: number;
+  status: "PENDING" | "CONFIRMED" | "CANCELLED";
+  createdAt: string;
+  confirmedAt: string | null;
+  confirmedById: string | null;
+  lots: Array<{
+    id: string;
+    lotId: string;
+    quantity: number;
+    lot: {
+      id: string;
+      expiration: string;
+      quantity: number;
+      remainingQuantity: number;
+      status?: string;
+    } | null;
+  }>;
+};
+
+type TransferHistoryItem = {
+  id: string;
+  vaccineId: string;
+  vaccineName: string;
+  fromType: string;
+  fromId: string | null;
+  fromName: string | null;
+  toType: string;
+  toId: string | null;
+  toName: string | null;
+  quantity: number;
+  sentAt: string;
+  confirmedAt: string | null;
+  confirmedById: string | null;
+  confirmedByName: string | null;
+  lotExpiration: string | null;
+  lotStatus: string | null;
+  status: string;
+  createdAt: string;
+};
+
 type HealthCenterStock = {
   id: string;
   vaccineId: string;
@@ -1769,11 +2600,38 @@ function RegionalStocksPage() {
   const [lotLoading, setLotLoading] = useState(false);
   const [lotError, setLotError] = useState<string | null>(null);
   const [regionalDeletingId, setRegionalDeletingId] = useState<string | null>(null);
+  const [lotDeletingId, setLotDeletingId] = useState<string | null>(null);
   
-  // États pour les envois en attente
-  const [pendingTransfers, setPendingTransfers] = useState<any[]>([]);
+  // États pour les onglets
+  const [activeTab, setActiveTab] = useState<"stocks" | "pending-received" | "pending-sent" | "history">("stocks");
+  
+  // États pour les envois en attente (reçus)
+  const [pendingTransfers, setPendingTransfers] = useState<PendingTransfer[]>([]);
   const [pendingTransfersLoading, setPendingTransfersLoading] = useState(false);
   const [confirmingTransferId, setConfirmingTransferId] = useState<string | null>(null);
+  const [rejectingTransferId, setRejectingTransferId] = useState<string | null>(null);
+  
+  // États pour les envois en cours (envoyés)
+  const [sentTransfers, setSentTransfers] = useState<PendingTransfer[]>([]);
+  const [sentTransfersLoading, setSentTransfersLoading] = useState(false);
+  const [cancellingTransferId, setCancellingTransferId] = useState<string | null>(null);
+  
+  // États pour l'historique
+  const [transferHistory, setTransferHistory] = useState<TransferHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyTotalPages, setHistoryTotalPages] = useState(0);
+  const [historyFilters, setHistoryFilters] = useState({
+    vaccineId: "",
+    fromType: "",
+    toType: "",
+    sentStartDate: "",
+    sentEndDate: "",
+    confirmedStartDate: "",
+    confirmedEndDate: "",
+    search: "",
+  });
 
   const fetchRegionalStats = useCallback(async () => {
     if (!accessToken) {
@@ -2013,11 +2871,192 @@ function RegionalStocksPage() {
     [accessToken, fetchPendingTransfers, fetchRegionalStocks, fetchRegionalStats],
   );
 
+  // Fonction pour récupérer les transferts envoyés
+  const fetchSentTransfers = useCallback(async () => {
+    if (!accessToken) {
+      setSentTransfers([]);
+      setSentTransfersLoading(false);
+      return;
+    }
+    try {
+      setSentTransfersLoading(true);
+      const response = await fetch(`${API_URL}/api/stock/pending-transfers/sent`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      const payload = (await response.json()) as { transfers?: PendingTransfer[] };
+      setSentTransfers(Array.isArray(payload?.transfers) ? payload.transfers : []);
+    } catch (err) {
+      console.error("Erreur chargement envois envoyés:", err);
+      setSentTransfers([]);
+    } finally {
+      setSentTransfersLoading(false);
+    }
+  }, [accessToken]);
+
+  // Fonction pour récupérer l'historique
+  const fetchTransferHistory = useCallback(async () => {
+    if (!accessToken) return;
+    try {
+      setHistoryLoading(true);
+      const params = new URLSearchParams({
+        page: historyPage.toString(),
+        limit: "20",
+      });
+      
+      if (historyFilters.vaccineId) params.append("vaccineId", historyFilters.vaccineId);
+      if (historyFilters.fromType) params.append("fromType", historyFilters.fromType);
+      if (historyFilters.toType) params.append("toType", historyFilters.toType);
+      if (historyFilters.sentStartDate) params.append("sentStartDate", historyFilters.sentStartDate);
+      if (historyFilters.sentEndDate) params.append("sentEndDate", historyFilters.sentEndDate);
+      if (historyFilters.confirmedStartDate) params.append("confirmedStartDate", historyFilters.confirmedStartDate);
+      if (historyFilters.confirmedEndDate) params.append("confirmedEndDate", historyFilters.confirmedEndDate);
+      if (historyFilters.search) params.append("search", historyFilters.search);
+
+      const response = await fetch(`${API_URL}/api/stock/transfer-history?${params.toString()}`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      const payload = (await response.json()) as {
+        history?: TransferHistoryItem[];
+        total?: number;
+        page?: number;
+        limit?: number;
+        totalPages?: number;
+      };
+      
+      setTransferHistory(Array.isArray(payload?.history) ? payload.history : []);
+      setHistoryTotal(payload?.total ?? 0);
+      setHistoryTotalPages(payload?.totalPages ?? 0);
+    } catch (err) {
+      console.error("Erreur chargement historique:", err);
+      setTransferHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [accessToken, historyPage, historyFilters]);
+
+  // Fonction pour refuser un transfert
+  const handleRejectTransfer = useCallback(
+    async (transferId: string) => {
+      if (!accessToken) return;
+      const confirmed = window.confirm(
+        "Êtes-vous sûr de vouloir refuser ce transfert ? Les quantités seront restaurées chez l'expéditeur."
+      );
+      if (!confirmed) return;
+
+      try {
+        setRejectingTransferId(transferId);
+        const response = await fetch(
+          `${API_URL}/api/stock/pending-transfers/${transferId}/reject`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        await Promise.all([
+          fetchPendingTransfers(),
+          fetchRegionalStocks(),
+          fetchRegionalStats(),
+        ]);
+      } catch (err) {
+        console.error("Erreur refus transfert:", err);
+        alert(
+          err instanceof Error
+            ? err.message
+            : "Impossible de refuser le transfert.",
+        );
+      } finally {
+        setRejectingTransferId(null);
+      }
+    },
+    [accessToken, fetchPendingTransfers, fetchRegionalStocks, fetchRegionalStats],
+  );
+
+  // Fonction pour annuler un transfert
+  const handleCancelTransfer = useCallback(
+    async (transferId: string) => {
+      if (!accessToken) return;
+      const confirmed = window.confirm(
+        "Êtes-vous sûr de vouloir annuler ce transfert ? Les quantités seront restaurées dans votre stock."
+      );
+      if (!confirmed) return;
+
+      try {
+        setCancellingTransferId(transferId);
+        const response = await fetch(
+          `${API_URL}/api/stock/pending-transfers/${transferId}/cancel`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        await Promise.all([
+          fetchSentTransfers(),
+          fetchRegionalStocks(),
+          fetchRegionalStats(),
+        ]);
+      } catch (err) {
+        console.error("Erreur annulation transfert:", err);
+        alert(
+          err instanceof Error
+            ? err.message
+            : "Impossible d'annuler le transfert.",
+        );
+      } finally {
+        setCancellingTransferId(null);
+      }
+    },
+    [accessToken, fetchSentTransfers, fetchRegionalStocks, fetchRegionalStats],
+  );
+
   useEffect(() => {
     fetchRegionalStocks();
     fetchRegionalStats();
-    fetchPendingTransfers();
-  }, [fetchRegionalStocks, fetchRegionalStats, fetchPendingTransfers]);
+    if (activeTab === "pending-received") {
+      fetchPendingTransfers();
+    } else if (activeTab === "pending-sent") {
+      fetchSentTransfers();
+    } else if (activeTab === "history") {
+      fetchTransferHistory();
+    } else {
+      fetchPendingTransfers();
+    }
+  }, [fetchRegionalStocks, fetchRegionalStats, fetchPendingTransfers, activeTab, fetchSentTransfers, fetchTransferHistory]);
 
   const availableVaccinesForCreation = useMemo(() => {
     const existing = new Set(stocks.map((stock) => stock.vaccineId));
@@ -2055,6 +3094,94 @@ function RegionalStocksPage() {
       void fetchRegionalLots(lotContext.vaccineId, lotContext.ownerId ?? null);
     }
   }, [fetchRegionalLots, lotContext]);
+
+  const handleDeleteRegionalLot = useCallback(
+    async (lotId: string) => {
+      if (!accessToken || !lotContext) return;
+      try {
+        setLotDeletingId(lotId);
+        const response = await fetch(`${API_URL}/api/stock/lots/${lotId}`, {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        await fetchRegionalLots(lotContext.vaccineId, lotContext.ownerId ?? null);
+        await Promise.all([fetchRegionalStocks(), fetchRegionalStats()]);
+      } catch (err) {
+        console.error("Erreur suppression lot:", err);
+        setLotError(
+          err instanceof Error
+            ? err.message
+            : "Impossible de supprimer le lot sélectionné.",
+        );
+      } finally {
+        setLotDeletingId(null);
+      }
+    },
+    [
+      accessToken,
+      fetchRegionalLots,
+      fetchRegionalStats,
+      fetchRegionalStocks,
+      lotContext,
+    ],
+  );
+
+  const handleDeleteRegionalStock = useCallback(
+    async (stock: RegionalStock) => {
+      if (!accessToken) return;
+      const confirmed = window.confirm(
+        `Supprimer le stock régional pour le vaccin ${stock.vaccine.name} ?`,
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      try {
+        setRegionalDeletingId(stock.id);
+        setError(null);
+
+        const payload: Record<string, string> = { vaccineId: stock.vaccineId };
+        if (stock.regionId) {
+          payload.regionId = stock.regionId;
+        }
+
+        const response = await fetch(`${API_URL}/api/stock/regional`, {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          const result = await response.json().catch(() => null);
+          throw new Error(result?.message ?? `status ${response.status}`);
+        }
+
+        await Promise.all([fetchRegionalStocks(), fetchRegionalStats()]);
+      } catch (err) {
+        console.error("Erreur suppression stock régional:", err);
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Impossible de supprimer ce stock régional.",
+        );
+      } finally {
+        setRegionalDeletingId(null);
+      }
+    },
+    [accessToken, fetchRegionalStocks, fetchRegionalStats],
+  );
 
   const handleCreateStock = async (event: FormEvent) => {
     event.preventDefault();
@@ -2199,33 +3326,89 @@ function RegionalStocksPage() {
   return (
     <DashboardShell active="/dashboard/stocks">
       <div className="space-y-8">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-2xl font-semibold text-slate-900">Stocks & lots</h2>
             <p className="text-sm text-slate-500">
               Suivi des stocks régionaux et distribution vers les districts.
             </p>
           </div>
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={() => setCreateModalOpen(true)}
-              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
-              disabled={availableVaccinesForCreation.length === 0}
-            >
-              <Plus className="h-4 w-4" />
-              Nouveau lot
-            </button>
-            <button
-              type="button"
-              onClick={fetchRegionalStocks}
-              className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-blue-400 hover:text-blue-600"
-            >
-              <ArrowRightLeft className="h-4 w-4" />
-              Actualiser
-            </button>
+          
+          {/* Boutons d'action et onglets */}
+          <div className="flex flex-col gap-3 md:flex-row md:items-center">
+            {/* Bouton Nouveau lot */}
+            {activeTab === "stocks" && (
+              <button
+                type="button"
+                onClick={() => setCreateModalOpen(true)}
+                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
+                disabled={availableVaccinesForCreation.length === 0}
+              >
+                <Plus className="h-4 w-4" />
+                Nouveau lot
+              </button>
+            )}
+            
+            {/* Onglets */}
+            <div className="border-b border-slate-200 md:border-b-0">
+              <nav className="-mb-px flex space-x-4">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("stocks")}
+                  className={`whitespace-nowrap border-b-2 px-1 py-2 text-sm font-medium transition ${
+                    activeTab === "stocks"
+                      ? "border-emerald-500 text-emerald-600"
+                      : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                  }`}
+                >
+                  Stocks
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("pending-received")}
+                  className={`relative whitespace-nowrap border-b-2 px-1 py-2 text-sm font-medium transition ${
+                    activeTab === "pending-received"
+                      ? "border-emerald-500 text-emerald-600"
+                      : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                  }`}
+                >
+                  Envois en attente
+                  {pendingTransfers.length > 0 && (
+                    <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs font-semibold text-white">
+                      {pendingTransfers.length > 99 ? "99+" : pendingTransfers.length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("pending-sent")}
+                  className={`whitespace-nowrap border-b-2 px-1 py-2 text-sm font-medium transition ${
+                    activeTab === "pending-sent"
+                      ? "border-emerald-500 text-emerald-600"
+                      : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                  }`}
+                >
+                  Envois en cours
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("history")}
+                  className={`whitespace-nowrap border-b-2 px-1 py-2 text-sm font-medium transition ${
+                    activeTab === "history"
+                      ? "border-emerald-500 text-emerald-600"
+                      : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                  }`}
+                >
+                  Historique
+                </button>
+              </nav>
+            </div>
           </div>
         </div>
+
+        {/* Contenu des onglets */}
+        {activeTab === "stocks" && (
+          <>
 
         <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
           <StatCard
@@ -2265,84 +3448,29 @@ function RegionalStocksPage() {
           </div>
         )}
 
-        {/* Section Envois en attente */}
         {pendingTransfers.length > 0 && (
-          <div className="overflow-hidden rounded-3xl border border-blue-200 bg-blue-50/50 shadow-sm">
-            <div className="bg-blue-100 px-6 py-4">
-              <h3 className="text-lg font-semibold text-blue-900">
-                Envois en attente de confirmation
-              </h3>
-              <p className="text-sm text-blue-700">
-                Confirmez la réception des stocks envoyés depuis le niveau national
-              </p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-blue-200">
-                <thead className="bg-blue-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
-                      Vaccin
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
-                      Quantité
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
-                      Date d'envoi
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-blue-700">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-blue-100 bg-white">
-                  {pendingTransfers.map((transfer) => {
-                    const sentDate = new Date(transfer.createdAt);
-                    return (
-                      <tr key={transfer.id} className="hover:bg-blue-50/50">
-                        <td className="px-6 py-4">
-                          <div className="text-sm font-medium text-slate-900">
-                            {transfer.vaccine?.name ?? "Vaccin inconnu"}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-slate-700">
-                          {transfer.quantity.toLocaleString("fr-FR")} doses
-                        </td>
-                        <td className="px-6 py-4 text-sm text-slate-600">
-                          {sentDate.toLocaleDateString("fr-FR", {
-                            day: "2-digit",
-                            month: "2-digit",
-                            year: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex justify-end">
-                            <button
-                              type="button"
-                              onClick={() => handleConfirmTransfer(transfer.id)}
-                              disabled={confirmingTransferId === transfer.id}
-                              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
-                            >
-                              {confirmingTransferId === transfer.id ? (
-                                <>
-                                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                                  Confirmation...
-                                </>
-                              ) : (
-                                <>
-                                  <CheckCircle className="h-4 w-4" />
-                                  Confirmer la réception
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+          <div className="rounded-3xl border border-blue-200 bg-blue-50/80 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-500">
+                  <PackageOpen className="h-4 w-4 text-white" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-blue-900">
+                    {pendingTransfers.length} envoi{pendingTransfers.length > 1 ? "s" : ""} en attente de confirmation
+                  </p>
+                  <p className="text-xs text-blue-700">
+                    Veuillez confirmer ou refuser les transferts reçus
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab("pending-received")}
+                className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
+              >
+                Voir les envois
+              </button>
             </div>
           </div>
         )}
@@ -2483,6 +3611,500 @@ function RegionalStocksPage() {
             </tbody>
           </table>
         </div>
+          </>
+        )}
+
+        {activeTab === "pending-sent" && (
+          <div className="space-y-6">
+            {sentTransfersLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+              </div>
+            ) : sentTransfers.length === 0 ? (
+              <div className="rounded-3xl border border-slate-200 bg-white p-12 text-center">
+                <PackageOpen className="mx-auto h-12 w-12 text-slate-400" />
+                <p className="mt-4 text-sm font-medium text-slate-900">Aucun envoi en cours</p>
+                <p className="mt-2 text-sm text-slate-500">
+                  Vous n'avez aucun transfert en attente de confirmation.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                <table className="min-w-full divide-y divide-slate-200">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Vaccin
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Destinataire
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Quantité
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Date d'envoi
+                      </th>
+                      <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 bg-white">
+                    {sentTransfers.map((transfer) => {
+                      const sentDate = new Date(transfer.createdAt);
+                      return (
+                        <tr key={transfer.id} className="hover:bg-slate-50">
+                          <td className="px-6 py-4">
+                            <div className="text-sm font-medium text-slate-900">
+                              {transfer.vaccine?.name ?? "Vaccin inconnu"}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-700">
+                            {transfer.toName || (transfer.toType === "REGIONAL" ? "Région" : transfer.toType === "DISTRICT" ? "District" : transfer.toType === "HEALTHCENTER" ? "Centre de santé" : "Inconnu")}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-700">
+                            {transfer.quantity.toLocaleString("fr-FR")} doses
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-600">
+                            {sentDate.toLocaleDateString("fr-FR", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() => handleCancelTransfer(transfer.id)}
+                                disabled={cancellingTransferId === transfer.id}
+                                className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                              >
+                                {cancellingTransferId === transfer.id ? (
+                                  <>
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
+                                    Annulation...
+                                  </>
+                                ) : (
+                                  <>
+                                    <X className="h-4 w-4" />
+                                    Annuler
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "pending-received" && (
+          <div className="space-y-6">
+            {pendingTransfersLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+              </div>
+            ) : pendingTransfers.length === 0 ? (
+              <div className="rounded-3xl border border-slate-200 bg-white p-12 text-center">
+                <PackageOpen className="mx-auto h-12 w-12 text-slate-400" />
+                <p className="mt-4 text-sm font-medium text-slate-900">Aucun envoi en attente</p>
+                <p className="mt-2 text-sm text-slate-500">
+                  Vous n'avez aucun transfert en attente de confirmation.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                <table className="min-w-full divide-y divide-slate-200">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Vaccin
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Expéditeur
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Quantité
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Date d'envoi
+                      </th>
+                      <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 bg-white">
+                    {pendingTransfers.map((transfer) => {
+                      const sentDate = new Date(transfer.createdAt);
+                      return (
+                        <tr key={transfer.id} className="hover:bg-slate-50">
+                          <td className="px-6 py-4">
+                            <div className="text-sm font-medium text-slate-900">
+                              {transfer.vaccine?.name ?? "Vaccin inconnu"}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-700">
+                            {transfer.fromName || (transfer.fromType === "NATIONAL" ? "Stock National" : transfer.fromType === "REGIONAL" ? "Région" : transfer.fromType === "DISTRICT" ? "District" : "Inconnu")}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-700">
+                            {transfer.quantity.toLocaleString("fr-FR")} doses
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-600">
+                            {sentDate.toLocaleDateString("fr-FR", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleRejectTransfer(transfer.id)}
+                                disabled={rejectingTransferId === transfer.id}
+                                className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                              >
+                                {rejectingTransferId === transfer.id ? (
+                                  <>
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
+                                    Refus...
+                                  </>
+                                ) : (
+                                  <>
+                                    <X className="h-4 w-4" />
+                                    Refuser
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleConfirmTransfer(transfer.id)}
+                                disabled={confirmingTransferId === transfer.id}
+                                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                              >
+                                {confirmingTransferId === transfer.id ? (
+                                  <>
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                    Confirmation...
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle className="h-4 w-4" />
+                                    Confirmer
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "history" && (
+          <div className="space-y-6">
+            {/* Filtres */}
+            <div className="rounded-3xl border border-slate-200 bg-white p-4">
+              <div className="mb-4">
+                <h3 className="text-lg font-semibold text-slate-900">Historique des envois</h3>
+                <p className="text-sm text-slate-500">
+                  Tous les transferts de stock confirmés
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-4">
+                <div className="w-[180px]">
+                  <label className="mb-1 block text-xs font-medium text-slate-600">
+                    Rechercher
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Rechercher..."
+                    value={historyFilters.search}
+                    onChange={(e) => setHistoryFilters({ ...historyFilters, search: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  />
+                </div>
+                
+                {/* Bloc Date d'envoi */}
+                <div className="w-[280px] rounded-xl border-2 border-blue-200 bg-blue-50/30 p-3">
+                  <label className="mb-2 block text-xs font-semibold text-blue-700">
+                    Date d'envoi
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Du
+                      </label>
+                      <input
+                        type="date"
+                        value={historyFilters.sentStartDate}
+                        onChange={(e) => setHistoryFilters({ ...historyFilters, sentStartDate: e.target.value })}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Au
+                      </label>
+                      <input
+                        type="date"
+                        value={historyFilters.sentEndDate}
+                        onChange={(e) => setHistoryFilters({ ...historyFilters, sentEndDate: e.target.value })}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Bloc Date de confirmation */}
+                <div className="w-[280px] rounded-xl border-2 border-green-200 bg-green-50/30 p-3">
+                  <label className="mb-2 block text-xs font-semibold text-green-700">
+                    Date de confirmation
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Du
+                      </label>
+                      <input
+                        type="date"
+                        value={historyFilters.confirmedStartDate}
+                        onChange={(e) => setHistoryFilters({ ...historyFilters, confirmedStartDate: e.target.value })}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Au
+                      </label>
+                      <input
+                        type="date"
+                        value={historyFilters.confirmedEndDate}
+                        onChange={(e) => setHistoryFilters({ ...historyFilters, confirmedEndDate: e.target.value })}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="w-[140px]">
+                  <label className="mb-1 block text-xs font-medium text-slate-600">
+                    Expéditeur
+                  </label>
+                  <select
+                    value={historyFilters.fromType}
+                    onChange={(e) => setHistoryFilters({ ...historyFilters, fromType: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  >
+                    <option value="">Tous expéditeurs</option>
+                    <option value="NATIONAL">National</option>
+                    <option value="REGIONAL">Régional</option>
+                    <option value="DISTRICT">District</option>
+                    <option value="HEALTHCENTER">Centre de santé</option>
+                  </select>
+                </div>
+                <div className="w-[140px]">
+                  <label className="mb-1 block text-xs font-medium text-slate-600">
+                    Destinataire
+                  </label>
+                  <select
+                    value={historyFilters.toType}
+                    onChange={(e) => setHistoryFilters({ ...historyFilters, toType: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  >
+                    <option value="">Tous destinataires</option>
+                    <option value="REGIONAL">Régional</option>
+                    <option value="DISTRICT">District</option>
+                    <option value="HEALTHCENTER">Centre de santé</option>
+                  </select>
+                </div>
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Validation : si une date de début est remplie, la date de fin doit l'être aussi
+                      if (
+                        (historyFilters.sentStartDate && !historyFilters.sentEndDate) ||
+                        (!historyFilters.sentStartDate && historyFilters.sentEndDate) ||
+                        (historyFilters.confirmedStartDate && !historyFilters.confirmedEndDate) ||
+                        (!historyFilters.confirmedStartDate && historyFilters.confirmedEndDate)
+                      ) {
+                        alert("Veuillez remplir les deux dates (du et au) pour chaque période de filtrage.");
+                        return;
+                      }
+                      setHistoryPage(1);
+                      fetchTransferHistory();
+                    }}
+                    className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
+                  >
+                    <Search className="h-4 w-4" />
+                    Filtrer
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {historyLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+              </div>
+            ) : transferHistory.length === 0 ? (
+              <div className="rounded-3xl border border-slate-200 bg-white p-12 text-center">
+                <PackageOpen className="mx-auto h-12 w-12 text-slate-400" />
+                <p className="mt-4 text-sm font-medium text-slate-900">Aucun historique</p>
+                <p className="mt-2 text-sm text-slate-500">
+                  Aucun transfert confirmé pour le moment.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                  <table className="min-w-full divide-y divide-slate-200">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Vaccin
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Expéditeur
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Destinataire
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Quantité
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Date envoi
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Date confirmation
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Expiration lot
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Statut
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 bg-white">
+                      {transferHistory.map((item) => {
+                        const sentDate = new Date(item.sentAt);
+                        const confirmedDate = item.confirmedAt ? new Date(item.confirmedAt) : null;
+                        const expirationDate = item.lotExpiration ? new Date(item.lotExpiration) : null;
+                        return (
+                          <tr key={item.id} className="hover:bg-slate-50">
+                            <td className="px-6 py-4">
+                              <div className="text-sm font-medium text-slate-900">
+                                {item.vaccineName}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-700">
+                              {item.fromName || "Non spécifié"}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-700">
+                              {item.toName || "Non spécifié"}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-700">
+                              {item.quantity.toLocaleString("fr-FR")} doses
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-600">
+                              {sentDate.toLocaleDateString("fr-FR", {
+                                day: "2-digit",
+                                month: "2-digit",
+                                year: "numeric",
+                              })}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-600">
+                              {confirmedDate
+                                ? confirmedDate.toLocaleDateString("fr-FR", {
+                                    day: "2-digit",
+                                    month: "2-digit",
+                                    year: "numeric",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })
+                                : "N/A"}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-600">
+                              {expirationDate
+                                ? expirationDate.toLocaleDateString("fr-FR", {
+                                    day: "2-digit",
+                                    month: "2-digit",
+                                    year: "numeric",
+                                  })
+                                : "N/A"}
+                            </td>
+                            <td className="px-6 py-4">
+                              <span
+                                className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                                  item.status === "CONFIRMED"
+                                    ? "bg-green-100 text-green-800"
+                                    : "bg-red-100 text-red-800"
+                                }`}
+                              >
+                                {item.status === "CONFIRMED" ? "Confirmé" : "Annulé"}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination */}
+                {historyTotalPages > 1 && (
+                  <div className="flex items-center justify-between rounded-3xl border border-slate-200 bg-white px-6 py-4">
+                    <div className="text-sm text-slate-700">
+                      Page {historyPage} sur {historyTotalPages} ({historyTotal} résultats)
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHistoryPage((p) => Math.max(1, p - 1));
+                        }}
+                        disabled={historyPage === 1}
+                        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        Précédent
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHistoryPage((p) => Math.min(historyTotalPages, p + 1));
+                        }}
+                        disabled={historyPage === historyTotalPages}
+                        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        Suivant
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {createModalOpen && (
@@ -2718,6 +4340,19 @@ function RegionalStocksPage() {
                           <td className="px-4 py-3 text-slate-700">
                             {lot.remainingQuantity.toLocaleString("fr-FR")}
                           </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteRegionalLot(lot.id)}
+                                disabled={lotDeletingId === lot.id}
+                                className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                {lotDeletingId === lot.id ? "Suppression…" : "Supprimer"}
+                              </button>
+                            </div>
+                          </td>
                         </tr>
                       );
                     })}
@@ -2790,11 +4425,38 @@ function DistrictStocksPage() {
   const [lotLoading, setLotLoading] = useState(false);
   const [lotError, setLotError] = useState<string | null>(null);
   const [districtDeletingId, setDistrictDeletingId] = useState<string | null>(null);
+  const [lotDeletingId, setLotDeletingId] = useState<string | null>(null);
 
-  // États pour les envois en attente
-  const [pendingTransfers, setPendingTransfers] = useState<any[]>([]);
+  // États pour les onglets
+  const [activeTab, setActiveTab] = useState<"stocks" | "pending-received" | "pending-sent" | "history">("stocks");
+  
+  // États pour les envois en attente (reçus)
+  const [pendingTransfers, setPendingTransfers] = useState<PendingTransfer[]>([]);
   const [pendingTransfersLoading, setPendingTransfersLoading] = useState(false);
   const [confirmingTransferId, setConfirmingTransferId] = useState<string | null>(null);
+  const [rejectingTransferId, setRejectingTransferId] = useState<string | null>(null);
+  
+  // États pour les envois en cours (envoyés)
+  const [sentTransfers, setSentTransfers] = useState<PendingTransfer[]>([]);
+  const [sentTransfersLoading, setSentTransfersLoading] = useState(false);
+  const [cancellingTransferId, setCancellingTransferId] = useState<string | null>(null);
+  
+  // États pour l'historique
+  const [transferHistory, setTransferHistory] = useState<TransferHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyTotalPages, setHistoryTotalPages] = useState(0);
+  const [historyFilters, setHistoryFilters] = useState({
+    vaccineId: "",
+    fromType: "",
+    toType: "",
+    sentStartDate: "",
+    sentEndDate: "",
+    confirmedStartDate: "",
+    confirmedEndDate: "",
+    search: "",
+  });
 
   const fetchDistrictStats = useCallback(async () => {
     if (!accessToken) {
@@ -3008,11 +4670,189 @@ function DistrictStocksPage() {
     [accessToken, fetchPendingTransfers, fetchDistrictStocks, fetchDistrictStats],
   );
 
+  // Fonction pour récupérer les transferts envoyés
+  const fetchSentTransfers = useCallback(async () => {
+    if (!accessToken) {
+      setSentTransfers([]);
+      setSentTransfersLoading(false);
+      return;
+    }
+    try {
+      setSentTransfersLoading(true);
+      const response = await fetch(`${API_URL}/api/stock/pending-transfers/sent`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      const payload = (await response.json()) as { transfers?: PendingTransfer[] };
+      setSentTransfers(Array.isArray(payload?.transfers) ? payload.transfers : []);
+    } catch (err) {
+      console.error("Erreur chargement envois envoyés:", err);
+      setSentTransfers([]);
+    } finally {
+      setSentTransfersLoading(false);
+    }
+  }, [accessToken]);
+
+  // Fonction pour récupérer l'historique
+  const fetchTransferHistory = useCallback(async () => {
+    if (!accessToken) return;
+    try {
+      setHistoryLoading(true);
+      const params = new URLSearchParams({
+        page: historyPage.toString(),
+        limit: "20",
+      });
+      
+      if (historyFilters.vaccineId) params.append("vaccineId", historyFilters.vaccineId);
+      if (historyFilters.fromType) params.append("fromType", historyFilters.fromType);
+      if (historyFilters.toType) params.append("toType", historyFilters.toType);
+      if (historyFilters.sentStartDate) params.append("sentStartDate", historyFilters.sentStartDate);
+      if (historyFilters.sentEndDate) params.append("sentEndDate", historyFilters.sentEndDate);
+      if (historyFilters.confirmedStartDate) params.append("confirmedStartDate", historyFilters.confirmedStartDate);
+      if (historyFilters.confirmedEndDate) params.append("confirmedEndDate", historyFilters.confirmedEndDate);
+      if (historyFilters.search) params.append("search", historyFilters.search);
+
+      const response = await fetch(`${API_URL}/api/stock/transfer-history?${params.toString()}`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      const payload = (await response.json()) as {
+        history?: TransferHistoryItem[];
+        total?: number;
+        page?: number;
+        limit?: number;
+        totalPages?: number;
+      };
+      
+      setTransferHistory(Array.isArray(payload?.history) ? payload.history : []);
+      setHistoryTotal(payload?.total ?? 0);
+      setHistoryTotalPages(payload?.totalPages ?? 0);
+    } catch (err) {
+      console.error("Erreur chargement historique:", err);
+      setTransferHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [accessToken, historyPage, historyFilters]);
+
+  // Fonction pour refuser un transfert
+  const handleRejectTransfer = useCallback(
+    async (transferId: string) => {
+      if (!accessToken) return;
+      const confirmed = window.confirm(
+        "Êtes-vous sûr de vouloir refuser ce transfert ? Les quantités seront restaurées chez l'expéditeur."
+      );
+      if (!confirmed) return;
+
+      try {
+        setRejectingTransferId(transferId);
+        const response = await fetch(
+          `${API_URL}/api/stock/pending-transfers/${transferId}/reject`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        await Promise.all([
+          fetchPendingTransfers(),
+          fetchDistrictStocks(),
+          fetchDistrictStats(),
+        ]);
+      } catch (err) {
+        console.error("Erreur refus transfert:", err);
+        alert(
+          err instanceof Error
+            ? err.message
+            : "Impossible de refuser le transfert.",
+        );
+      } finally {
+        setRejectingTransferId(null);
+      }
+    },
+    [accessToken, fetchPendingTransfers, fetchDistrictStocks, fetchDistrictStats],
+  );
+
+  // Fonction pour annuler un transfert
+  const handleCancelTransfer = useCallback(
+    async (transferId: string) => {
+      if (!accessToken) return;
+      const confirmed = window.confirm(
+        "Êtes-vous sûr de vouloir annuler ce transfert ? Les quantités seront restaurées dans votre stock."
+      );
+      if (!confirmed) return;
+
+      try {
+        setCancellingTransferId(transferId);
+        const response = await fetch(
+          `${API_URL}/api/stock/pending-transfers/${transferId}/cancel`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        await Promise.all([
+          fetchSentTransfers(),
+          fetchDistrictStocks(),
+          fetchDistrictStats(),
+        ]);
+      } catch (err) {
+        console.error("Erreur annulation transfert:", err);
+        alert(
+          err instanceof Error
+            ? err.message
+            : "Impossible d'annuler le transfert.",
+        );
+      } finally {
+        setCancellingTransferId(null);
+      }
+    },
+    [accessToken, fetchSentTransfers, fetchDistrictStocks, fetchDistrictStats],
+  );
+
   useEffect(() => {
     fetchDistrictStocks();
     fetchDistrictStats();
     fetchPendingTransfers();
-  }, [fetchDistrictStocks, fetchDistrictStats, fetchPendingTransfers]);
+    if (activeTab === "pending-sent") {
+      fetchSentTransfers();
+    } else if (activeTab === "history") {
+      fetchTransferHistory();
+    }
+  }, [fetchDistrictStocks, fetchDistrictStats, fetchPendingTransfers, activeTab, fetchSentTransfers, fetchTransferHistory]);
 
   const availableVaccinesForCreation = useMemo(() => {
     const existing = new Set(stocks.map((stock) => stock.vaccineId));
@@ -3098,6 +4938,46 @@ function DistrictStocksPage() {
       void fetchDistrictLots(lotContext.vaccineId, lotContext.ownerId ?? null);
     }
   }, [fetchDistrictLots, lotContext]);
+
+  const handleDeleteDistrictLot = useCallback(
+    async (lotId: string) => {
+      if (!accessToken || !lotContext) return;
+      try {
+        setLotDeletingId(lotId);
+        const response = await fetch(`${API_URL}/api/stock/lots/${lotId}`, {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        await fetchDistrictLots(lotContext.vaccineId, lotContext.ownerId ?? null);
+        await Promise.all([fetchDistrictStocks(), fetchDistrictStats()]);
+      } catch (err) {
+        console.error("Erreur suppression lot:", err);
+        setLotError(
+          err instanceof Error
+            ? err.message
+            : "Impossible de supprimer le lot sélectionné.",
+        );
+      } finally {
+        setLotDeletingId(null);
+      }
+    },
+    [
+      accessToken,
+      fetchDistrictLots,
+      fetchDistrictStats,
+      fetchDistrictStocks,
+      lotContext,
+    ],
+  );
 
   const handleCreateStock = async (event: FormEvent) => {
     event.preventDefault();
@@ -3314,35 +5194,91 @@ function DistrictStocksPage() {
   return (
     <DashboardShell active="/dashboard/stocks">
       <div className="space-y-8">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-2xl font-semibold text-slate-900">Stocks & lots</h2>
             <p className="text-sm text-slate-500">
               Suivi des stocks districtaux et distribution vers les centres de santé.
             </p>
           </div>
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={() => setCreateModalOpen(true)}
-              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
-              disabled={
-                availableVaccinesForCreation.length === 0 || !districtId
-              }
-            >
-              <Plus className="h-4 w-4" />
-              Nouveau lot
-            </button>
-            <button
-              type="button"
-              onClick={fetchDistrictStocks}
-              className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-blue-400 hover:text-blue-600"
-            >
-              <ArrowRightLeft className="h-4 w-4" />
-              Actualiser
-            </button>
+          
+          {/* Boutons d'action et onglets */}
+          <div className="flex flex-col gap-3 md:flex-row md:items-center">
+            {/* Bouton Nouveau lot */}
+            {activeTab === "stocks" && (
+              <button
+                type="button"
+                onClick={() => setCreateModalOpen(true)}
+                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
+                disabled={
+                  availableVaccinesForCreation.length === 0 || !districtId
+                }
+              >
+                <Plus className="h-4 w-4" />
+                Nouveau lot
+              </button>
+            )}
+            
+            {/* Onglets */}
+            <div className="border-b border-slate-200 md:border-b-0">
+              <nav className="-mb-px flex space-x-4">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("stocks")}
+                  className={`whitespace-nowrap border-b-2 px-1 py-2 text-sm font-medium transition ${
+                    activeTab === "stocks"
+                      ? "border-emerald-500 text-emerald-600"
+                      : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                  }`}
+                >
+                  Stocks
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("pending-received")}
+                  className={`relative whitespace-nowrap border-b-2 px-1 py-2 text-sm font-medium transition ${
+                    activeTab === "pending-received"
+                      ? "border-emerald-500 text-emerald-600"
+                      : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                  }`}
+                >
+                  Envois en attente
+                  {pendingTransfers.length > 0 && (
+                    <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs font-semibold text-white">
+                      {pendingTransfers.length > 99 ? "99+" : pendingTransfers.length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("pending-sent")}
+                  className={`whitespace-nowrap border-b-2 px-1 py-2 text-sm font-medium transition ${
+                    activeTab === "pending-sent"
+                      ? "border-emerald-500 text-emerald-600"
+                      : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                  }`}
+                >
+                  Envois en cours
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("history")}
+                  className={`whitespace-nowrap border-b-2 px-1 py-2 text-sm font-medium transition ${
+                    activeTab === "history"
+                      ? "border-emerald-500 text-emerald-600"
+                      : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                  }`}
+                >
+                  Historique
+                </button>
+              </nav>
+            </div>
           </div>
         </div>
+
+        {/* Contenu des onglets */}
+        {activeTab === "stocks" && (
+          <>
 
         <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
           <StatCard
@@ -3382,85 +5318,29 @@ function DistrictStocksPage() {
           </div>
         )}
 
-        {/* Section Envois en attente */}
         {pendingTransfers.length > 0 && (
-          <div className="overflow-hidden rounded-3xl border border-blue-200 bg-blue-50/50 shadow-sm">
-            <div className="bg-blue-100 px-6 py-4">
-              <h3 className="text-lg font-semibold text-blue-900">
-                Envois en attente de confirmation
-              </h3>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-blue-100">
-                <thead className="bg-blue-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
-                      Vaccin
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
-                      Quantité
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
-                      Date d'envoi
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-blue-700">
-                      Action
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-blue-100 bg-white">
-                  {pendingTransfers.map((transfer) => {
-                    const sentDate = new Date(transfer.createdAt);
-                    return (
-                      <tr key={transfer.id} className="hover:bg-blue-50/50">
-                        <td className="px-6 py-4">
-                          <div className="text-sm font-medium text-slate-900">
-                            {transfer.vaccine?.name ?? "Vaccin inconnu"}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="text-sm text-slate-600">
-                            {transfer.quantity.toLocaleString("fr-FR")} doses
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="text-sm text-slate-600">
-                            {sentDate.toLocaleDateString("fr-FR", {
-                              day: "2-digit",
-                              month: "2-digit",
-                              year: "numeric",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex justify-end">
-                            <button
-                              type="button"
-                              onClick={() => handleConfirmTransfer(transfer.id)}
-                              disabled={confirmingTransferId === transfer.id}
-                              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
-                            >
-                              {confirmingTransferId === transfer.id ? (
-                                <>
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                  Confirmation...
-                                </>
-                              ) : (
-                                <>
-                                  <CheckCircle className="h-4 w-4" />
-                                  Confirmer la réception
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+          <div className="rounded-3xl border border-blue-200 bg-blue-50/80 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-500">
+                  <PackageOpen className="h-4 w-4 text-white" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-blue-900">
+                    {pendingTransfers.length} envoi{pendingTransfers.length > 1 ? "s" : ""} en attente de confirmation
+                  </p>
+                  <p className="text-xs text-blue-700">
+                    Veuillez confirmer ou refuser les transferts reçus
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab("pending-received")}
+                className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
+              >
+                Voir les envois
+              </button>
             </div>
           </div>
         )}
@@ -3613,6 +5493,500 @@ function DistrictStocksPage() {
             </tbody>
           </table>
         </div>
+          </>
+        )}
+
+        {activeTab === "pending-sent" && (
+          <div className="space-y-6">
+            {sentTransfersLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+              </div>
+            ) : sentTransfers.length === 0 ? (
+              <div className="rounded-3xl border border-slate-200 bg-white p-12 text-center">
+                <PackageOpen className="mx-auto h-12 w-12 text-slate-400" />
+                <p className="mt-4 text-sm font-medium text-slate-900">Aucun envoi en cours</p>
+                <p className="mt-2 text-sm text-slate-500">
+                  Vous n'avez aucun transfert en attente de confirmation.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                <table className="min-w-full divide-y divide-slate-200">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Vaccin
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Destinataire
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Quantité
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Date d'envoi
+                      </th>
+                      <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 bg-white">
+                    {sentTransfers.map((transfer) => {
+                      const sentDate = new Date(transfer.createdAt);
+                      return (
+                        <tr key={transfer.id} className="hover:bg-slate-50">
+                          <td className="px-6 py-4">
+                            <div className="text-sm font-medium text-slate-900">
+                              {transfer.vaccine?.name ?? "Vaccin inconnu"}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-700">
+                            {transfer.toName || (transfer.toType === "REGIONAL" ? "Région" : transfer.toType === "DISTRICT" ? "District" : transfer.toType === "HEALTHCENTER" ? "Centre de santé" : "Inconnu")}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-700">
+                            {transfer.quantity.toLocaleString("fr-FR")} doses
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-600">
+                            {sentDate.toLocaleDateString("fr-FR", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() => handleCancelTransfer(transfer.id)}
+                                disabled={cancellingTransferId === transfer.id}
+                                className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                              >
+                                {cancellingTransferId === transfer.id ? (
+                                  <>
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
+                                    Annulation...
+                                  </>
+                                ) : (
+                                  <>
+                                    <X className="h-4 w-4" />
+                                    Annuler
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "pending-received" && (
+          <div className="space-y-6">
+            {pendingTransfersLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+              </div>
+            ) : pendingTransfers.length === 0 ? (
+              <div className="rounded-3xl border border-slate-200 bg-white p-12 text-center">
+                <PackageOpen className="mx-auto h-12 w-12 text-slate-400" />
+                <p className="mt-4 text-sm font-medium text-slate-900">Aucun envoi en attente</p>
+                <p className="mt-2 text-sm text-slate-500">
+                  Vous n'avez aucun transfert en attente de confirmation.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                <table className="min-w-full divide-y divide-slate-200">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Vaccin
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Expéditeur
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Quantité
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Date d'envoi
+                      </th>
+                      <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 bg-white">
+                    {pendingTransfers.map((transfer) => {
+                      const sentDate = new Date(transfer.createdAt);
+                      return (
+                        <tr key={transfer.id} className="hover:bg-slate-50">
+                          <td className="px-6 py-4">
+                            <div className="text-sm font-medium text-slate-900">
+                              {transfer.vaccine?.name ?? "Vaccin inconnu"}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-700">
+                            {transfer.fromName || (transfer.fromType === "NATIONAL" ? "Stock National" : transfer.fromType === "REGIONAL" ? "Région" : transfer.fromType === "DISTRICT" ? "District" : "Inconnu")}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-700">
+                            {transfer.quantity.toLocaleString("fr-FR")} doses
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-600">
+                            {sentDate.toLocaleDateString("fr-FR", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleRejectTransfer(transfer.id)}
+                                disabled={rejectingTransferId === transfer.id}
+                                className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                              >
+                                {rejectingTransferId === transfer.id ? (
+                                  <>
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
+                                    Refus...
+                                  </>
+                                ) : (
+                                  <>
+                                    <X className="h-4 w-4" />
+                                    Refuser
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleConfirmTransfer(transfer.id)}
+                                disabled={confirmingTransferId === transfer.id}
+                                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                              >
+                                {confirmingTransferId === transfer.id ? (
+                                  <>
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                    Confirmation...
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle className="h-4 w-4" />
+                                    Confirmer
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "history" && (
+          <div className="space-y-6">
+            {/* Filtres */}
+            <div className="rounded-3xl border border-slate-200 bg-white p-4">
+              <div className="mb-4">
+                <h3 className="text-lg font-semibold text-slate-900">Historique des envois</h3>
+                <p className="text-sm text-slate-500">
+                  Tous les transferts de stock confirmés
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-4">
+                <div className="w-[180px]">
+                  <label className="mb-1 block text-xs font-medium text-slate-600">
+                    Rechercher
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Rechercher..."
+                    value={historyFilters.search}
+                    onChange={(e) => setHistoryFilters({ ...historyFilters, search: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  />
+                </div>
+                
+                {/* Bloc Date d'envoi */}
+                <div className="w-[280px] rounded-xl border-2 border-blue-200 bg-blue-50/30 p-3">
+                  <label className="mb-2 block text-xs font-semibold text-blue-700">
+                    Date d'envoi
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Du
+                      </label>
+                      <input
+                        type="date"
+                        value={historyFilters.sentStartDate}
+                        onChange={(e) => setHistoryFilters({ ...historyFilters, sentStartDate: e.target.value })}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Au
+                      </label>
+                      <input
+                        type="date"
+                        value={historyFilters.sentEndDate}
+                        onChange={(e) => setHistoryFilters({ ...historyFilters, sentEndDate: e.target.value })}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Bloc Date de confirmation */}
+                <div className="w-[280px] rounded-xl border-2 border-green-200 bg-green-50/30 p-3">
+                  <label className="mb-2 block text-xs font-semibold text-green-700">
+                    Date de confirmation
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Du
+                      </label>
+                      <input
+                        type="date"
+                        value={historyFilters.confirmedStartDate}
+                        onChange={(e) => setHistoryFilters({ ...historyFilters, confirmedStartDate: e.target.value })}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Au
+                      </label>
+                      <input
+                        type="date"
+                        value={historyFilters.confirmedEndDate}
+                        onChange={(e) => setHistoryFilters({ ...historyFilters, confirmedEndDate: e.target.value })}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="w-[140px]">
+                  <label className="mb-1 block text-xs font-medium text-slate-600">
+                    Expéditeur
+                  </label>
+                  <select
+                    value={historyFilters.fromType}
+                    onChange={(e) => setHistoryFilters({ ...historyFilters, fromType: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  >
+                    <option value="">Tous expéditeurs</option>
+                    <option value="NATIONAL">National</option>
+                    <option value="REGIONAL">Régional</option>
+                    <option value="DISTRICT">District</option>
+                    <option value="HEALTHCENTER">Centre de santé</option>
+                  </select>
+                </div>
+                <div className="w-[140px]">
+                  <label className="mb-1 block text-xs font-medium text-slate-600">
+                    Destinataire
+                  </label>
+                  <select
+                    value={historyFilters.toType}
+                    onChange={(e) => setHistoryFilters({ ...historyFilters, toType: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  >
+                    <option value="">Tous destinataires</option>
+                    <option value="REGIONAL">Régional</option>
+                    <option value="DISTRICT">District</option>
+                    <option value="HEALTHCENTER">Centre de santé</option>
+                  </select>
+                </div>
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Validation : si une date de début est remplie, la date de fin doit l'être aussi
+                      if (
+                        (historyFilters.sentStartDate && !historyFilters.sentEndDate) ||
+                        (!historyFilters.sentStartDate && historyFilters.sentEndDate) ||
+                        (historyFilters.confirmedStartDate && !historyFilters.confirmedEndDate) ||
+                        (!historyFilters.confirmedStartDate && historyFilters.confirmedEndDate)
+                      ) {
+                        alert("Veuillez remplir les deux dates (du et au) pour chaque période de filtrage.");
+                        return;
+                      }
+                      setHistoryPage(1);
+                      fetchTransferHistory();
+                    }}
+                    className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
+                  >
+                    <Search className="h-4 w-4" />
+                    Filtrer
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {historyLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+              </div>
+            ) : transferHistory.length === 0 ? (
+              <div className="rounded-3xl border border-slate-200 bg-white p-12 text-center">
+                <PackageOpen className="mx-auto h-12 w-12 text-slate-400" />
+                <p className="mt-4 text-sm font-medium text-slate-900">Aucun historique</p>
+                <p className="mt-2 text-sm text-slate-500">
+                  Aucun transfert confirmé pour le moment.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                  <table className="min-w-full divide-y divide-slate-200">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Vaccin
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Expéditeur
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Destinataire
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Quantité
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Date envoi
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Date confirmation
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Expiration lot
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Statut
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 bg-white">
+                      {transferHistory.map((item) => {
+                        const sentDate = new Date(item.sentAt);
+                        const confirmedDate = item.confirmedAt ? new Date(item.confirmedAt) : null;
+                        const expirationDate = item.lotExpiration ? new Date(item.lotExpiration) : null;
+                        return (
+                          <tr key={item.id} className="hover:bg-slate-50">
+                            <td className="px-6 py-4">
+                              <div className="text-sm font-medium text-slate-900">
+                                {item.vaccineName}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-700">
+                              {item.fromName || "Non spécifié"}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-700">
+                              {item.toName || "Non spécifié"}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-700">
+                              {item.quantity.toLocaleString("fr-FR")} doses
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-600">
+                              {sentDate.toLocaleDateString("fr-FR", {
+                                day: "2-digit",
+                                month: "2-digit",
+                                year: "numeric",
+                              })}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-600">
+                              {confirmedDate
+                                ? confirmedDate.toLocaleDateString("fr-FR", {
+                                    day: "2-digit",
+                                    month: "2-digit",
+                                    year: "numeric",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })
+                                : "N/A"}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-600">
+                              {expirationDate
+                                ? expirationDate.toLocaleDateString("fr-FR", {
+                                    day: "2-digit",
+                                    month: "2-digit",
+                                    year: "numeric",
+                                  })
+                                : "N/A"}
+                            </td>
+                            <td className="px-6 py-4">
+                              <span
+                                className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                                  item.status === "CONFIRMED"
+                                    ? "bg-green-100 text-green-800"
+                                    : "bg-red-100 text-red-800"
+                                }`}
+                              >
+                                {item.status === "CONFIRMED" ? "Confirmé" : "Annulé"}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination */}
+                {historyTotalPages > 1 && (
+                  <div className="flex items-center justify-between rounded-3xl border border-slate-200 bg-white px-6 py-4">
+                    <div className="text-sm text-slate-700">
+                      Page {historyPage} sur {historyTotalPages} ({historyTotal} résultats)
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHistoryPage((p) => Math.max(1, p - 1));
+                        }}
+                        disabled={historyPage === 1}
+                        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        Précédent
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHistoryPage((p) => Math.min(historyTotalPages, p + 1));
+                        }}
+                        disabled={historyPage === historyTotalPages}
+                        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        Suivant
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {createModalOpen && (
@@ -3821,6 +6195,9 @@ function DistrictStocksPage() {
                       <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
                         Restant
                       </th>
+                      <th className="px-4 py-3 text-right font-semibold uppercase tracking-wide text-slate-500">
+                        Actions
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -3851,6 +6228,19 @@ function DistrictStocksPage() {
                           </td>
                           <td className="px-4 py-3 text-slate-700">
                             {lot.remainingQuantity.toLocaleString("fr-FR")}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteDistrictLot(lot.id)}
+                                disabled={lotDeletingId === lot.id}
+                                className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                {lotDeletingId === lot.id ? "Suppression…" : "Supprimer"}
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -3914,6 +6304,7 @@ function AgentAdminStocksPage() {
   const [lotLoading, setLotLoading] = useState(false);
   const [lotError, setLotError] = useState<string | null>(null);
   const [healthDeletingId, setHealthDeletingId] = useState<string | null>(null);
+  const [lotDeletingId, setLotDeletingId] = useState<string | null>(null);
   const [reservations, setReservations] = useState<any[]>([]);
   const [reservationsLoading, setReservationsLoading] = useState(false);
   const [reservationsError, setReservationsError] = useState<string | null>(null);
@@ -3922,10 +6313,31 @@ function AgentAdminStocksPage() {
   const [reservationVaccineFilter, setReservationVaccineFilter] = useState<string>("Tous");
   const [reservationStatusFilter, setReservationStatusFilter] = useState<string>("Tous");
 
-  // États pour les envois en attente
+  // États pour les onglets
+  const [activeTab, setActiveTab] = useState<"stocks" | "pending-received" | "history">("stocks");
+  
+  // États pour les envois en attente (reçus)
   const [pendingTransfers, setPendingTransfers] = useState<any[]>([]);
   const [pendingTransfersLoading, setPendingTransfersLoading] = useState(false);
   const [confirmingTransferId, setConfirmingTransferId] = useState<string | null>(null);
+  const [rejectingTransferId, setRejectingTransferId] = useState<string | null>(null);
+  
+  // États pour l'historique
+  const [transferHistory, setTransferHistory] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyTotalPages, setHistoryTotalPages] = useState(0);
+  const [historyFilters, setHistoryFilters] = useState({
+    vaccineId: "",
+    fromType: "",
+    toType: "",
+    sentStartDate: "",
+    sentEndDate: "",
+    confirmedStartDate: "",
+    confirmedEndDate: "",
+    search: "",
+  });
 
   const fetchHealthCenterStats = useCallback(async () => {
     if (!accessToken) {
@@ -4138,11 +6550,113 @@ function AgentAdminStocksPage() {
     [accessToken, fetchPendingTransfers, fetchHealthCenterStocks, fetchHealthCenterStats],
   );
 
+  // Fonction pour récupérer l'historique
+  const fetchTransferHistory = useCallback(async () => {
+    if (!accessToken) return;
+    try {
+      setHistoryLoading(true);
+      const params = new URLSearchParams({
+        page: historyPage.toString(),
+        limit: "20",
+      });
+      
+      if (historyFilters.vaccineId) params.append("vaccineId", historyFilters.vaccineId);
+      if (historyFilters.fromType) params.append("fromType", historyFilters.fromType);
+      if (historyFilters.toType) params.append("toType", historyFilters.toType);
+      if (historyFilters.sentStartDate) params.append("sentStartDate", historyFilters.sentStartDate);
+      if (historyFilters.sentEndDate) params.append("sentEndDate", historyFilters.sentEndDate);
+      if (historyFilters.confirmedStartDate) params.append("confirmedStartDate", historyFilters.confirmedStartDate);
+      if (historyFilters.confirmedEndDate) params.append("confirmedEndDate", historyFilters.confirmedEndDate);
+      if (historyFilters.search) params.append("search", historyFilters.search);
+
+      const response = await fetch(`${API_URL}/api/stock/transfer-history?${params.toString()}`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      const payload = (await response.json()) as {
+        history?: TransferHistoryItem[];
+        total?: number;
+        page?: number;
+        limit?: number;
+        totalPages?: number;
+      };
+      
+      setTransferHistory(Array.isArray(payload?.history) ? payload.history : []);
+      setHistoryTotal(payload?.total ?? 0);
+      setHistoryTotalPages(payload?.totalPages ?? 0);
+    } catch (err) {
+      console.error("Erreur chargement historique:", err);
+      setTransferHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [accessToken, historyPage, historyFilters]);
+
+  // Fonction pour refuser un transfert
+  const handleRejectTransfer = useCallback(
+    async (transferId: string) => {
+      if (!accessToken) return;
+      const confirmed = window.confirm(
+        "Êtes-vous sûr de vouloir refuser ce transfert ? Les quantités seront restaurées chez l'expéditeur."
+      );
+      if (!confirmed) return;
+
+      try {
+        setRejectingTransferId(transferId);
+        const response = await fetch(
+          `${API_URL}/api/stock/pending-transfers/${transferId}/reject`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        await Promise.all([
+          fetchPendingTransfers(),
+          fetchHealthCenterStocks(),
+          fetchHealthCenterStats(),
+        ]);
+      } catch (err) {
+        console.error("Erreur refus transfert:", err);
+        alert(
+          err instanceof Error
+            ? err.message
+            : "Impossible de refuser le transfert.",
+        );
+      } finally {
+        setRejectingTransferId(null);
+      }
+    },
+    [accessToken, fetchPendingTransfers, fetchHealthCenterStocks, fetchHealthCenterStats],
+  );
+
   useEffect(() => {
     fetchHealthCenterStocks();
     fetchHealthCenterStats();
-    fetchPendingTransfers();
-  }, [fetchHealthCenterStocks, fetchHealthCenterStats, fetchPendingTransfers]);
+    if (activeTab === "pending-received") {
+      fetchPendingTransfers();
+    } else if (activeTab === "history") {
+      fetchTransferHistory();
+    } else {
+      fetchPendingTransfers();
+    }
+  }, [fetchHealthCenterStocks, fetchHealthCenterStats, fetchPendingTransfers, activeTab, fetchTransferHistory]);
 
   const availableVaccinesForCreation = useMemo(() => {
     const existing = new Set(stocks.map((stock) => stock.vaccineId));
@@ -4271,6 +6785,46 @@ function AgentAdminStocksPage() {
     }
   }, [fetchHealthCenterLots, lotContext]);
 
+  const handleDeleteHealthCenterLot = useCallback(
+    async (lotId: string) => {
+      if (!accessToken || !lotContext) return;
+      try {
+        setLotDeletingId(lotId);
+        const response = await fetch(`${API_URL}/api/stock/lots/${lotId}`, {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+
+        await fetchHealthCenterLots(lotContext.vaccineId, lotContext.ownerId ?? null);
+        await Promise.all([fetchHealthCenterStocks(), fetchHealthCenterStats()]);
+      } catch (err) {
+        console.error("Erreur suppression lot:", err);
+        setLotError(
+          err instanceof Error
+            ? err.message
+            : "Impossible de supprimer le lot sélectionné.",
+        );
+      } finally {
+        setLotDeletingId(null);
+      }
+    },
+    [
+      accessToken,
+      fetchHealthCenterLots,
+      fetchHealthCenterStats,
+      fetchHealthCenterStocks,
+      lotContext,
+    ],
+  );
+
   const filteredReservations = useMemo(() => {
     const normalizedSearch = reservationSearch.trim().toLowerCase();
     return reservations.filter((reservation) => {
@@ -4297,51 +6851,92 @@ function AgentAdminStocksPage() {
   return (
     <DashboardShell active="/dashboard/stocks">
       <div className="space-y-8">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-2xl font-semibold text-slate-900">Stocks & lots</h2>
             <p className="text-sm text-slate-500">
               Suivi des stocks de votre centre de santé.
             </p>
           </div>
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={async () => {
-                console.log("Ouverture modal réservations");
-                setReservationsModalOpen(true);
-                await fetchReservations();
-                console.log("Réservations chargées:", reservations.length);
-              }}
-              className="flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 transition hover:border-amber-400 hover:bg-amber-100"
-            >
-              <Clock className="h-4 w-4" />
-              Réservations
-            </button>
-            {isAgentAdmin && (
+          
+          {/* Boutons d'action et onglets */}
+          <div className="flex flex-col gap-3 md:flex-row md:items-center">
+            {/* Bouton Nouveau lot */}
+            {activeTab === "stocks" && isAgentAdmin && (
               <button
                 type="button"
                 onClick={() => setCreateModalOpen(true)}
                 className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
-                disabled={availableVaccinesForCreation.length === 0}
               >
                 <Plus className="h-4 w-4" />
                 Nouveau lot
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => {
-                fetchHealthCenterStocks();
-                fetchHealthCenterStats();
-              }}
-              className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-blue-400 hover:text-blue-600"
-            >
-              <ArrowRightLeft className="h-4 w-4" />
-              Actualiser
-            </button>
+            
+            {/* Onglets */}
+            <div className="border-b border-slate-200 md:border-b-0">
+              <nav className="-mb-px flex space-x-4">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("stocks")}
+                  className={`whitespace-nowrap border-b-2 px-1 py-2 text-sm font-medium transition ${
+                    activeTab === "stocks"
+                      ? "border-emerald-500 text-emerald-600"
+                      : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                  }`}
+                >
+                  Stocks
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("pending-received")}
+                  className={`relative whitespace-nowrap border-b-2 px-1 py-2 text-sm font-medium transition ${
+                    activeTab === "pending-received"
+                      ? "border-emerald-500 text-emerald-600"
+                      : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                  }`}
+                >
+                  Envois en attente
+                  {pendingTransfers.length > 0 && (
+                    <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs font-semibold text-white">
+                      {pendingTransfers.length > 99 ? "99+" : pendingTransfers.length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("history")}
+                  className={`whitespace-nowrap border-b-2 px-1 py-2 text-sm font-medium transition ${
+                    activeTab === "history"
+                      ? "border-emerald-500 text-emerald-600"
+                      : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                  }`}
+                >
+                  Historique
+                </button>
+              </nav>
+            </div>
           </div>
         </div>
+
+        {/* Contenu des onglets */}
+        {activeTab === "stocks" && (
+          <>
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-end">
+              <button
+                type="button"
+                onClick={async () => {
+                  console.log("Ouverture modal réservations");
+                  setReservationsModalOpen(true);
+                  await fetchReservations();
+                  console.log("Réservations chargées:", reservations.length);
+                }}
+                className="flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 transition hover:border-amber-400 hover:bg-amber-100"
+              >
+                <Clock className="h-4 w-4" />
+                Réservations
+              </button>
+            </div>
 
         <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
           <StatCard
@@ -4381,85 +6976,30 @@ function AgentAdminStocksPage() {
           </div>
         )}
 
-        {/* Section Envois en attente */}
+        {/* Notification pour les transferts en attente */}
         {pendingTransfers.length > 0 && (
-          <div className="overflow-hidden rounded-3xl border border-blue-200 bg-blue-50/50 shadow-sm">
-            <div className="bg-blue-100 px-6 py-4">
-              <h3 className="text-lg font-semibold text-blue-900">
-                Envois en attente de confirmation
-              </h3>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-blue-100">
-                <thead className="bg-blue-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
-                      Vaccin
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
-                      Quantité
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-blue-700">
-                      Date d'envoi
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-blue-700">
-                      Action
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-blue-100 bg-white">
-                  {pendingTransfers.map((transfer) => {
-                    const sentDate = new Date(transfer.createdAt);
-                    return (
-                      <tr key={transfer.id} className="hover:bg-blue-50/50">
-                        <td className="px-6 py-4">
-                          <div className="text-sm font-medium text-slate-900">
-                            {transfer.vaccine?.name ?? "Vaccin inconnu"}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="text-sm text-slate-600">
-                            {transfer.quantity.toLocaleString("fr-FR")} doses
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="text-sm text-slate-600">
-                            {sentDate.toLocaleDateString("fr-FR", {
-                              day: "2-digit",
-                              month: "2-digit",
-                              year: "numeric",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex justify-end">
-                            <button
-                              type="button"
-                              onClick={() => handleConfirmTransfer(transfer.id)}
-                              disabled={confirmingTransferId === transfer.id}
-                              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
-                            >
-                              {confirmingTransferId === transfer.id ? (
-                                <>
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                  Confirmation...
-                                </>
-                              ) : (
-                                <>
-                                  <CheckCircle className="h-4 w-4" />
-                                  Confirmer la réception
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+          <div className="rounded-3xl border border-blue-200 bg-blue-50/80 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-500">
+                  <PackageOpen className="h-4 w-4 text-white" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-blue-900">
+                    {pendingTransfers.length} envoi{pendingTransfers.length > 1 ? "s" : ""} en attente de confirmation
+                  </p>
+                  <p className="text-xs text-blue-700">
+                    Veuillez confirmer ou refuser les transferts reçus
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab("pending-received")}
+                className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
+              >
+                Voir les envois
+              </button>
             </div>
           </div>
         )}
@@ -4603,6 +7143,407 @@ function AgentAdminStocksPage() {
             </tbody>
           </table>
         </div>
+          </>
+        )}
+
+        {activeTab === "pending-received" && (
+          <div className="space-y-6">
+            {pendingTransfersLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+              </div>
+            ) : pendingTransfers.length === 0 ? (
+              <div className="rounded-3xl border border-slate-200 bg-white p-12 text-center">
+                <PackageOpen className="mx-auto h-12 w-12 text-slate-400" />
+                <p className="mt-4 text-sm font-medium text-slate-900">Aucun envoi en attente</p>
+                <p className="mt-2 text-sm text-slate-500">
+                  Vous n'avez aucun transfert en attente de confirmation.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                <table className="min-w-full divide-y divide-slate-200">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Vaccin
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Expéditeur
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Quantité
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Date d'envoi
+                      </th>
+                      <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 bg-white">
+                    {pendingTransfers.map((transfer) => {
+                      const sentDate = new Date(transfer.createdAt);
+                      return (
+                        <tr key={transfer.id} className="hover:bg-slate-50">
+                          <td className="px-6 py-4">
+                            <div className="text-sm font-medium text-slate-900">
+                              {transfer.vaccine?.name ?? "Vaccin inconnu"}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-700">
+                            {transfer.fromName || (transfer.fromType === "NATIONAL" ? "Stock National" : transfer.fromType === "REGIONAL" ? "Région" : transfer.fromType === "DISTRICT" ? "District" : "Inconnu")}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-700">
+                            {transfer.quantity.toLocaleString("fr-FR")} doses
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-600">
+                            {sentDate.toLocaleDateString("fr-FR", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleRejectTransfer(transfer.id)}
+                                disabled={rejectingTransferId === transfer.id}
+                                className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                              >
+                                {rejectingTransferId === transfer.id ? (
+                                  <>
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
+                                    Refus...
+                                  </>
+                                ) : (
+                                  <>
+                                    <X className="h-4 w-4" />
+                                    Refuser
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleConfirmTransfer(transfer.id)}
+                                disabled={confirmingTransferId === transfer.id}
+                                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                              >
+                                {confirmingTransferId === transfer.id ? (
+                                  <>
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                    Confirmation...
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle className="h-4 w-4" />
+                                    Confirmer
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "history" && (
+          <div className="space-y-6">
+            {/* Filtres */}
+            <div className="rounded-3xl border border-slate-200 bg-white p-4">
+              <div className="mb-4">
+                <h3 className="text-lg font-semibold text-slate-900">Historique des envois</h3>
+                <p className="text-sm text-slate-500">
+                  Tous les transferts de stock confirmés
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-4">
+                <div className="w-[180px]">
+                  <label className="mb-1 block text-xs font-medium text-slate-600">
+                    Rechercher
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Rechercher..."
+                    value={historyFilters.search}
+                    onChange={(e) => setHistoryFilters({ ...historyFilters, search: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  />
+                </div>
+                
+                {/* Bloc Date d'envoi */}
+                <div className="w-[280px] rounded-xl border-2 border-blue-200 bg-blue-50/30 p-3">
+                  <label className="mb-2 block text-xs font-semibold text-blue-700">
+                    Date d'envoi
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Du
+                      </label>
+                      <input
+                        type="date"
+                        value={historyFilters.sentStartDate}
+                        onChange={(e) => setHistoryFilters({ ...historyFilters, sentStartDate: e.target.value })}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Au
+                      </label>
+                      <input
+                        type="date"
+                        value={historyFilters.sentEndDate}
+                        onChange={(e) => setHistoryFilters({ ...historyFilters, sentEndDate: e.target.value })}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Bloc Date de confirmation */}
+                <div className="w-[280px] rounded-xl border-2 border-green-200 bg-green-50/30 p-3">
+                  <label className="mb-2 block text-xs font-semibold text-green-700">
+                    Date de confirmation
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Du
+                      </label>
+                      <input
+                        type="date"
+                        value={historyFilters.confirmedStartDate}
+                        onChange={(e) => setHistoryFilters({ ...historyFilters, confirmedStartDate: e.target.value })}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Au
+                      </label>
+                      <input
+                        type="date"
+                        value={historyFilters.confirmedEndDate}
+                        onChange={(e) => setHistoryFilters({ ...historyFilters, confirmedEndDate: e.target.value })}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="w-[140px]">
+                  <label className="mb-1 block text-xs font-medium text-slate-600">
+                    Expéditeur
+                  </label>
+                  <select
+                    value={historyFilters.fromType}
+                    onChange={(e) => setHistoryFilters({ ...historyFilters, fromType: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  >
+                    <option value="">Tous expéditeurs</option>
+                    <option value="NATIONAL">National</option>
+                    <option value="REGIONAL">Régional</option>
+                    <option value="DISTRICT">District</option>
+                    <option value="HEALTHCENTER">Centre de santé</option>
+                  </select>
+                </div>
+                <div className="w-[140px]">
+                  <label className="mb-1 block text-xs font-medium text-slate-600">
+                    Destinataire
+                  </label>
+                  <select
+                    value={historyFilters.toType}
+                    onChange={(e) => setHistoryFilters({ ...historyFilters, toType: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  >
+                    <option value="">Tous destinataires</option>
+                    <option value="REGIONAL">Régional</option>
+                    <option value="DISTRICT">District</option>
+                    <option value="HEALTHCENTER">Centre de santé</option>
+                  </select>
+                </div>
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Validation : si une date de début est remplie, la date de fin doit l'être aussi
+                      if (
+                        (historyFilters.sentStartDate && !historyFilters.sentEndDate) ||
+                        (!historyFilters.sentStartDate && historyFilters.sentEndDate) ||
+                        (historyFilters.confirmedStartDate && !historyFilters.confirmedEndDate) ||
+                        (!historyFilters.confirmedStartDate && historyFilters.confirmedEndDate)
+                      ) {
+                        alert("Veuillez remplir les deux dates (du et au) pour chaque période de filtrage.");
+                        return;
+                      }
+                      setHistoryPage(1);
+                      fetchTransferHistory();
+                    }}
+                    className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
+                  >
+                    <Search className="h-4 w-4" />
+                    Filtrer
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {historyLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+              </div>
+            ) : transferHistory.length === 0 ? (
+              <div className="rounded-3xl border border-slate-200 bg-white p-12 text-center">
+                <PackageOpen className="mx-auto h-12 w-12 text-slate-400" />
+                <p className="mt-4 text-sm font-medium text-slate-900">Aucun historique</p>
+                <p className="mt-2 text-sm text-slate-500">
+                  Aucun transfert confirmé pour le moment.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                  <table className="min-w-full divide-y divide-slate-200">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Vaccin
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Expéditeur
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Destinataire
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Quantité
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Date envoi
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Date confirmation
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Expiration lot
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Statut
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 bg-white">
+                      {transferHistory.map((item) => {
+                        const sentDate = new Date(item.sentAt);
+                        const confirmedDate = item.confirmedAt ? new Date(item.confirmedAt) : null;
+                        const expirationDate = item.lotExpiration ? new Date(item.lotExpiration) : null;
+                        return (
+                          <tr key={item.id} className="hover:bg-slate-50">
+                            <td className="px-6 py-4">
+                              <div className="text-sm font-medium text-slate-900">
+                                {item.vaccineName}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-700">
+                              {item.fromName || "Non spécifié"}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-700">
+                              {item.toName || "Non spécifié"}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-700">
+                              {item.quantity.toLocaleString("fr-FR")} doses
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-600">
+                              {sentDate.toLocaleDateString("fr-FR", {
+                                day: "2-digit",
+                                month: "2-digit",
+                                year: "numeric",
+                              })}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-600">
+                              {confirmedDate
+                                ? confirmedDate.toLocaleDateString("fr-FR", {
+                                    day: "2-digit",
+                                    month: "2-digit",
+                                    year: "numeric",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })
+                                : "N/A"}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-600">
+                              {expirationDate
+                                ? expirationDate.toLocaleDateString("fr-FR", {
+                                    day: "2-digit",
+                                    month: "2-digit",
+                                    year: "numeric",
+                                  })
+                                : "N/A"}
+                            </td>
+                            <td className="px-6 py-4">
+                              <span
+                                className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                                  item.status === "CONFIRMED"
+                                    ? "bg-green-100 text-green-800"
+                                    : "bg-red-100 text-red-800"
+                                }`}
+                              >
+                                {item.status === "CONFIRMED" ? "Confirmé" : "Annulé"}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination */}
+                {historyTotalPages > 1 && (
+                  <div className="flex items-center justify-between rounded-3xl border border-slate-200 bg-white px-6 py-4">
+                    <div className="text-sm text-slate-700">
+                      Page {historyPage} sur {historyTotalPages} ({historyTotal} résultats)
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHistoryPage((p) => Math.max(1, p - 1));
+                        }}
+                        disabled={historyPage === 1}
+                        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        Précédent
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHistoryPage((p) => Math.min(historyTotalPages, p + 1));
+                        }}
+                        disabled={historyPage === historyTotalPages}
+                        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        Suivant
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {isAgentAdmin && createModalOpen && (
@@ -4712,6 +7653,11 @@ function AgentAdminStocksPage() {
                       <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-500">
                         Restant
                       </th>
+                      {isAgentAdmin && (
+                        <th className="px-4 py-3 text-right font-semibold uppercase tracking-wide text-slate-500">
+                          Actions
+                        </th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -4750,6 +7696,21 @@ function AgentAdminStocksPage() {
                               )}
                             </div>
                           </td>
+                          {isAgentAdmin && (
+                            <td className="px-4 py-3 text-right">
+                              <div className="flex justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteHealthCenterLot(lot.id)}
+                                  disabled={lotDeletingId === lot.id}
+                                  className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  {lotDeletingId === lot.id ? "Suppression…" : "Supprimer"}
+                                </button>
+                              </div>
+                            </td>
+                          )}
                         </tr>
                       );
                     })}

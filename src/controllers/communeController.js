@@ -11,7 +11,7 @@ const collectCommuneCascadeData = async (tx, communeId) => {
       id: true,
       name: true,
       region: { select: { id: true, name: true } },
-      district: { select: { id: true, name: true } },
+      districts: { select: { id: true, name: true } },
     },
   });
 
@@ -223,7 +223,7 @@ const listCommunes = async (req, res, next) => {
       where: whereClause,
       include: {
         region: { select: { id: true, name: true } },
-        district: { select: { id: true, name: true } },
+        districts: { select: { id: true, name: true } },
       },
       orderBy: { name: "asc" },
     });

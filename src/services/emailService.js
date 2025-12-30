@@ -263,6 +263,108 @@ const sendStockTransferNotificationEmail = async ({
   return results;
 };
 
+const sendTransferRejectedEmail = async ({
+  emails,
+  vaccineName,
+  quantity,
+  fromName,
+  toName,
+}) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
+      <h2 style="color:#ef4444;">Transfert de stock refusé</h2>
+      <p>Bonjour,</p>
+      <p>Un transfert de stock que vous avez envoyé a été refusé :</p>
+      <div style="background:#fee2e2; padding:15px; border-radius:5px; margin:20px 0; border-left:4px solid #ef4444;">
+        <p><strong>Vaccin :</strong> ${vaccineName}</p>
+        <p><strong>Quantité :</strong> ${quantity} doses</p>
+        <p><strong>Expéditeur :</strong> ${fromName || "Non spécifié"}</p>
+        <p><strong>Destinataire :</strong> ${toName || "Non spécifié"}</p>
+        <p><strong>Statut :</strong> <span style="color:#ef4444; font-weight:bold;">Refusé</span></p>
+      </div>
+      <p>Les quantités ont été restaurées dans votre stock.</p>
+      <p style="text-align:center; margin:20px 0;">
+        <a href="${process.env.FRONTEND_URL || ""}/dashboard/stocks" style="background:#2c7be5; color:#fff; padding:12px 24px; text-decoration:none; border-radius:5px; font-size:16px;">
+          Voir mes stocks
+        </a>
+      </p>
+      <p style="font-size:12px; color:#888;">
+        Ceci est un email automatique, merci de ne pas y répondre.
+      </p>
+    </div>
+  `;
+
+  const results = [];
+  for (const email of emails) {
+    try {
+      const info = await transporter.sendMail({
+        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        to: email,
+        subject: `Transfert refusé - ${vaccineName}`,
+        html,
+      });
+      console.log(`Email transfert refusé envoyé à ${email}:`, info.response);
+      results.push({ email, success: true, messageId: info.messageId });
+    } catch (error) {
+      console.error(`Erreur envoi email à ${email}:`, error.message);
+      results.push({ email, success: false, error: error.message });
+    }
+  }
+
+  return results;
+};
+
+const sendTransferCancelledEmail = async ({
+  emails,
+  vaccineName,
+  quantity,
+  fromName,
+  toName,
+}) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
+      <h2 style="color:#f59e0b;">Transfert de stock annulé</h2>
+      <p>Bonjour,</p>
+      <p>Un transfert de stock qui vous était destiné a été annulé par l'expéditeur :</p>
+      <div style="background:#fef3c7; padding:15px; border-radius:5px; margin:20px 0; border-left:4px solid #f59e0b;">
+        <p><strong>Vaccin :</strong> ${vaccineName}</p>
+        <p><strong>Quantité :</strong> ${quantity} doses</p>
+        <p><strong>Expéditeur :</strong> ${fromName || "Non spécifié"}</p>
+        <p><strong>Destinataire :</strong> ${toName || "Non spécifié"}</p>
+        <p><strong>Statut :</strong> <span style="color:#f59e0b; font-weight:bold;">Annulé</span></p>
+      </div>
+      <p>Le transfert a été annulé et les quantités ont été restaurées dans le stock de l'expéditeur.</p>
+      <p style="text-align:center; margin:20px 0;">
+        <a href="${process.env.FRONTEND_URL || ""}/dashboard/stocks" style="background:#2c7be5; color:#fff; padding:12px 24px; text-decoration:none; border-radius:5px; font-size:16px;">
+          Voir mes stocks
+        </a>
+      </p>
+      <p style="font-size:12px; color:#888;">
+        Ceci est un email automatique, merci de ne pas y répondre.
+      </p>
+    </div>
+  `;
+
+  const results = [];
+  for (const email of emails) {
+    try {
+      const info = await transporter.sendMail({
+        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        to: email,
+        subject: `Transfert annulé - ${vaccineName}`,
+        html,
+      });
+      console.log(`Email transfert annulé envoyé à ${email}:`, info.response);
+      results.push({ email, success: true, messageId: info.messageId });
+    } catch (error) {
+      console.error(`Erreur envoi email à ${email}:`, error.message);
+      results.push({ email, success: false, error: error.message });
+    }
+  }
+
+  return results;
+};
+
 const sendChildAccountActivatedEmail = async ({
   agentEmails,
   childName,
@@ -551,6 +653,8 @@ module.exports = {
   sendVaccineRequestEmail,
   sendTwoFactorCode,
   sendStockTransferNotificationEmail,
+  sendTransferRejectedEmail,
+  sendTransferCancelledEmail,
   sendChildAccountActivatedEmail,
   sendChildAccountPendingEmail,
   sendNewPhotosUploadedEmail,
