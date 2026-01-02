@@ -66,15 +66,15 @@ describe("Region API", () => {
 
     if (!existingNational) {
       const hashedPassword = await bcrypt.hash(nationalPassword, 10);
-      await prisma.user.create({
-        data: {
+    await prisma.user.create({
+      data: {
           email: nationalEmail,
           password: hashedPassword,
           firstName: "National",
           lastName: "Admin",
           phone: "123456789",
-          role: "NATIONAL",
-          isActive: true,
+        role: "NATIONAL",
+        isActive: true,
           emailVerified: true,
         },
       });
@@ -119,8 +119,8 @@ describe("Region API", () => {
     describe("Authentification", () => {
       it("Retourne 401 si non authentifié", async () => {
         const res = await request(app).post("/api/region").send({ name: "Test Region" });
-        expect(res.statusCode).toBe(401);
-      });
+    expect(res.statusCode).toBe(401);
+  });
 
       it("Retourne 403 si utilisateur n'est pas NATIONAL (REGIONAL)", async () => {
         // Créer une région pour le REGIONAL
@@ -138,16 +138,16 @@ describe("Region API", () => {
         // Créer un user REGIONAL avec la région
         const regionalEmail = `regional+${Date.now()}@example.com`;
         testEmails.add(regionalEmail);
-        const password = await bcrypt.hash("motdepasse", 10);
+    const password = await bcrypt.hash("motdepasse", 10);
         const regionalUser = await prisma.user.create({
-          data: {
+      data: {
             email: regionalEmail,
-            password,
+        password,
             firstName: "Regional",
             lastName: "User",
             phone: "987654321",
-            role: "REGIONAL",
-            isActive: true,
+        role: "REGIONAL",
+        isActive: true,
             emailVerified: true,
             regionId: regionId,
           },
@@ -165,7 +165,7 @@ describe("Region API", () => {
 
         // Se connecter en tant que REGIONAL
         const loginRes = await request(app)
-          .post("/api/auth/login")
+      .post("/api/auth/login")
           .send({ email: regionalEmail, password: "motdepasse" });
 
         // Si le login échoue, on ne peut pas tester le 403 avec un token valide
@@ -218,13 +218,13 @@ describe("Region API", () => {
         }
 
         // Tenter de créer une région avec le token REGIONAL
-        const res = await request(app)
-          .post("/api/region")
-          .set("Authorization", `Bearer ${regionalToken}`)
-          .send({ name: "Region Interdite" });
+    const res = await request(app)
+      .post("/api/region")
+      .set("Authorization", `Bearer ${regionalToken}`)
+      .send({ name: "Region Interdite" });
         
         // On s'attend à 403 (accès refusé) car le REGIONAL n'a pas le droit de créer des régions
-        expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(403);
         expect(res.body.message).toBe("Accès refusé");
       });
 
@@ -264,13 +264,13 @@ describe("Region API", () => {
 
     describe("Validation", () => {
       it("Retourne 400 si name est undefined", async () => {
-        const res = await request(app)
-          .post("/api/region")
-          .set("Authorization", `Bearer ${nationalToken}`)
-          .send({});
-        expect(res.statusCode).toBe(400);
-        expect(res.body.message).toMatch(/nom.*requis/i);
-      });
+    const res = await request(app)
+      .post("/api/region")
+      .set("Authorization", `Bearer ${nationalToken}`)
+      .send({});
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toMatch(/nom.*requis/i);
+  });
 
       it("Retourne 400 si name est null", async () => {
         const res = await request(app)
@@ -282,11 +282,11 @@ describe("Region API", () => {
       });
 
       it("Retourne 400 si name est une string vide", async () => {
-        const res = await request(app)
-          .post("/api/region")
-          .set("Authorization", `Bearer ${nationalToken}`)
-          .send({ name: "" });
-        expect(res.statusCode).toBe(400);
+    const res = await request(app)
+      .post("/api/region")
+      .set("Authorization", `Bearer ${nationalToken}`)
+      .send({ name: "" });
+    expect(res.statusCode).toBe(400);
         expect(res.body.message).toMatch(/vide/i);
       });
 
@@ -296,8 +296,8 @@ describe("Region API", () => {
           .set("Authorization", `Bearer ${nationalToken}`)
           .send({ name: "   " });
         expect(res.statusCode).toBe(400);
-        expect(res.body.message).toMatch(/vide/i);
-      });
+    expect(res.body.message).toMatch(/vide/i);
+  });
 
       it("Retourne 409 si la région existe déjà (doublon exact)", async () => {
         const regionName = `DoublonRegion-${Date.now()}`;
@@ -341,9 +341,9 @@ describe("Region API", () => {
 
       it("Trimme automatiquement les espaces en début/fin", async () => {
         const regionName = `TrimRegion-${Date.now()}`;
-        const res = await request(app)
-          .post("/api/region")
-          .set("Authorization", `Bearer ${nationalToken}`)
+    const res = await request(app)
+      .post("/api/region")
+      .set("Authorization", `Bearer ${nationalToken}`)
           .send({ name: `  ${regionName}  ` });
 
         expect(res.statusCode).toBe(201);
@@ -469,8 +469,8 @@ describe("Region API", () => {
       it("Retourne 403 si utilisateur n'est pas NATIONAL", async () => {
         // Créer un REGIONAL
         const regionRes = await request(app)
-          .post("/api/region")
-          .set("Authorization", `Bearer ${nationalToken}`)
+      .post("/api/region")
+      .set("Authorization", `Bearer ${nationalToken}`)
           .send({ name: `RegionForRegional-${Date.now()}` });
         expect(regionRes.statusCode).toBe(201);
         const regionalRegionId = regionRes.body.id;
@@ -555,8 +555,8 @@ describe("Region API", () => {
         const sameName = region.name;
 
         const res = await request(app)
-          .put(`/api/region/${regionId}`)
-          .set("Authorization", `Bearer ${nationalToken}`)
+      .put(`/api/region/${regionId}`)
+      .set("Authorization", `Bearer ${nationalToken}`)
           .send({ name: sameName });
 
         expect(res.statusCode).toBe(200);
@@ -763,15 +763,15 @@ describe("Region API", () => {
     describe("Succès", () => {
       it("Supprime une région vide avec succès (204)", async () => {
         const regionRes = await request(app)
-          .post("/api/region")
-          .set("Authorization", `Bearer ${nationalToken}`)
+      .post("/api/region")
+      .set("Authorization", `Bearer ${nationalToken}`)
           .send({ name: `RegionVide-${Date.now()}` });
         expect(regionRes.statusCode).toBe(201);
         const regionId = regionRes.body.id;
 
         const res = await request(app)
-          .delete(`/api/region/${regionId}`)
-          .set("Authorization", `Bearer ${nationalToken}`);
+      .delete(`/api/region/${regionId}`)
+      .set("Authorization", `Bearer ${nationalToken}`);
 
         expect(res.statusCode).toBe(204);
 

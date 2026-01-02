@@ -292,30 +292,82 @@ export default function SuperAdminStocksPage() {
           if (url.startsWith(apiUrl) && (url.includes('/api/stock/') || url.includes('/api/healthCenter'))) {
             try {
               const urlObj = new URL(url);
+              let modifiedInit = init ? { ...init } : {};
               
               // Ajouter les paramètres d'entité selon le type
               if (selectedEntity.type === "region" && selectedEntity.id) {
                 urlObj.searchParams.set('regionId', selectedEntity.id);
+                
+                // Pour les requêtes POST et PUT, aussi ajouter regionId dans le body
+                if ((modifiedInit.method === 'POST' || modifiedInit.method === 'PUT') && modifiedInit.body) {
+                  try {
+                    const body = typeof modifiedInit.body === 'string' 
+                      ? JSON.parse(modifiedInit.body) 
+                      : modifiedInit.body;
+                    
+                    if (typeof body === 'object' && body !== null && !Array.isArray(body)) {
+                      (body as any).regionId = selectedEntity.id;
+                      modifiedInit.body = JSON.stringify(body);
+                    }
+                  } catch (err) {
+                    // Si le body n'est pas du JSON, on ne le modifie pas
+                    console.warn("Impossible de modifier le body de la requête POST/PUT:", err);
+                  }
+                }
               } else if (selectedEntity.type === "district" && selectedEntity.id) {
                 urlObj.searchParams.set('districtId', selectedEntity.id);
                 // Pour healthCenter, aussi injecter districtId
                 if (url.includes('/api/healthCenter')) {
                   urlObj.searchParams.set('districtId', selectedEntity.id);
                 }
+                
+                // Pour les requêtes POST et PUT, aussi ajouter districtId dans le body
+                if ((modifiedInit.method === 'POST' || modifiedInit.method === 'PUT') && modifiedInit.body) {
+                  try {
+                    const body = typeof modifiedInit.body === 'string' 
+                      ? JSON.parse(modifiedInit.body) 
+                      : modifiedInit.body;
+                    
+                    if (typeof body === 'object' && body !== null && !Array.isArray(body)) {
+                      (body as any).districtId = selectedEntity.id;
+                      modifiedInit.body = JSON.stringify(body);
+                    }
+                  } catch (err) {
+                    // Si le body n'est pas du JSON, on ne le modifie pas
+                    console.warn("Impossible de modifier le body de la requête POST/PUT:", err);
+                  }
+                }
               } else if (selectedEntity.type === "healthcenter" && selectedEntity.id) {
                 urlObj.searchParams.set('healthCenterId', selectedEntity.id);
+                
+                // Pour les requêtes POST et PUT, aussi ajouter healthCenterId dans le body
+                if ((modifiedInit.method === 'POST' || modifiedInit.method === 'PUT') && modifiedInit.body) {
+                  try {
+                    const body = typeof modifiedInit.body === 'string' 
+                      ? JSON.parse(modifiedInit.body) 
+                      : modifiedInit.body;
+                    
+                    if (typeof body === 'object' && body !== null && !Array.isArray(body)) {
+                      (body as any).healthCenterId = selectedEntity.id;
+                      modifiedInit.body = JSON.stringify(body);
+                    }
+                  } catch (err) {
+                    // Si le body n'est pas du JSON, on ne le modifie pas
+                    console.warn("Impossible de modifier le body de la requête POST/PUT:", err);
+                  }
+                }
               }
               
               const modifiedUrl = urlObj.toString();
               
               if (typeof input === 'string') {
-                return originalFetch(modifiedUrl, init);
+                return originalFetch(modifiedUrl, modifiedInit);
               } else if (input instanceof URL) {
-                return originalFetch(new URL(modifiedUrl), init);
+                return originalFetch(new URL(modifiedUrl), modifiedInit);
               } else if (input instanceof Request) {
-                return originalFetch(new Request(modifiedUrl, input), init);
+                return originalFetch(new Request(modifiedUrl, { ...input, ...modifiedInit }), modifiedInit);
               } else {
-                return originalFetch(modifiedUrl, init);
+                return originalFetch(modifiedUrl, modifiedInit);
               }
             } catch (err) {
               console.error("Erreur interception fetch:", err);

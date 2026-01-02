@@ -1063,7 +1063,26 @@ const createStockHEALTHCENTER = async (req, res, next) => {
           message: "Votre compte n'est pas rattaché à un centre de santé",
         });
       }
+    } else if (req.user.role === "SUPERADMIN") {
+      // SUPERADMIN peut créer un stock pour n'importe quel centre de santé
+      if (!healthCenterId) {
+        return res
+          .status(400)
+          .json({ message: "healthCenterId est requis pour créer un stock" });
+      }
+
+      const center = await prisma.healthCenter.findUnique({
+        where: { id: healthCenterId },
+        select: { id: true },
+      });
+
+      if (!center) {
+        return res.status(404).json({ message: "Centre de santé introuvable" });
+      }
+
+      targetHealthCenterId = healthCenterId;
     } else {
+      // DISTRICT
       if (!healthCenterId) {
         return res
           .status(400)
@@ -1178,13 +1197,20 @@ const addStockREGIONAL = async (req, res, next) => {
   }
 
   try {
-    const { vaccineId, regionId, quantity } = req.body ?? {};
+    const { vaccineId, regionId, quantity, expiration } = req.body ?? {};
     const qty = Number(quantity);
 
     if (!vaccineId || !regionId || !Number.isFinite(qty) || qty <= 0) {
       return res
         .status(400)
         .json({ message: "vaccineId, regionId et quantity (> 0) sont requis" });
+    }
+
+    // Pour SUPERADMIN, expiration est requise pour ajouter directement
+    if (req.user.role === "SUPERADMIN" && !expiration) {
+      return res.status(400).json({
+        message: "expiration est requise pour ajouter du stock",
+      });
     }
 
     let updatedNational = null;
@@ -1214,162 +1240,228 @@ const addStockREGIONAL = async (req, res, next) => {
       regionName = regionalStock.region.name;
       vaccineName = regionalStock.vaccine.name;
 
-      const nationalStock = await tx.stockNATIONAL.findUnique({
-        where: { vaccineId },
-      });
-
-      if (!nationalStock || (nationalStock.quantity ?? 0) < qty) {
-        throw Object.assign(
-          new Error("Quantité insuffisante dans le stock national"),
-          { status: 400 },
-        );
-      }
-
-      // Consommer les lots du stock national
-      const allocations = await consumeLots(tx, {
-        vaccineId,
-        ownerType: OWNER_TYPES.NATIONAL,
-        ownerId: null,
-        quantity: qty,
-      });
-
-      // Vérifier et supprimer les lots qui se sont vidés
-      for (const allocation of allocations) {
-        const lot = await tx.stockLot.findUnique({
-          where: { id: allocation.lotId },
-          select: { remainingQuantity: true, quantity: true },
-        });
-        if (lot && lot.remainingQuantity === 0 && lot.quantity === 0) {
-          await deleteLotDirect(tx, allocation.lotId);
-        }
-      }
-
-      // Soustraire du stock national
-      await tx.stockNATIONAL.update({
-        where: { vaccineId },
-        data: { quantity: (nationalStock.quantity ?? 0) - qty },
-      });
-
-      // Récupérer la date d'expiration du premier lot source (ou date par défaut)
-      const firstLot = allocations.length > 0 
-        ? await tx.stockLot.findUnique({
-            where: { id: allocations[0].lotId },
-            select: { expiration: true },
-          })
-        : null;
-      const lotExpiration = firstLot?.expiration || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
-
-      // Créer le transfert en attente
-      pendingTransfer = await tx.pendingStockTransfer.create({
-        data: {
+      if (req.user.role === "SUPERADMIN") {
+        // SUPERADMIN ajoute directement du stock sans prélever du national
+        const expirationDate = expiration ? new Date(expiration) : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+        
+        // Créer un nouveau lot directement à la région
+        await createLot(tx, {
           vaccineId,
-          fromType: OWNER_TYPES.NATIONAL,
-          fromId: null,
-          toType: OWNER_TYPES.REGIONAL,
-          toId: regionId,
+          ownerType: OWNER_TYPES.REGIONAL,
+          ownerId: regionId,
           quantity: qty,
-          status: "PENDING",
-          lots: {
-            create: allocations.map((allocation) => ({
-              lotId: allocation.lotId,
-              quantity: allocation.quantity,
-            })),
-          },
-        },
-        include: {
-          vaccine: true,
-          lots: {
-            include: {
-              lot: true,
-            },
-          },
-        },
-      });
-
-      // Créer un lot vide PENDING au destinataire avec la date d'expiration
-      await createLot(tx, {
-        vaccineId,
-        ownerType: OWNER_TYPES.REGIONAL,
-        ownerId: regionId,
-        quantity: 0,
-        expiration: lotExpiration,
-        sourceLotId: allocations[0]?.lotId || null,
-        status: LOT_STATUS.PENDING,
-        pendingTransferId: pendingTransfer.id,
-      });
-
-      updatedNational = await tx.stockNATIONAL.findUnique({
-        where: { vaccineId },
-        include: { vaccine: true },
-      });
-    });
-
-    res.json({
-      national: updatedNational,
-      pendingTransfer,
-      message: "Envoi créé avec succès. Le stock régional sera mis à jour après confirmation de réception.",
-    });
-
-    // Enregistrer l'événement
-    logEventAsync({
-      type: "STOCK_TRANSFER",
-      subtype: "REGIONAL",
-      action: "TRANSFER_SENT",
-      user: {
-        id: req.user.id,
-        firstName: req.user.firstName,
-        lastName: req.user.lastName,
-        email: req.user.email,
-        role: req.user.role,
-      },
-      entityType: "STOCK",
-      entityId: pendingTransfer.id,
-      entityName: vaccineName,
-      details: {
-        fromType: "NATIONAL",
-        toType: "REGIONAL",
-        toId: regionId,
-        toName: regionName,
-        quantity: qty,
-        vaccineId,
-        vaccineName,
-      },
-    });
-
-    // Envoyer un email à tous les régionaux de cette région en arrière-plan (non bloquant)
-    setImmediate(async () => {
-      try {
-        const { sendStockTransferNotificationEmail } = require("../services/emailService");
-        const regionalUsers = await prisma.user.findMany({
-          where: {
-            role: "REGIONAL",
-            regionId: regionId,
-            isActive: true,
-          },
-          select: {
-            id: true,
-            email: true,
-          },
+          expiration: expirationDate,
+          sourceLotId: null,
+          status: LOT_STATUS.VALID,
+          pendingTransferId: null,
         });
 
-        if (regionalUsers.length > 0) {
-          const emails = regionalUsers.map((u) => u.email).filter(Boolean);
-          const userIds = regionalUsers.map((u) => u.id).filter(Boolean);
-          if (emails.length > 0) {
-            await sendStockTransferNotificationEmail({
-              emails,
-              userIds,
-              vaccineName,
-              quantity: qty,
-              regionName,
-            });
+        // Mettre à jour le stock régional
+        await tx.stockREGIONAL.update({
+          where: { vaccineId_regionId: { vaccineId, regionId } },
+          data: { quantity: (regionalStock.quantity ?? 0) + qty },
+        });
+      } else {
+        // NATIONAL : prélever du stock national (comportement existant)
+        const nationalStock = await tx.stockNATIONAL.findUnique({
+          where: { vaccineId },
+        });
+
+        if (!nationalStock || (nationalStock.quantity ?? 0) < qty) {
+          throw Object.assign(
+            new Error("Quantité insuffisante dans le stock national"),
+            { status: 400 },
+          );
+        }
+
+        // Consommer les lots du stock national
+        const allocations = await consumeLots(tx, {
+          vaccineId,
+          ownerType: OWNER_TYPES.NATIONAL,
+          ownerId: null,
+          quantity: qty,
+        });
+
+        // Vérifier et supprimer les lots qui se sont vidés
+        for (const allocation of allocations) {
+          const lot = await tx.stockLot.findUnique({
+            where: { id: allocation.lotId },
+            select: { remainingQuantity: true, quantity: true },
+          });
+          if (lot && lot.remainingQuantity === 0 && lot.quantity === 0) {
+            await deleteLotDirect(tx, allocation.lotId);
           }
         }
-      } catch (emailError) {
-        console.error("Erreur envoi email notification transfert:", emailError);
-        // Ne pas bloquer la réponse si l'email échoue
+
+        // Soustraire du stock national
+        await tx.stockNATIONAL.update({
+          where: { vaccineId },
+          data: { quantity: (nationalStock.quantity ?? 0) - qty },
+        });
+
+        // Récupérer la date d'expiration du premier lot source (ou date par défaut)
+        const firstLot = allocations.length > 0 
+          ? await tx.stockLot.findUnique({
+              where: { id: allocations[0].lotId },
+              select: { expiration: true },
+            })
+          : null;
+        const lotExpiration = firstLot?.expiration || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+
+        // Créer le transfert en attente
+        pendingTransfer = await tx.pendingStockTransfer.create({
+          data: {
+            vaccineId,
+            fromType: OWNER_TYPES.NATIONAL,
+            fromId: null,
+            toType: OWNER_TYPES.REGIONAL,
+            toId: regionId,
+            quantity: qty,
+            status: "PENDING",
+            lots: {
+              create: allocations.map((allocation) => ({
+                lotId: allocation.lotId,
+                quantity: allocation.quantity,
+              })),
+            },
+          },
+          include: {
+            vaccine: true,
+            lots: {
+              include: {
+                lot: true,
+              },
+            },
+          },
+        });
+
+        // Créer un lot vide PENDING au destinataire avec la date d'expiration
+        await createLot(tx, {
+          vaccineId,
+          ownerType: OWNER_TYPES.REGIONAL,
+          ownerId: regionId,
+          quantity: 0,
+          expiration: lotExpiration,
+          sourceLotId: allocations[0]?.lotId || null,
+          status: LOT_STATUS.PENDING,
+          pendingTransferId: pendingTransfer.id,
+        });
+
+        updatedNational = await tx.stockNATIONAL.findUnique({
+          where: { vaccineId },
+          include: { vaccine: true },
+        });
       }
     });
+
+    if (req.user.role === "SUPERADMIN") {
+      // SUPERADMIN : stock ajouté directement
+      const updatedRegionalStock = await prisma.stockREGIONAL.findUnique({
+        where: { vaccineId_regionId: { vaccineId, regionId } },
+      });
+
+      res.json({
+        message: "Stock ajouté avec succès à la région",
+        regional: {
+          vaccineId,
+          regionId,
+          quantity: updatedRegionalStock?.quantity ?? 0,
+        },
+      });
+
+      // Enregistrer l'événement
+      logEventAsync({
+        type: "STOCK_ADD",
+        subtype: "REGIONAL",
+        action: "STOCK_ADDED",
+        user: {
+          id: req.user.id,
+          firstName: req.user.firstName,
+          lastName: req.user.lastName,
+          email: req.user.email,
+          role: req.user.role,
+        },
+        entityType: "STOCK",
+        entityId: regionId,
+        entityName: regionName,
+        details: {
+          toType: "REGIONAL",
+          toId: regionId,
+          toName: regionName,
+          quantity: qty,
+          vaccineId,
+          vaccineName,
+        },
+      });
+    } else {
+      // NATIONAL : transfert en attente
+      res.json({
+        national: updatedNational,
+        pendingTransfer,
+        message: "Envoi créé avec succès. Le stock régional sera mis à jour après confirmation de réception.",
+      });
+
+      // Enregistrer l'événement
+      logEventAsync({
+        type: "STOCK_TRANSFER",
+        subtype: "REGIONAL",
+        action: "TRANSFER_SENT",
+        user: {
+          id: req.user.id,
+          firstName: req.user.firstName,
+          lastName: req.user.lastName,
+          email: req.user.email,
+          role: req.user.role,
+        },
+        entityType: "STOCK",
+        entityId: pendingTransfer.id,
+        entityName: vaccineName,
+        details: {
+          fromType: "NATIONAL",
+          toType: "REGIONAL",
+          toId: regionId,
+          toName: regionName,
+          quantity: qty,
+          vaccineId,
+          vaccineName,
+        },
+      });
+
+      // Envoyer un email à tous les régionaux de cette région en arrière-plan (non bloquant)
+      setImmediate(async () => {
+        try {
+          const { sendStockTransferNotificationEmail } = require("../services/emailService");
+          const regionalUsers = await prisma.user.findMany({
+            where: {
+              role: "REGIONAL",
+              regionId: regionId,
+              isActive: true,
+            },
+            select: {
+              id: true,
+              email: true,
+            },
+          });
+
+          if (regionalUsers.length > 0) {
+            const emails = regionalUsers.map((u) => u.email).filter(Boolean);
+            const userIds = regionalUsers.map((u) => u.id).filter(Boolean);
+            if (emails.length > 0) {
+              await sendStockTransferNotificationEmail({
+                emails,
+                userIds,
+                vaccineName,
+                quantity: qty,
+                regionName,
+              });
+            }
+          }
+        } catch (emailError) {
+          console.error("Erreur envoi email notification transfert:", emailError);
+          // Ne pas bloquer la réponse si l'email échoue
+        }
+      });
+    }
   } catch (error) {
     if (error.status) {
       return res.status(error.status).json({ message: error.message });
@@ -1384,13 +1476,30 @@ const addStockDISTRICT = async (req, res, next) => {
   }
 
   try {
-    const { vaccineId, districtId, quantity } = req.body ?? {};
+    const { vaccineId, districtId, quantity, expiration } = req.body ?? {};
     const qty = Number(quantity);
 
     if (!vaccineId || !districtId || !Number.isFinite(qty) || qty <= 0) {
       return res.status(400).json({
         message: "vaccineId, districtId et quantity (> 0) sont requis",
       });
+    }
+
+    // Pour SUPERADMIN, expiration est requise pour ajouter directement
+    if (req.user.role === "SUPERADMIN" && !expiration) {
+      return res.status(400).json({
+        message: "expiration est requise pour ajouter du stock",
+      });
+    }
+
+    // Récupérer le district pour obtenir le regionId
+    const district = await prisma.district.findUnique({
+      where: { id: districtId },
+      include: { commune: { select: { regionId: true } } },
+    });
+
+    if (!district) {
+      return res.status(404).json({ message: "District introuvable" });
     }
 
     let regionIdPayload = req.body.regionId;
@@ -1409,6 +1518,14 @@ const addStockDISTRICT = async (req, res, next) => {
           return res.status(validationError.status).json({ message: validationError.message });
         }
         throw validationError;
+      }
+    } else if (req.user.role === "SUPERADMIN") {
+      // SUPERADMIN : utiliser le regionId du district
+      regionIdPayload = district.commune?.regionId;
+      if (!regionIdPayload) {
+        return res.status(400).json({
+          message: "Impossible de déterminer la région du district",
+        });
       }
     } else if (!regionIdPayload) {
       return res.status(400).json({
@@ -1456,131 +1573,196 @@ const addStockDISTRICT = async (req, res, next) => {
       districtName = districtStock.district.name;
       vaccineName = districtStock.vaccine.name;
 
-      const regionalStock = await tx.stockREGIONAL.findUnique({
-        where: { vaccineId_regionId: { vaccineId, regionId: regionIdPayload } },
-      });
-
-      if (!regionalStock || (regionalStock.quantity ?? 0) < qty) {
-        throw Object.assign(
-          new Error("Quantité insuffisante dans le stock régional"),
-          { status: 400 },
-        );
-      }
-
-      // Consommer les lots du stock régional
-      const allocations = await consumeLots(tx, {
-        vaccineId,
-        ownerType: OWNER_TYPES.REGIONAL,
-        ownerId: regionIdPayload,
-        quantity: qty,
-      });
-
-      // Vérifier et supprimer les lots qui se sont vidés
-      for (const allocation of allocations) {
-        const lot = await tx.stockLot.findUnique({
-          where: { id: allocation.lotId },
-          select: { remainingQuantity: true, quantity: true },
-        });
-        if (lot && lot.remainingQuantity === 0 && lot.quantity === 0) {
-          await deleteLotDirect(tx, allocation.lotId);
-        }
-      }
-
-      // Soustraire du stock régional
-      await tx.stockREGIONAL.update({
-        where: { vaccineId_regionId: { vaccineId, regionId: regionIdPayload } },
-        data: { quantity: (regionalStock.quantity ?? 0) - qty },
-      });
-
-      // Récupérer la date d'expiration du premier lot source (ou date par défaut)
-      const firstLot = allocations.length > 0 
-        ? await tx.stockLot.findUnique({
-            where: { id: allocations[0].lotId },
-            select: { expiration: true },
-          })
-        : null;
-      const lotExpiration = firstLot?.expiration || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
-
-      // Créer le transfert en attente
-      pendingTransfer = await tx.pendingStockTransfer.create({
-        data: {
+      if (req.user.role === "SUPERADMIN") {
+        // SUPERADMIN ajoute directement du stock sans prélever du régional
+        const expirationDate = expiration ? new Date(expiration) : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+        
+        // Créer un nouveau lot directement au district
+        await createLot(tx, {
           vaccineId,
-          fromType: OWNER_TYPES.REGIONAL,
-          fromId: regionIdPayload,
-          toType: OWNER_TYPES.DISTRICT,
-          toId: districtId,
+          ownerType: OWNER_TYPES.DISTRICT,
+          ownerId: districtId,
           quantity: qty,
-          status: "PENDING",
-          lots: {
-            create: allocations.map((allocation) => ({
-              lotId: allocation.lotId,
-              quantity: allocation.quantity,
-            })),
-          },
-        },
-        include: {
-          vaccine: true,
-          lots: {
-            include: {
-              lot: true,
+          expiration: expirationDate,
+          sourceLotId: null,
+          status: LOT_STATUS.VALID,
+          pendingTransferId: null,
+        });
+
+        // Mettre à jour le stock district
+        await tx.stockDISTRICT.update({
+          where: { vaccineId_districtId: { vaccineId, districtId } },
+          data: { quantity: (districtStock.quantity ?? 0) + qty },
+        });
+      } else {
+        // REGIONAL/NATIONAL : prélever du stock régional (comportement existant)
+        const regionalStock = await tx.stockREGIONAL.findUnique({
+          where: { vaccineId_regionId: { vaccineId, regionId: regionIdPayload } },
+        });
+
+        if (!regionalStock || (regionalStock.quantity ?? 0) < qty) {
+          throw Object.assign(
+            new Error("Quantité insuffisante dans le stock régional"),
+            { status: 400 },
+          );
+        }
+
+        // Consommer les lots du stock régional
+        const allocations = await consumeLots(tx, {
+          vaccineId,
+          ownerType: OWNER_TYPES.REGIONAL,
+          ownerId: regionIdPayload,
+          quantity: qty,
+        });
+
+        // Vérifier et supprimer les lots qui se sont vidés
+        for (const allocation of allocations) {
+          const lot = await tx.stockLot.findUnique({
+            where: { id: allocation.lotId },
+            select: { remainingQuantity: true, quantity: true },
+          });
+          if (lot && lot.remainingQuantity === 0 && lot.quantity === 0) {
+            await deleteLotDirect(tx, allocation.lotId);
+          }
+        }
+
+        // Soustraire du stock régional
+        await tx.stockREGIONAL.update({
+          where: { vaccineId_regionId: { vaccineId, regionId: regionIdPayload } },
+          data: { quantity: (regionalStock.quantity ?? 0) - qty },
+        });
+
+        // Récupérer la date d'expiration du premier lot source (ou date par défaut)
+        const firstLot = allocations.length > 0 
+          ? await tx.stockLot.findUnique({
+              where: { id: allocations[0].lotId },
+              select: { expiration: true },
+            })
+          : null;
+        const lotExpiration = firstLot?.expiration || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+
+        // Créer le transfert en attente
+        pendingTransfer = await tx.pendingStockTransfer.create({
+          data: {
+            vaccineId,
+            fromType: OWNER_TYPES.REGIONAL,
+            fromId: regionIdPayload,
+            toType: OWNER_TYPES.DISTRICT,
+            toId: districtId,
+            quantity: qty,
+            status: "PENDING",
+            lots: {
+              create: allocations.map((allocation) => ({
+                lotId: allocation.lotId,
+                quantity: allocation.quantity,
+              })),
             },
           },
+          include: {
+            vaccine: true,
+            lots: {
+              include: {
+                lot: true,
+              },
+            },
+          },
+        });
+
+        // Créer un lot vide PENDING au destinataire avec la date d'expiration
+        await createLot(tx, {
+          vaccineId,
+          ownerType: OWNER_TYPES.DISTRICT,
+          ownerId: districtId,
+          quantity: 0,
+          expiration: lotExpiration,
+          sourceLotId: allocations[0]?.lotId || null,
+          status: LOT_STATUS.PENDING,
+          pendingTransferId: pendingTransfer.id,
+        });
+
+        updatedRegional = await tx.stockREGIONAL.findUnique({
+          where: { vaccineId_regionId: { vaccineId, regionId: regionIdPayload } },
+          include: { vaccine: true, region: true },
+        });
+      }
+    });
+
+    if (req.user.role === "SUPERADMIN") {
+      // SUPERADMIN : stock ajouté directement
+      const updatedDistrictStock = await prisma.stockDISTRICT.findUnique({
+        where: { vaccineId_districtId: { vaccineId, districtId } },
+      });
+
+      res.json({
+        message: "Stock ajouté avec succès au district",
+        district: {
+          vaccineId,
+          districtId,
+          quantity: updatedDistrictStock?.quantity ?? 0,
         },
       });
 
-      // Créer un lot vide PENDING au destinataire avec la date d'expiration
-      await createLot(tx, {
-        vaccineId,
-        ownerType: OWNER_TYPES.DISTRICT,
-        ownerId: districtId,
-        quantity: 0,
-        expiration: lotExpiration,
-        sourceLotId: allocations[0]?.lotId || null,
-        status: LOT_STATUS.PENDING,
-        pendingTransferId: pendingTransfer.id,
+      // Enregistrer l'événement
+      logEventAsync({
+        type: "STOCK_ADD",
+        subtype: "DISTRICT",
+        action: "STOCK_ADDED",
+        user: {
+          id: req.user.id,
+          firstName: req.user.firstName,
+          lastName: req.user.lastName,
+          email: req.user.email,
+          role: req.user.role,
+        },
+        entityType: "STOCK",
+        entityId: districtId,
+        entityName: districtName,
+        details: {
+          toType: "DISTRICT",
+          toId: districtId,
+          toName: districtName,
+          quantity: qty,
+          vaccineId,
+          vaccineName,
+        },
+      });
+    } else {
+      // REGIONAL/NATIONAL : transfert en attente
+      res.json({
+        regional: updatedRegional,
+        pendingTransfer,
+        message: "Envoi créé avec succès. Le stock district sera mis à jour après confirmation de réception.",
       });
 
-      updatedRegional = await tx.stockREGIONAL.findUnique({
-        where: { vaccineId_regionId: { vaccineId, regionId: regionIdPayload } },
-        include: { vaccine: true, region: true },
+      // Enregistrer l'événement
+      logEventAsync({
+        type: "STOCK_TRANSFER",
+        subtype: "DISTRICT",
+        action: "TRANSFER_SENT",
+        user: {
+          id: req.user.id,
+          firstName: req.user.firstName,
+          lastName: req.user.lastName,
+          email: req.user.email,
+          role: req.user.role,
+        },
+        entityType: "STOCK",
+        entityId: pendingTransfer.id,
+        entityName: vaccineName,
+        details: {
+          fromType: "REGIONAL",
+          fromId: regionIdPayload,
+          toType: "DISTRICT",
+          toId: districtId,
+          toName: districtName,
+          quantity: qty,
+          vaccineId,
+          vaccineName,
+        },
       });
-    });
 
-    res.json({
-      regional: updatedRegional,
-      pendingTransfer,
-      message: "Envoi créé avec succès. Le stock district sera mis à jour après confirmation de réception.",
-    });
-
-    // Enregistrer l'événement
-    logEventAsync({
-      type: "STOCK_TRANSFER",
-      subtype: "DISTRICT",
-      action: "TRANSFER_SENT",
-      user: {
-        id: req.user.id,
-        firstName: req.user.firstName,
-        lastName: req.user.lastName,
-        email: req.user.email,
-        role: req.user.role,
-      },
-      entityType: "STOCK",
-      entityId: pendingTransfer.id,
-      entityName: vaccineName,
-      details: {
-        fromType: "REGIONAL",
-        fromId: regionIdPayload,
-        toType: "DISTRICT",
-        toId: districtId,
-        toName: districtName,
-        quantity: qty,
-        vaccineId,
-        vaccineName,
-      },
-    });
-
-    // Envoyer un email à tous les utilisateurs du district en arrière-plan (non bloquant)
-    setImmediate(async () => {
+      // Envoyer un email à tous les utilisateurs du district en arrière-plan (non bloquant)
+      setImmediate(async () => {
       try {
         const { sendStockTransferNotificationEmail } = require("../services/emailService");
         const districtUsers = await prisma.user.findMany({
@@ -1609,10 +1791,11 @@ const addStockDISTRICT = async (req, res, next) => {
           }
         }
       } catch (emailError) {
-        console.error("Erreur envoi email notification transfert:", emailError);
-        // Ne pas bloquer la réponse si l'email échoue
-      }
-    });
+          console.error("Erreur envoi email notification transfert:", emailError);
+          // Ne pas bloquer la réponse si l'email échoue
+        }
+      });
+    }
   } catch (error) {
     if (error.status) {
       return res.status(error.status).json({ message: error.message });
@@ -1627,7 +1810,7 @@ const addStockHEALTHCENTER = async (req, res, next) => {
   }
 
   try {
-    const { vaccineId, healthCenterId, quantity } = req.body ?? {};
+    const { vaccineId, healthCenterId, quantity, expiration } = req.body ?? {};
     const qty = Number(quantity);
 
     if (
@@ -1642,10 +1825,10 @@ const addStockHEALTHCENTER = async (req, res, next) => {
       });
     }
 
-    const districtId = await resolveDistrictIdForUser(req.user);
-    if (!districtId) {
+    // Pour SUPERADMIN, expiration est requise pour ajouter directement
+    if (req.user.role === "SUPERADMIN" && !expiration) {
       return res.status(400).json({
-        message: "Votre compte n'est pas rattaché à un district",
+        message: "expiration est requise pour ajouter du stock",
       });
     }
 
@@ -1658,10 +1841,32 @@ const addStockHEALTHCENTER = async (req, res, next) => {
       return res.status(404).json({ message: "Centre de santé introuvable" });
     }
 
-    if (healthCenter.districtId !== districtId) {
-      return res
-        .status(403)
-        .json({ message: "Ce centre de santé n'appartient pas à votre district" });
+    // Déterminer le districtId selon le rôle
+    let districtId = null;
+    
+    if (req.user.role === "DISTRICT") {
+      districtId = await resolveDistrictIdForUser(req.user);
+      if (!districtId) {
+        return res.status(400).json({
+          message: "Votre compte n'est pas rattaché à un district",
+        });
+      }
+
+      if (healthCenter.districtId !== districtId) {
+        return res
+          .status(403)
+          .json({ message: "Ce centre de santé n'appartient pas à votre district" });
+      }
+    } else if (req.user.role === "SUPERADMIN") {
+      // SUPERADMIN peut ajouter du stock à n'importe quel centre de santé
+      // Utiliser le districtId du centre de santé
+      districtId = healthCenter.districtId;
+    }
+
+    if (!districtId) {
+      return res.status(400).json({
+        message: "Impossible de déterminer le district",
+      });
     }
 
     let updatedDistrict = null;
@@ -1691,164 +1896,230 @@ const addStockHEALTHCENTER = async (req, res, next) => {
       healthCenterName = healthCenterStock.healthCenter.name;
       vaccineName = healthCenterStock.vaccine.name;
 
-      const districtStock = await tx.stockDISTRICT.findUnique({
-        where: { vaccineId_districtId: { vaccineId, districtId } },
-      });
-
-      if (!districtStock || (districtStock.quantity ?? 0) < qty) {
-        throw Object.assign(
-          new Error("Quantité insuffisante dans le stock district"),
-          { status: 400 },
-        );
-      }
-
-      // Consommer les lots du stock district
-      const allocations = await consumeLots(tx, {
-        vaccineId,
-        ownerType: OWNER_TYPES.DISTRICT,
-        ownerId: districtId,
-        quantity: qty,
-      });
-
-      // Vérifier et supprimer les lots qui se sont vidés
-      for (const allocation of allocations) {
-        const lot = await tx.stockLot.findUnique({
-          where: { id: allocation.lotId },
-          select: { remainingQuantity: true, quantity: true },
-        });
-        if (lot && lot.remainingQuantity === 0 && lot.quantity === 0) {
-          await deleteLotDirect(tx, allocation.lotId);
-        }
-      }
-
-      // Soustraire du stock district
-      await tx.stockDISTRICT.update({
-        where: { vaccineId_districtId: { vaccineId, districtId } },
-        data: { quantity: (districtStock.quantity ?? 0) - qty },
-      });
-
-      // Récupérer la date d'expiration du premier lot source (ou date par défaut)
-      const firstLot = allocations.length > 0 
-        ? await tx.stockLot.findUnique({
-            where: { id: allocations[0].lotId },
-            select: { expiration: true },
-          })
-        : null;
-      const lotExpiration = firstLot?.expiration || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
-
-      // Créer le transfert en attente
-      pendingTransfer = await tx.pendingStockTransfer.create({
-        data: {
+      if (req.user.role === "SUPERADMIN") {
+        // SUPERADMIN ajoute directement du stock sans prélever du district
+        const expirationDate = expiration ? new Date(expiration) : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+        
+        // Créer un nouveau lot directement au centre de santé
+        await createLot(tx, {
           vaccineId,
-          fromType: OWNER_TYPES.DISTRICT,
-          fromId: districtId,
-          toType: OWNER_TYPES.HEALTHCENTER,
-          toId: healthCenterId,
+          ownerType: OWNER_TYPES.HEALTHCENTER,
+          ownerId: healthCenterId,
           quantity: qty,
-          status: "PENDING",
-          lots: {
-            create: allocations.map((allocation) => ({
-              lotId: allocation.lotId,
-              quantity: allocation.quantity,
-            })),
-          },
-        },
-        include: {
-          vaccine: true,
-          lots: {
-            include: {
-              lot: true,
-            },
-          },
-        },
-      });
-
-      // Créer un lot vide PENDING au destinataire avec la date d'expiration
-      await createLot(tx, {
-        vaccineId,
-        ownerType: OWNER_TYPES.HEALTHCENTER,
-        ownerId: healthCenterId,
-        quantity: 0,
-        expiration: lotExpiration,
-        sourceLotId: allocations[0]?.lotId || null,
-        status: LOT_STATUS.PENDING,
-        pendingTransferId: pendingTransfer.id,
-      });
-
-      updatedDistrict = await tx.stockDISTRICT.findUnique({
-        where: { vaccineId_districtId: { vaccineId, districtId } },
-        include: { vaccine: true, district: { include: { commune: true } } },
-      });
-    });
-
-    res.json({
-      district: updatedDistrict,
-      pendingTransfer,
-      message: "Envoi créé avec succès. Le stock du centre de santé sera mis à jour après confirmation de réception.",
-    });
-
-    // Enregistrer l'événement
-    logEventAsync({
-      type: "STOCK_TRANSFER",
-      subtype: "HEALTHCENTER",
-      action: "TRANSFER_SENT",
-      user: {
-        id: req.user.id,
-        firstName: req.user.firstName,
-        lastName: req.user.lastName,
-        email: req.user.email,
-        role: req.user.role,
-      },
-      entityType: "STOCK",
-      entityId: pendingTransfer.id,
-      entityName: vaccineName,
-      details: {
-        fromType: "DISTRICT",
-        fromId: districtId,
-        toType: "HEALTHCENTER",
-        toId: healthCenterId,
-        toName: healthCenterName,
-        quantity: qty,
-        vaccineId,
-        vaccineName,
-      },
-    });
-
-    // Envoyer un email à tous les agents admin du centre de santé en arrière-plan (non bloquant)
-    setImmediate(async () => {
-      try {
-        const { sendStockTransferNotificationEmail } = require("../services/emailService");
-        const healthCenterAdminAgents = await prisma.user.findMany({
-          where: {
-            role: "AGENT",
-            agentLevel: "ADMIN",
-            healthCenterId: healthCenterId,
-            isActive: true,
-          },
-          select: {
-            id: true,
-            email: true,
-          },
+          expiration: expirationDate,
+          sourceLotId: null,
+          status: LOT_STATUS.VALID,
+          pendingTransferId: null,
         });
 
-        if (healthCenterAdminAgents.length > 0) {
-          const emails = healthCenterAdminAgents.map((u) => u.email).filter(Boolean);
-          const userIds = healthCenterAdminAgents.map((u) => u.id).filter(Boolean);
-          if (emails.length > 0) {
-            await sendStockTransferNotificationEmail({
-              emails,
-              userIds,
-              vaccineName,
-              quantity: qty,
-              regionName: healthCenterName,
-            });
+        // Mettre à jour le stock du centre de santé
+        await tx.stockHEALTHCENTER.update({
+          where: { vaccineId_healthCenterId: { vaccineId, healthCenterId } },
+          data: { quantity: (healthCenterStock.quantity ?? 0) + qty },
+        });
+      } else {
+        // DISTRICT : prélever du stock district (comportement existant)
+        const districtStock = await tx.stockDISTRICT.findUnique({
+          where: { vaccineId_districtId: { vaccineId, districtId } },
+        });
+
+        if (!districtStock || (districtStock.quantity ?? 0) < qty) {
+          throw Object.assign(
+            new Error("Quantité insuffisante dans le stock district"),
+            { status: 400 },
+          );
+        }
+
+        // Consommer les lots du stock district
+        const allocations = await consumeLots(tx, {
+          vaccineId,
+          ownerType: OWNER_TYPES.DISTRICT,
+          ownerId: districtId,
+          quantity: qty,
+        });
+
+        // Vérifier et supprimer les lots qui se sont vidés
+        for (const allocation of allocations) {
+          const lot = await tx.stockLot.findUnique({
+            where: { id: allocation.lotId },
+            select: { remainingQuantity: true, quantity: true },
+          });
+          if (lot && lot.remainingQuantity === 0 && lot.quantity === 0) {
+            await deleteLotDirect(tx, allocation.lotId);
           }
         }
-      } catch (emailError) {
-        console.error("Erreur envoi email notification transfert:", emailError);
-        // Ne pas bloquer la réponse si l'email échoue
+
+        // Soustraire du stock district
+        await tx.stockDISTRICT.update({
+          where: { vaccineId_districtId: { vaccineId, districtId } },
+          data: { quantity: (districtStock.quantity ?? 0) - qty },
+        });
+
+        // Récupérer la date d'expiration du premier lot source (ou date par défaut)
+        const firstLot = allocations.length > 0 
+          ? await tx.stockLot.findUnique({
+              where: { id: allocations[0].lotId },
+              select: { expiration: true },
+            })
+          : null;
+        const lotExpiration = firstLot?.expiration || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+
+        // Créer le transfert en attente
+        pendingTransfer = await tx.pendingStockTransfer.create({
+          data: {
+            vaccineId,
+            fromType: OWNER_TYPES.DISTRICT,
+            fromId: districtId,
+            toType: OWNER_TYPES.HEALTHCENTER,
+            toId: healthCenterId,
+            quantity: qty,
+            status: "PENDING",
+            lots: {
+              create: allocations.map((allocation) => ({
+                lotId: allocation.lotId,
+                quantity: allocation.quantity,
+              })),
+            },
+          },
+          include: {
+            vaccine: true,
+            lots: {
+              include: {
+                lot: true,
+              },
+            },
+          },
+        });
+
+        // Créer un lot vide PENDING au destinataire avec la date d'expiration
+        await createLot(tx, {
+          vaccineId,
+          ownerType: OWNER_TYPES.HEALTHCENTER,
+          ownerId: healthCenterId,
+          quantity: 0,
+          expiration: lotExpiration,
+          sourceLotId: allocations[0]?.lotId || null,
+          status: LOT_STATUS.PENDING,
+          pendingTransferId: pendingTransfer.id,
+        });
+
+        updatedDistrict = await tx.stockDISTRICT.findUnique({
+          where: { vaccineId_districtId: { vaccineId, districtId } },
+          include: { vaccine: true, district: { include: { commune: true } } },
+        });
       }
     });
+
+    if (req.user.role === "SUPERADMIN") {
+      // SUPERADMIN : stock ajouté directement
+      const updatedHealthCenterStock = await prisma.stockHEALTHCENTER.findUnique({
+        where: { vaccineId_healthCenterId: { vaccineId, healthCenterId } },
+      });
+
+      res.json({
+        message: "Stock ajouté avec succès au centre de santé",
+        healthCenter: {
+          vaccineId,
+          healthCenterId,
+          quantity: updatedHealthCenterStock?.quantity ?? 0,
+        },
+      });
+
+      // Enregistrer l'événement
+      logEventAsync({
+        type: "STOCK_ADD",
+        subtype: "HEALTHCENTER",
+        action: "STOCK_ADDED",
+        user: {
+          id: req.user.id,
+          firstName: req.user.firstName,
+          lastName: req.user.lastName,
+          email: req.user.email,
+          role: req.user.role,
+        },
+        entityType: "STOCK",
+        entityId: healthCenterId,
+        entityName: healthCenterName,
+        details: {
+          toType: "HEALTHCENTER",
+          toId: healthCenterId,
+          toName: healthCenterName,
+          quantity: qty,
+          vaccineId,
+          vaccineName,
+        },
+      });
+    } else {
+      // DISTRICT : transfert en attente
+      res.json({
+        district: updatedDistrict,
+        pendingTransfer,
+        message: "Envoi créé avec succès. Le stock du centre de santé sera mis à jour après confirmation de réception.",
+      });
+
+      // Enregistrer l'événement
+      logEventAsync({
+        type: "STOCK_TRANSFER",
+        subtype: "HEALTHCENTER",
+        action: "TRANSFER_SENT",
+        user: {
+          id: req.user.id,
+          firstName: req.user.firstName,
+          lastName: req.user.lastName,
+          email: req.user.email,
+          role: req.user.role,
+        },
+        entityType: "STOCK",
+        entityId: pendingTransfer.id,
+        entityName: vaccineName,
+        details: {
+          fromType: "DISTRICT",
+          fromId: districtId,
+          toType: "HEALTHCENTER",
+          toId: healthCenterId,
+          toName: healthCenterName,
+          quantity: qty,
+          vaccineId,
+          vaccineName,
+        },
+      });
+
+      // Envoyer un email à tous les agents admin du centre de santé en arrière-plan (non bloquant)
+      setImmediate(async () => {
+        try {
+          const { sendStockTransferNotificationEmail } = require("../services/emailService");
+          const healthCenterAdminAgents = await prisma.user.findMany({
+            where: {
+              role: "AGENT",
+              agentLevel: "ADMIN",
+              healthCenterId: healthCenterId,
+              isActive: true,
+            },
+            select: {
+              id: true,
+              email: true,
+            },
+          });
+
+          if (healthCenterAdminAgents.length > 0) {
+            const emails = healthCenterAdminAgents.map((u) => u.email).filter(Boolean);
+            const userIds = healthCenterAdminAgents.map((u) => u.id).filter(Boolean);
+            if (emails.length > 0) {
+              await sendStockTransferNotificationEmail({
+                emails,
+                userIds,
+                vaccineName,
+                quantity: qty,
+                regionName: healthCenterName,
+              });
+            }
+          }
+        } catch (emailError) {
+          console.error("Erreur envoi email notification transfert:", emailError);
+          // Ne pas bloquer la réponse si l'email échoue
+        }
+      });
+    }
   } catch (error) {
     if (error.status) {
       return res.status(error.status).json({ message: error.message });
@@ -2578,6 +2849,389 @@ const reduceStockDISTRICT = async (req, res, next) => {
 
     res.json(updated);
   } catch (error) {
+    next(error);
+  }
+};
+
+const reduceLotREGIONAL = async (req, res, next) => {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  const { id: lotId } = req.params;
+  const { quantity } = req.body ?? {};
+  const qty = Number(quantity);
+
+  if (!lotId) {
+    return res.status(400).json({ message: "lotId est requis" });
+  }
+
+  if (!Number.isFinite(qty) || qty <= 0) {
+    return res.status(400).json({ message: "quantity doit être un nombre positif" });
+  }
+
+  try {
+    let updatedLot = null;
+    let regionId = null;
+
+    await prisma.$transaction(async (tx) => {
+      const lot = await tx.stockLot.findUnique({
+        where: { id: lotId },
+        include: {
+          vaccine: { select: { name: true } },
+        },
+      });
+
+      if (!lot) {
+        throw Object.assign(new Error("Lot introuvable"), { status: 404 });
+      }
+
+      // Vérifier que le lot appartient à une région
+      if (lot.ownerType !== OWNER_TYPES.REGIONAL || !lot.ownerId) {
+        throw Object.assign(new Error("Ce lot n'appartient pas à une région"), {
+          status: 403,
+        });
+      }
+
+      regionId = lot.ownerId;
+
+      // Vérifier les permissions selon le rôle
+      if (req.user.role === "REGIONAL") {
+        const userRegionId = await resolveRegionIdForUser(req.user);
+        if (!userRegionId || userRegionId !== regionId) {
+          throw Object.assign(new Error("Accès refusé pour cette région"), {
+            status: 403,
+          });
+        }
+      }
+      // SUPERADMIN et NATIONAL peuvent réduire n'importe quel lot régional
+
+      // Vérifier que la quantité à réduire ne dépasse pas la quantité restante
+      if (qty > lot.remainingQuantity) {
+        throw Object.assign(
+          new Error(
+            `La quantité à réduire (${qty}) dépasse la quantité restante du lot (${lot.remainingQuantity})`
+          ),
+          { status: 400 }
+        );
+      }
+
+      // Réduire la quantité restante du lot
+      const newRemainingQuantity = lot.remainingQuantity - qty;
+
+      updatedLot = await tx.stockLot.update({
+        where: { id: lotId },
+        data: {
+          remainingQuantity: newRemainingQuantity,
+        },
+        include: {
+          vaccine: { select: { name: true } },
+        },
+      });
+
+      // Mettre à jour la quantité du stock REGIONAL (somme des lots)
+      const allLots = await tx.stockLot.findMany({
+        where: {
+          vaccineId: lot.vaccineId,
+          ownerType: OWNER_TYPES.REGIONAL,
+          ownerId: regionId,
+          status: { in: [LOT_STATUS.VALID, LOT_STATUS.EXPIRED] },
+        },
+        select: { remainingQuantity: true },
+      });
+
+      const totalQuantity = allLots.reduce(
+        (sum, l) => sum + (l.remainingQuantity ?? 0),
+        0
+      );
+
+      await tx.stockREGIONAL.update({
+        where: { vaccineId_regionId: { vaccineId: lot.vaccineId, regionId } },
+        data: { quantity: totalQuantity },
+      });
+
+      // Mettre à jour la date d'expiration la plus proche
+      await updateNearestExpiration(tx, {
+        vaccineId: lot.vaccineId,
+        ownerType: OWNER_TYPES.REGIONAL,
+        ownerId: regionId,
+      });
+    });
+
+    res.json(updatedLot);
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    next(error);
+  }
+};
+
+const reduceLotDISTRICT = async (req, res, next) => {
+  if (!["SUPERADMIN", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  const { id: lotId } = req.params;
+  const { quantity } = req.body ?? {};
+  const qty = Number(quantity);
+
+  if (!lotId) {
+    return res.status(400).json({ message: "lotId est requis" });
+  }
+
+  if (!Number.isFinite(qty) || qty <= 0) {
+    return res.status(400).json({ message: "quantity doit être un nombre positif" });
+  }
+
+  try {
+    let updatedLot = null;
+    let districtId = null;
+
+    await prisma.$transaction(async (tx) => {
+      const lot = await tx.stockLot.findUnique({
+        where: { id: lotId },
+        include: {
+          vaccine: { select: { name: true } },
+        },
+      });
+
+      if (!lot) {
+        throw Object.assign(new Error("Lot introuvable"), { status: 404 });
+      }
+
+      // Vérifier que le lot appartient à un district
+      if (lot.ownerType !== OWNER_TYPES.DISTRICT || !lot.ownerId) {
+        throw Object.assign(new Error("Ce lot n'appartient pas à un district"), {
+          status: 403,
+        });
+      }
+
+      districtId = lot.ownerId;
+
+      // Vérifier les permissions selon le rôle
+      if (req.user.role === "DISTRICT") {
+        const userDistrictId = await resolveDistrictIdForUser(req.user);
+        if (!userDistrictId || userDistrictId !== districtId) {
+          throw Object.assign(new Error("Accès refusé pour ce district"), {
+            status: 403,
+          });
+        }
+      } else if (req.user.role === "REGIONAL") {
+        const userRegionId = await resolveRegionIdForUser(req.user);
+        if (!userRegionId) {
+          throw Object.assign(new Error("Votre compte n'est pas rattaché à une région"), {
+            status: 400,
+          });
+        }
+
+        const district = await prisma.district.findUnique({
+          where: { id: districtId },
+          select: { commune: { select: { regionId: true } } },
+        });
+
+        if (!district || district.commune?.regionId !== userRegionId) {
+          throw Object.assign(new Error("Ce district n'appartient pas à votre région"), {
+            status: 403,
+          });
+        }
+      }
+      // SUPERADMIN peut réduire n'importe quel lot
+
+      // Vérifier que la quantité à réduire ne dépasse pas la quantité restante
+      if (qty > lot.remainingQuantity) {
+        throw Object.assign(
+          new Error(
+            `La quantité à réduire (${qty}) dépasse la quantité restante du lot (${lot.remainingQuantity})`
+          ),
+          { status: 400 }
+        );
+      }
+
+      // Réduire la quantité restante du lot
+      const newRemainingQuantity = lot.remainingQuantity - qty;
+
+      updatedLot = await tx.stockLot.update({
+        where: { id: lotId },
+        data: {
+          remainingQuantity: newRemainingQuantity,
+        },
+        include: {
+          vaccine: { select: { name: true } },
+        },
+      });
+
+      // Mettre à jour la quantité du stock DISTRICT (somme des lots)
+      const allLots = await tx.stockLot.findMany({
+        where: {
+          vaccineId: lot.vaccineId,
+          ownerType: OWNER_TYPES.DISTRICT,
+          ownerId: districtId,
+          status: { in: [LOT_STATUS.VALID, LOT_STATUS.EXPIRED] },
+        },
+        select: { remainingQuantity: true },
+      });
+
+      const totalQuantity = allLots.reduce(
+        (sum, l) => sum + (l.remainingQuantity ?? 0),
+        0
+      );
+
+      await tx.stockDISTRICT.update({
+        where: { vaccineId_districtId: { vaccineId: lot.vaccineId, districtId } },
+        data: { quantity: totalQuantity },
+      });
+
+      // Mettre à jour la date d'expiration la plus proche
+      await updateNearestExpiration(tx, {
+        vaccineId: lot.vaccineId,
+        ownerType: OWNER_TYPES.DISTRICT,
+        ownerId: districtId,
+      });
+    });
+
+    res.json(updatedLot);
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    next(error);
+  }
+};
+
+const reduceLotHEALTHCENTER = async (req, res, next) => {
+  if (!["SUPERADMIN", "DISTRICT", "AGENT"].includes(req.user.role)) {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  // Seuls les agents ADMIN peuvent réduire les stocks
+  if (req.user.role === "AGENT" && req.user.agentLevel !== "ADMIN") {
+    return res.status(403).json({ message: "Accès refusé" });
+  }
+
+  const { id: lotId } = req.params;
+  const { quantity } = req.body ?? {};
+  const qty = Number(quantity);
+
+  if (!lotId) {
+    return res.status(400).json({ message: "lotId est requis" });
+  }
+
+  if (!Number.isFinite(qty) || qty <= 0) {
+    return res.status(400).json({ message: "quantity doit être un nombre positif" });
+  }
+
+  try {
+    let updatedLot = null;
+    let healthCenterId = null;
+
+    await prisma.$transaction(async (tx) => {
+      const lot = await tx.stockLot.findUnique({
+        where: { id: lotId },
+        include: {
+          vaccine: { select: { name: true } },
+        },
+      });
+
+      if (!lot) {
+        throw Object.assign(new Error("Lot introuvable"), { status: 404 });
+      }
+
+      // Vérifier que le lot appartient à un centre de santé
+      if (lot.ownerType !== OWNER_TYPES.HEALTHCENTER || !lot.ownerId) {
+        throw Object.assign(new Error("Ce lot n'appartient pas à un centre de santé"), {
+          status: 403,
+        });
+      }
+
+      healthCenterId = lot.ownerId;
+
+      // Vérifier les permissions selon le rôle
+      if (req.user.role === "AGENT") {
+        const userHealthCenterId = await resolveHealthCenterIdForUser(req.user);
+        if (!userHealthCenterId || userHealthCenterId !== healthCenterId) {
+          throw Object.assign(new Error("Accès refusé pour ce centre de santé"), {
+            status: 403,
+          });
+        }
+      } else if (req.user.role === "DISTRICT") {
+        const userDistrictId = await resolveDistrictIdForUser(req.user);
+        if (!userDistrictId) {
+          throw Object.assign(new Error("Votre compte n'est pas rattaché à un district"), {
+            status: 400,
+          });
+        }
+
+        const healthCenter = await prisma.healthCenter.findUnique({
+          where: { id: healthCenterId },
+          select: { districtId: true },
+        });
+
+        if (!healthCenter || healthCenter.districtId !== userDistrictId) {
+          throw Object.assign(new Error("Ce centre de santé n'appartient pas à votre district"), {
+            status: 403,
+          });
+        }
+      }
+      // SUPERADMIN peut réduire n'importe quel lot
+
+      // Vérifier que la quantité à réduire ne dépasse pas la quantité restante
+      if (qty > lot.remainingQuantity) {
+        throw Object.assign(
+          new Error(
+            `La quantité à réduire (${qty}) dépasse la quantité restante du lot (${lot.remainingQuantity})`
+          ),
+          { status: 400 }
+        );
+      }
+
+      // Réduire la quantité restante du lot
+      const newRemainingQuantity = lot.remainingQuantity - qty;
+
+      updatedLot = await tx.stockLot.update({
+        where: { id: lotId },
+        data: {
+          remainingQuantity: newRemainingQuantity,
+        },
+        include: {
+          vaccine: { select: { name: true } },
+        },
+      });
+
+      // Mettre à jour la quantité du stock HEALTHCENTER (somme des lots)
+      const allLots = await tx.stockLot.findMany({
+        where: {
+          vaccineId: lot.vaccineId,
+          ownerType: OWNER_TYPES.HEALTHCENTER,
+          ownerId: healthCenterId,
+          status: { in: [LOT_STATUS.VALID, LOT_STATUS.EXPIRED] },
+        },
+        select: { remainingQuantity: true },
+      });
+
+      const totalQuantity = allLots.reduce(
+        (sum, l) => sum + (l.remainingQuantity ?? 0),
+        0
+      );
+
+      await tx.stockHEALTHCENTER.update({
+        where: { vaccineId_healthCenterId: { vaccineId: lot.vaccineId, healthCenterId } },
+        data: { quantity: totalQuantity },
+      });
+
+      // Mettre à jour la date d'expiration la plus proche
+      await updateNearestExpiration(tx, {
+        vaccineId: lot.vaccineId,
+        ownerType: OWNER_TYPES.HEALTHCENTER,
+        ownerId: healthCenterId,
+      });
+    });
+
+    res.json(updatedLot);
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({ message: error.message });
+    }
     next(error);
   }
 };
@@ -4560,6 +5214,9 @@ module.exports = {
   getDistrictStockStats,
   getHealthCenterStockStats,
   reduceLotNATIONAL,
+  reduceLotREGIONAL,
+  reduceLotDISTRICT,
+  reduceLotHEALTHCENTER,
   deleteLot,
   getHealthCenterReservations,
   getPendingTransfers,

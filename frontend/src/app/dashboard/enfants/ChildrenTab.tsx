@@ -121,7 +121,6 @@ export default function ChildrenTab({
     birthPlace: "",
     address: "",
     gender: "M" as "M" | "F",
-    emailParent: "",
     phoneParent: "",
     fatherName: "",
     motherName: "",
@@ -172,7 +171,6 @@ export default function ChildrenTab({
         birthPlace: "",
         address: "",
         gender: "M",
-        emailParent: "",
         phoneParent: "",
         fatherName: "",
         motherName: "",
@@ -733,7 +731,6 @@ export default function ChildrenTab({
                     birthPlace: "",
                     address: "",
                     gender: "M",
-                    emailParent: "",
                     phoneParent: "",
                     fatherName: "",
                     motherName: "",
@@ -860,18 +857,6 @@ export default function ChildrenTab({
 
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                    Email du parent
-                  </label>
-                  <input
-                    type="email"
-                    value={formData.emailParent}
-                    onChange={(e) => setFormData({ ...formData, emailParent: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
                     Téléphone du parent <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -897,7 +882,6 @@ export default function ChildrenTab({
                       birthPlace: "",
                       address: "",
                       gender: "M",
-                      emailParent: "",
                       phoneParent: "",
                       fatherName: "",
                       motherName: "",

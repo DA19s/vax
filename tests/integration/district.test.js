@@ -52,9 +52,9 @@ describe("District API", () => {
       }
 
       // Nettoyage complet avant tous les tests
-      await prisma.district.deleteMany();
-      await prisma.commune.deleteMany();
-      await prisma.region.deleteMany();
+    await prisma.district.deleteMany();
+    await prisma.commune.deleteMany();
+    await prisma.region.deleteMany();
       await prisma.user.deleteMany();
 
       // Créer le user NATIONAL directement en DB
@@ -62,15 +62,15 @@ describe("District API", () => {
       nationalPassword = "motdepasse";
       const hashedPassword = await bcrypt.hash(nationalPassword, 10);
 
-      await prisma.user.create({
-        data: {
+    await prisma.user.create({
+      data: {
           email: nationalEmail,
           password: hashedPassword,
           firstName: "National",
-          lastName: "Admin",
+        lastName: "Admin",
           phone: "123456789",
-          role: "NATIONAL",
-          isActive: true,
+        role: "NATIONAL",
+        isActive: true,
           emailVerified: true,
         },
       });
@@ -177,8 +177,8 @@ describe("District API", () => {
 
       if (!existingRegion) {
         const regionRes = await request(app)
-          .post("/api/region")
-          .set("Authorization", `Bearer ${nationalToken}`)
+      .post("/api/region")
+      .set("Authorization", `Bearer ${nationalToken}`)
           .send({ name: `RegionForDistrict-${Date.now()}` });
         expect(regionRes.statusCode).toBe(201);
         regionId = regionRes.body.id;
@@ -272,7 +272,7 @@ describe("District API", () => {
         // Créer une commune
         const communeRes = await request(app)
           .post("/api/commune")
-          .set("Authorization", `Bearer ${nationalToken}`)
+      .set("Authorization", `Bearer ${nationalToken}`)
           .send({ name: `Commune-${Date.now()}`, regionId: regionId });
         expect(communeRes.statusCode).toBe(201);
         const communeId = communeRes.body.id;
@@ -292,7 +292,7 @@ describe("District API", () => {
         const res = await request(app)
           .post("/api/district")
           .set("Authorization", `Bearer ${regionalToken}`)
-          .send({
+      .send({
             name: "Test District",
             // communeId manquant
           });
@@ -437,7 +437,7 @@ describe("District API", () => {
           email: districtEmail,
           password,
           firstName: "District",
-          lastName: "User",
+        lastName: "User",
           phone: "111111111",
           role: "DISTRICT",
           isActive: true,
@@ -619,7 +619,7 @@ describe("District API", () => {
         });
 
         const loginRes = await request(app)
-          .post("/api/auth/login")
+      .post("/api/auth/login")
           .send({ email: otherRegionalEmail, password: "motdepasse" });
         expect(loginRes.statusCode).toBe(200);
         const otherRegionalToken = loginRes.body.accessToken;
@@ -725,7 +725,7 @@ describe("District API", () => {
       it("Supprime un district avec succès", async () => {
         // Créer une commune et un district
         const communeRes = await request(app)
-          .post("/api/commune")
+      .post("/api/commune")
           .set("Authorization", `Bearer ${nationalToken}`)
           .send({ name: `Commune-${Date.now()}`, regionId: regionId });
         expect(communeRes.statusCode).toBe(201);
@@ -733,7 +733,7 @@ describe("District API", () => {
 
         const districtRes = await request(app)
           .post("/api/district")
-          .set("Authorization", `Bearer ${regionalToken}`)
+      .set("Authorization", `Bearer ${regionalToken}`)
           .send({ name: `District-${Date.now()}`, communeId: communeId });
         expect(districtRes.statusCode).toBe(201);
         const districtId = districtRes.body.id;
@@ -784,8 +784,8 @@ describe("District API", () => {
         const communeId = communeRes.body.id;
 
         const districtRes = await request(app)
-          .post("/api/district")
-          .set("Authorization", `Bearer ${regionalToken}`)
+      .post("/api/district")
+      .set("Authorization", `Bearer ${regionalToken}`)
           .send({ name: `District-${Date.now()}`, communeId: communeId });
         expect(districtRes.statusCode).toBe(201);
         const districtId = districtRes.body.id;
@@ -803,8 +803,8 @@ describe("District API", () => {
           });
         expect(res.statusCode).toBe(403);
         expect(res.body.message).toBe("Accès refusé");
-      });
-    });
+  });
+});
 
     describe("Validation", () => {
       it("Retourne 400 si districtId manquant", async () => {
@@ -856,16 +856,16 @@ describe("District API", () => {
         // Créer un REGIONAL sans regionId
         const regionalNoRegionEmail = `regional-no-region-${Date.now()}@example.com`;
         testEmails.add(regionalNoRegionEmail);
-        const password = await bcrypt.hash("motdepasse", 10);
-        await prisma.user.create({
-          data: {
+    const password = await bcrypt.hash("motdepasse", 10);
+    await prisma.user.create({
+      data: {
             email: regionalNoRegionEmail,
-            password,
+        password,
             firstName: "Regional",
             lastName: "NoRegion",
             phone: "999999999",
             role: "REGIONAL",
-            isActive: true,
+        isActive: true,
             emailVerified: true,
             regionId: null,
           },
@@ -944,7 +944,7 @@ describe("District API", () => {
         });
 
         const loginRes = await request(app)
-          .post("/api/auth/login")
+      .post("/api/auth/login")
           .send({ email: otherRegionalEmail, password: "motdepasse" });
         expect(loginRes.statusCode).toBe(200);
         const otherRegionalToken = loginRes.body.accessToken;
@@ -1176,8 +1176,8 @@ describe("District API", () => {
       it("Retourne 403 si district n'appartient pas à la région du REGIONAL", async () => {
         // Créer une autre région
         const otherRegionRes = await request(app)
-          .post("/api/region")
-          .set("Authorization", `Bearer ${nationalToken}`)
+      .post("/api/region")
+      .set("Authorization", `Bearer ${nationalToken}`)
           .send({ name: `OtherRegion-${Date.now()}` });
         expect(otherRegionRes.statusCode).toBe(201);
         const otherRegionId = otherRegionRes.body.id;
@@ -1258,7 +1258,7 @@ describe("District API", () => {
 
         const commune2Res = await request(app)
           .post("/api/commune")
-          .set("Authorization", `Bearer ${nationalToken}`)
+      .set("Authorization", `Bearer ${nationalToken}`)
           .send({ name: `Commune2-${Date.now()}`, regionId: regionId });
         expect(commune2Res.statusCode).toBe(201);
         const commune2Id = commune2Res.body.id;
@@ -1283,9 +1283,9 @@ describe("District API", () => {
         const createRes = await request(app)
           .post("/api/users/district")
           .set("Authorization", `Bearer ${regionalToken}`)
-          .send({
+      .send({
             firstName: "District",
-            lastName: "User",
+        lastName: "User",
             email: districtEmail,
             phone: "987654321",
             districtId: district1Id,
@@ -1345,7 +1345,7 @@ describe("District API", () => {
         const createRes = await request(app)
           .post("/api/users/district")
           .set("Authorization", `Bearer ${regionalToken}`)
-          .send({
+      .send({
             firstName: "District",
             lastName: "User",
             email: districtEmail,

@@ -15,7 +15,6 @@ const requestVerificationCode = async (req, res, next) => {
   try {
     const {
       parentPhone,
-      parentEmail,
       childFirstName,
       childLastName,
       childBirthDate,
@@ -82,7 +81,6 @@ const requestVerificationCode = async (req, res, next) => {
         gender: childGender.toUpperCase(),
         healthCenterId: healthCenter.id,
         status: "A_JOUR",
-        emailParent: parentEmail || "",
         phoneParent: parentPhone,
         fatherName: fatherName,
         motherName: motherName,

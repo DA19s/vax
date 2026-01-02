@@ -1,4 +1,5 @@
 const nodemailer = require("nodemailer");
+const { getAppName } = require("../utils/appName");
 
 if (process.env.NODE_ENV !== "production") {
   console.log("SMTP_USER:", process.env.SMTP_USER);
@@ -29,31 +30,31 @@ const sendInvitationEmail = async ({
 
   switch (role) {
     case "AGENT":
-      roleDescription = `en tant qu’<b>Agent de santé</b> du centre <b>${healthCenter || "inconnu"}</b>`;
+      roleDescription = `en tant qu'<b>Agent de santé</b> du centre <b>${healthCenter || "inconnu"}</b>`;
       break;
     case "REGIONAL":
-      roleDescription = `en tant qu’<b>Administrateur régional</b> de <b>${region || "inconnue"}</b>`;
+      roleDescription = `en tant qu'<b>Administrateur régional</b> de <b>${region || "inconnue"}</b>`;
       break;
     case "DISTRICT":
-      roleDescription = `en tant qu’<b>Administrateur de district</b> du district <b>${district || "inconnu"}</b>`;
+      roleDescription = `en tant qu'<b>Administrateur de district</b> du district <b>${district || "inconnu"}</b>`;
       break;
     case "NATIONAL":
-      roleDescription = `en tant qu’<b>Administrateur national</b>`;
+      roleDescription = `en tant qu'<b>Administrateur national</b>`;
       break;
     default:
-      roleDescription = `en tant qu’<b>Utilisateur</b>`;
+      roleDescription = `en tant qu'<b>Utilisateur</b>`;
   }
 
   console.log(process.env.FRONTEND_URL);
   
-
-const url = `${process.env.FRONTEND_URL}/activate?id=${user.id}&token=${token}`;
+  const appName = await getAppName();
+  const url = `${process.env.FRONTEND_URL}/activate?id=${user.id}&token=${token}`;
 
   const html = `
     <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
-      <h2 style="color:#2c7be5;">Bienvenue sur Imunia 🎉</h2>
+      <h2 style="color:#2c7be5;">Bienvenue sur ${appName} 🎉</h2>
       <p>Bonjour,</p>
-      <p>Vous avez été invité à rejoindre la plateforme Imunia ${roleDescription}.</p>
+      <p>Vous avez été invité à rejoindre la plateforme ${appName} ${roleDescription}.</p>
       <p>Pour activer votre compte et définir votre mot de passe, cliquez sur le bouton ci-dessous :</p>
       <p style="text-align:center; margin:20px 0;">
         <a href="${url}" style="background:#2c7be5; color:#fff; padding:12px 24px; text-decoration:none; border-radius:5px; font-size:16px;">
@@ -61,16 +62,16 @@ const url = `${process.env.FRONTEND_URL}/activate?id=${user.id}&token=${token}`;
         </a>
       </p>
       <p style="font-size:12px; color:#888;">
-        🔒 Ce lien est valable <b>24 heures</b>. Si vous n’êtes pas à l’origine de cette invitation, ignorez ce message.
+        🔒 Ce lien est valable <b>24 heures</b>. Si vous n'êtes pas à l'origine de cette invitation, ignorez ce message.
       </p>
     </div>
   `;
 
   try {
     const info = await transporter.sendMail({
-      from: `"Imunia" <${process.env.SMTP_USER}>`,
+      from: `"${appName}" <${process.env.SMTP_USER}>`,
       to: email,
-      subject: "Invitation à rejoindre Imunia",
+      subject: `Invitation à rejoindre ${appName}`,
       html,
     });
     console.log("Email d'invitation envoyé :", info.response);
@@ -80,6 +81,7 @@ const url = `${process.env.FRONTEND_URL}/activate?id=${user.id}&token=${token}`;
 };
 
 const sendPasswordResetEmail = async ({ email, resetLink }) => {
+  const appName = await getAppName();
   const html = `
     <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
       <h2 style="color:#2c7be5;">Réinitialisation de mot de passe</h2>
@@ -98,7 +100,7 @@ const sendPasswordResetEmail = async ({ email, resetLink }) => {
 
   try {
     const info = await transporter.sendMail({
-      from: `"Imunia" <${process.env.SMTP_USER}>`,
+      from: `"${appName}" <${process.env.SMTP_USER}>`,
       to: email,
       subject: "Réinitialisation de mot de passe",
       html,
@@ -131,9 +133,10 @@ const sendPasswordResetCode = async ({ email, code, firstName }) => {
     </div>
   `;
 
+  const appName = await getAppName();
   try {
     const info = await transporter.sendMail({
-      from: `"Imunia" <${process.env.SMTP_USER}>`,
+      from: `"${appName}" <${process.env.SMTP_USER}>`,
       to: email,
       subject: "Code de réinitialisation de mot de passe",
       html,
@@ -156,9 +159,10 @@ const sendTwoFactorCode = async ({ email, code }) => {
     </div>
   `;
 
+  const appName = await getAppName();
   try {
     const info = await transporter.sendMail({
-      from: `"Imunia" <${process.env.SMTP_USER}>`,
+      from: `"${appName}" <${process.env.SMTP_USER}>`,
       to: email,
       subject: "Votre code de vérification",
       html,
@@ -176,11 +180,11 @@ const sendInvitationParentEmail = async ({
   lastName,
   healthCenter,
 }) => {
-  let roleDescription;
-
+  const appName = await getAppName();
+  const url = `${process.env.FRONTEND_URL}/activate?code=${code}`;
   const html = `
     <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
-      <h2 style="color:#2c7be5;">Bienvenue sur Imunia 🎉</h2>
+      <h2 style="color:#2c7be5;">Bienvenue sur ${appName} 🎉</h2>
       <p>Bonjour chers parents,</p>
       <p>Votre enfant: ${firstName} ${lastName} a été enregistré .</p>
       <p>Pour activer votre compte et définir votre mot de passe, cliquez sur le bouton ci-dessous :</p>
@@ -197,9 +201,9 @@ const sendInvitationParentEmail = async ({
 
   try {
     const info = await transporter.sendMail({
-      from: `"Imunia" <${process.env.SMTP_USER}>`,
+      from: `"${appName}" <${process.env.SMTP_USER}>`,
       to: email,
-      subject: "Invitation à rejoindre Imunia",
+      subject: `Invitation à rejoindre ${appName}`,
       html,
     });
     console.log("Email d'invitation envoyé :", info.response);
@@ -239,9 +243,10 @@ const sendVaccineRequestEmail = async ({
     </div>
   `;
 
+  const appName = await getAppName();
   try {
     const info = await transporter.sendMail({
-      from: `"Imunia" <${process.env.SMTP_USER}>`,
+      from: `"${appName}" <${process.env.SMTP_USER}>`,
       to: agentEmail,
       subject: `Nouvelle demande de vaccination - ${vaccineName}`,
       html,
@@ -261,6 +266,7 @@ const sendStockTransferNotificationEmail = async ({
   quantity,
   regionName,
 }) => {
+  const appName = await getAppName();
   const html = `
     <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
       <h2 style="color:#2c7be5;">Nouvel envoi de stock</h2>
@@ -287,7 +293,7 @@ const sendStockTransferNotificationEmail = async ({
   for (const email of emails) {
     try {
       const info = await transporter.sendMail({
-        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        from: `"${await getAppName()}" <${process.env.SMTP_USER}>`,
         to: email,
         subject: `Nouvel envoi de stock - ${vaccineName}`,
         html,
@@ -327,6 +333,7 @@ const sendTransferRejectedEmail = async ({
   fromName,
   toName,
 }) => {
+  const appName = await getAppName();
   const html = `
     <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
       <h2 style="color:#ef4444;">Transfert de stock refusé</h2>
@@ -355,7 +362,7 @@ const sendTransferRejectedEmail = async ({
   for (const email of emails) {
     try {
       const info = await transporter.sendMail({
-        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        from: `"${await getAppName()}" <${process.env.SMTP_USER}>`,
         to: email,
         subject: `Transfert refusé - ${vaccineName}`,
         html,
@@ -394,6 +401,7 @@ const sendTransferCancelledEmail = async ({
   fromName,
   toName,
 }) => {
+  const appName = await getAppName();
   const html = `
     <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
       <h2 style="color:#f59e0b;">Transfert de stock annulé</h2>
@@ -422,7 +430,7 @@ const sendTransferCancelledEmail = async ({
   for (const email of emails) {
     try {
       const info = await transporter.sendMail({
-        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        from: `"${await getAppName()}" <${process.env.SMTP_USER}>`,
         to: email,
         subject: `Transfert annulé - ${vaccineName}`,
         html,
@@ -459,9 +467,10 @@ const sendChildAccountActivatedEmail = async ({
   parentName,
   healthCenterName,
 }) => {
+  const appName = await getAppName();
   const html = `
     <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
-      <h2 style="color:#2c7be5;">Nouveau compte activé - Imunia</h2>
+      <h2 style="color:#2c7be5;">Nouveau compte activé - ${appName}</h2>
       <p>Bonjour,</p>
       <p>Un nouveau compte a été activé directement :</p>
       <div style="background:#f5f5f5; padding:15px; border-radius:5px; margin:20px 0;">
@@ -486,7 +495,7 @@ const sendChildAccountActivatedEmail = async ({
   for (const email of agentEmails) {
     try {
       const info = await transporter.sendMail({
-        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        from: `"${await getAppName()}" <${process.env.SMTP_USER}>`,
         to: email,
         subject: `Nouveau compte activé - ${childName}`,
         html,
@@ -507,9 +516,10 @@ const sendChildAccountPendingEmail = async ({
   parentName,
   healthCenterName,
 }) => {
+  const appName = await getAppName();
   const html = `
     <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
-      <h2 style="color:#f59e0b;">Compte en attente de vérification - Imunia</h2>
+      <h2 style="color:#f59e0b;">Compte en attente de vérification - ${appName}</h2>
       <p>Bonjour,</p>
       <p>Un nouveau compte nécessite votre vérification :</p>
       <div style="background:#fef3c7; padding:15px; border-radius:5px; margin:20px 0; border-left:4px solid #f59e0b;">
@@ -534,7 +544,7 @@ const sendChildAccountPendingEmail = async ({
   for (const email of agentEmails) {
     try {
       const info = await transporter.sendMail({
-        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        from: `"${await getAppName()}" <${process.env.SMTP_USER}>`,
         to: email,
         subject: `Compte en attente de vérification - ${childName}`,
         html,
@@ -555,9 +565,10 @@ const sendNewPhotosUploadedEmail = async ({
   parentName,
   healthCenterName,
 }) => {
+  const appName = await getAppName();
   const html = `
     <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
-      <h2 style="color:#3b82f6;">Nouvelles photos uploadées - Imunia</h2>
+      <h2 style="color:#3b82f6;">Nouvelles photos uploadées - ${appName}</h2>
       <p>Bonjour,</p>
       <p>Le parent a uploadé de nouvelles photos du carnet de vaccination :</p>
       <div style="background:#dbeafe; padding:15px; border-radius:5px; margin:20px 0; border-left:4px solid #3b82f6;">
@@ -582,7 +593,7 @@ const sendNewPhotosUploadedEmail = async ({
   for (const email of agentEmails) {
     try {
       const info = await transporter.sendMail({
-        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        from: `"${await getAppName()}" <${process.env.SMTP_USER}>`,
         to: email,
         subject: `Nouvelles photos uploadées - ${childName}`,
         html,
@@ -661,9 +672,10 @@ const sendStockExpirationAlert = async ({
     </div>
   `;
 
+  const appName = await getAppName();
   try {
     const info = await transporter.sendMail({
-      from: `"Imunia" <${process.env.SMTP_USER}>`,
+      from: `"${appName}" <${process.env.SMTP_USER}>`,
       to: email,
       subject: `⚠️ Alerte : ${lots.length} lot(s) de vaccin(s) bientôt expiré(s)`,
       html,
@@ -720,9 +732,10 @@ const sendAppointmentReminderEmail = async ({
     </div>
   `;
 
+  const appName = await getAppName();
   try {
     const info = await transporter.sendMail({
-      from: `"Imunia" <${process.env.SMTP_USER}>`,
+      from: `"${appName}" <${process.env.SMTP_USER}>`,
       to: email,
       subject: `📅 Rappel : Rendez-vous de vaccination ${message} - ${childName}`,
       html,
@@ -746,6 +759,7 @@ const sendSuperAdminEntityNotification = async ({
   entityName,
   details,
 }) => {
+  const appName = await getAppName();
   const actionText = {
     created: "créée",
     updated: "modifiée",
@@ -760,7 +774,7 @@ const sendSuperAdminEntityNotification = async ({
 
   const html = `
     <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
-      <h2 style="color:#2c7be5;">Notification Imunia</h2>
+      <h2 style="color:#2c7be5;">Notification ${appName}</h2>
       <p>Bonjour,</p>
       <p>Une ${entityTypeText.toLowerCase()} a été ${actionText} par un administrateur système :</p>
       <div style="background:#f5f5f5; padding:15px; border-radius:5px; margin:20px 0;">
@@ -783,9 +797,9 @@ const sendSuperAdminEntityNotification = async ({
   for (const email of emails) {
     try {
       const info = await transporter.sendMail({
-        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        from: `"${await getAppName()}" <${process.env.SMTP_USER}>`,
         to: email,
-        subject: `${entityTypeText} ${actionText} - Notification Imunia`,
+        subject: `${entityTypeText} ${actionText} - Notification ${appName}`,
         html,
       });
       results.push({ email, success: true, messageId: info.messageId });
@@ -823,6 +837,7 @@ const sendSuperAdminUserNotification = async ({
   role,
   details,
 }) => {
+  const appName = await getAppName();
   const actionText = {
     created: "créé",
     updated: "modifié",
@@ -831,7 +846,7 @@ const sendSuperAdminUserNotification = async ({
 
   const html = `
     <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
-      <h2 style="color:#2c7be5;">Notification Imunia</h2>
+      <h2 style="color:#2c7be5;">Notification ${appName}</h2>
       <p>Bonjour,</p>
       <p>Un utilisateur a été ${actionText} par un administrateur système :</p>
       <div style="background:#f5f5f5; padding:15px; border-radius:5px; margin:20px 0;">
@@ -856,9 +871,9 @@ const sendSuperAdminUserNotification = async ({
   for (const email of emails) {
     try {
       const info = await transporter.sendMail({
-        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        from: `"${await getAppName()}" <${process.env.SMTP_USER}>`,
         to: email,
-        subject: `Utilisateur ${actionText} - Notification Imunia`,
+        subject: `Utilisateur ${actionText} - Notification ${appName}`,
         html,
       });
       results.push({ email, success: true, messageId: info.messageId });
@@ -924,9 +939,9 @@ const sendSuperAdminStockAdjustmentNotification = async ({
   for (const email of emails) {
     try {
       const info = await transporter.sendMail({
-        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        from: `"${await getAppName()}" <${process.env.SMTP_USER}>`,
         to: email,
-        subject: "Ajustement de stock - Notification Imunia",
+        subject: `Ajustement de stock - Notification ${appName}`,
         html,
       });
       results.push({ email, success: true, messageId: info.messageId });
@@ -988,9 +1003,9 @@ const sendSuperAdminSettingsNotification = async ({
   for (const email of emails) {
     try {
       const info = await transporter.sendMail({
-        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        from: `"${await getAppName()}" <${process.env.SMTP_USER}>`,
         to: email,
-        subject: "Modification des paramètres système - Notification Imunia",
+        subject: `Modification des paramètres système - Notification ${appName}`,
         html,
       });
       results.push({ email, success: true, messageId: info.messageId });

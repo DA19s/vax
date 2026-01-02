@@ -1,4 +1,5 @@
 const twilio = require("twilio");
+const { getAppName } = require("../utils/appName");
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -104,21 +105,23 @@ const sendAccessCodeWhatsApp = async (
   childName,
   accessCode
 ) => {
-  const message = `👶 *Bienvenue sur Imunia !*
+  const appName = await getAppName();
+  const message = `👶 *Bienvenue sur ${appName} !*
 Bonjour ${parentName}, votre enfant *${childName}* a été enregistré.
 
 🔐 *Code d'accès :* ${accessCode}
 
-Utilisez ce code avec votre numéro de téléphone pour activer votre espace parent dans l'application Imunia.
+Utilisez ce code avec votre numéro de téléphone pour activer votre espace parent dans l'application ${appName}.
 
 💬 Besoin d'aide ? Répondez à ce message.
-_Imunia - Protéger la santé de nos enfants_`;
+_${appName} - Protéger la santé de nos enfants_`;
 
   return sendWhatsApp(to, message);
 };
 
 const sendVerificationCodeWhatsApp = async (to, parentName, verificationCode) => {
-  const message = `🔐 *Code de vérification Imunia*
+  const appName = await getAppName();
+  const message = `🔐 *Code de vérification ${appName}*
 
 Bonjour ${parentName},
 
@@ -126,10 +129,10 @@ Votre code de vérification est : *${verificationCode}*
 
 Ce code expire dans 10 minutes.
 
-Utilisez ce code pour finaliser votre inscription dans l'application Imunia.
+Utilisez ce code pour finaliser votre inscription dans l'application ${appName}.
 
 💬 Besoin d'aide ? Répondez à ce message.
-_Imunia - Protéger la santé de nos enfants_`;
+_${appName} - Protéger la santé de nos enfants_`;
 
   return sendWhatsApp(to, message);
 };
@@ -141,6 +144,7 @@ const sendVaccinationReminder = async (
   vaccineName,
   appointmentDate
 ) => {
+  const appName = await getAppName();
   const message = `👋 Bonjour ${parentName},
 
 📅 Rappel : vaccination de ${childName}
@@ -149,35 +153,37 @@ const sendVaccinationReminder = async (
 
 N'oubliez pas d'apporter le carnet !
 
-Imunia`;
+${appName}`;
 
   return sendWhatsApp(to, message);
 };
 
 const sendPhotoRequestWhatsApp = async (to, parentName, childName) => {
-  const message = `📸 *Demande de nouvelles photos - Imunia*
+  const appName = await getAppName();
+  const message = `📸 *Demande de nouvelles photos - ${appName}*
 
 Bonjour ${parentName},
 
 Nous avons besoin de photos plus claires du carnet de vaccination de *${childName}*.
 
-Veuillez vous connecter à l'application Imunia et télécharger de nouvelles photos pour continuer à utiliser l'application.
+Veuillez vous connecter à l'application ${appName} et télécharger de nouvelles photos pour continuer à utiliser l'application.
 
 💬 Besoin d'aide ? Répondez à ce message.
-_Imunia - Protéger la santé de nos enfants_`;
+_${appName} - Protéger la santé de nos enfants_`;
 
   return sendWhatsApp(to, message);
 };
 
 const sendAccountActivationWhatsApp = async (to, parentName, childName) => {
-  const message = `✅ *Compte activé - Imunia*
+  const appName = await getAppName();
+  const message = `✅ *Compte activé - ${appName}*
 
 Bonjour ${parentName},
 
-Le compte de *${childName}* a été activé avec succès. Vous pouvez maintenant utiliser toutes les fonctionnalités de l'application Imunia.
+Le compte de *${childName}* a été activé avec succès. Vous pouvez maintenant utiliser toutes les fonctionnalités de l'application ${appName}.
 
 💬 Besoin d'aide ? Répondez à ce message.
-_Imunia - Protéger la santé de nos enfants_`;
+_${appName} - Protéger la santé de nos enfants_`;
 
   return sendWhatsApp(to, message);
 };

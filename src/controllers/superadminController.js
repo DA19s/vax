@@ -1636,9 +1636,9 @@ const getAppSettings = async (req, res, next) => {
     }
 
     res.json({
-      appName: settings.appName || "Imunia",
+      appName: (settings.appName && settings.appName.trim()) || "Imunia",
       logoPath: settings.logoPath || "/logo.png",
-      hasCustomName: settings.appName !== null,
+      hasCustomName: settings.appName !== null && settings.appName.trim() !== "",
       hasCustomLogo: settings.logoPath !== null,
     });
   } catch (error) {
@@ -1723,7 +1723,7 @@ const updateAppSettings = async (req, res, next) => {
       if (emails.length > 0) {
         const details = [];
         if (appName !== undefined) {
-          details.push(`Nom de l'application: ${settings.appName || "Imunia"}`);
+          details.push(`Nom de l'application: ${(settings.appName && settings.appName.trim()) || "Imunia"}`);
         }
         if (req.file || logoPath === "") {
           details.push(`Logo: ${settings.logoPath ? "modifié" : "supprimé"}`);
@@ -1742,9 +1742,9 @@ const updateAppSettings = async (req, res, next) => {
     }
 
     res.json({
-      appName: settings.appName || "Imunia",
+      appName: (settings.appName && settings.appName.trim()) || "Imunia",
       logoPath: settings.logoPath || "/logo.png",
-      hasCustomName: settings.appName !== null,
+      hasCustomName: settings.appName !== null && settings.appName.trim() !== "",
       hasCustomLogo: settings.logoPath !== null,
     });
   } catch (error) {

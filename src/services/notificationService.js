@@ -1,4 +1,68 @@
 const prisma = require("../config/prismaClient");
+const { sendNotificationToChild, sendNotificationToParent } = require("../socket");
+
+/**
+ * Récupère les IDs des agents actifs d'un centre de santé
+ * @param {string} healthCenterId - ID du centre de santé
+ * @returns {Promise<string[]>} - Liste des IDs des agents
+ */
+const getHealthCenterAgentIds = async (healthCenterId) => {
+  if (!healthCenterId) {
+    return [];
+  }
+
+  try {
+    const agents = await prisma.user.findMany({
+      where: {
+        role: "AGENT",
+        healthCenterId,
+        isActive: true,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    return agents.map((agent) => agent.id);
+  } catch (error) {
+    console.error("Erreur récupération agents du centre:", error);
+    return [];
+  }
+};
+
+/**
+ * Notifie tous les agents actifs d'un centre de santé
+ * @param {Object} params
+ * @param {string} params.healthCenterId - ID du centre de santé
+ * @param {string} params.title - Titre de la notification
+ * @param {string} params.message - Message de la notification
+ * @param {string} params.type - Type de notification
+ * @param {string} params.excludeUserId - ID de l'utilisateur à exclure (celui qui a fait l'action)
+ */
+const notifyHealthCenterAgents = async ({ healthCenterId, title, message, type, excludeUserId = null }) => {
+  try {
+    const agentIds = await getHealthCenterAgentIds(healthCenterId);
+    
+    // Exclure l'utilisateur qui a fait l'action
+    const filteredAgentIds = excludeUserId 
+      ? agentIds.filter((id) => id !== excludeUserId)
+      : agentIds;
+
+    if (filteredAgentIds.length === 0) {
+      return [];
+    }
+
+    return await createNotificationsForUsers({
+      userIds: filteredAgentIds,
+      title,
+      message,
+      type,
+    });
+  } catch (error) {
+    console.error("Erreur notification agents du centre:", error);
+    return [];
+  }
+};
 
 /**
  * Crée une notification pour un utilisateur
@@ -207,6 +271,255 @@ const deleteAllReadNotifications = async (userId) => {
   }
 };
 
+/**
+ * Crée et envoie une notification pour un enfant (mobile)
+ * @param {Object} params
+ * @param {string} params.childId - ID de l'enfant
+ * @param {string} params.title - Titre de la notification
+ * @param {string} params.message - Message de la notification
+ * @param {string} params.type - Type de notification
+ * @param {boolean} params.sendSocket - Envoyer via Socket.io (défaut: true)
+ */
+const createAndSendNotification = async ({ childId, title, message, type, sendSocket = true }) => {
+  try {
+    // Récupérer les informations de l'enfant pour obtenir le numéro du parent
+    const child = await prisma.children.findUnique({
+      where: { id: childId },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        phoneParent: true,
+      },
+    });
+
+    if (!child) {
+      console.error(`Enfant ${childId} non trouvé`);
+      return null;
+    }
+
+    // Créer la notification dans la base de données
+    const notification = await prisma.notification.create({
+      data: {
+        childId,
+        title,
+        message,
+        type,
+        isRead: false,
+      },
+    });
+
+    // Envoyer via Socket.io si demandé
+    if (sendSocket) {
+      const notificationData = {
+        id: notification.id,
+        childId: notification.childId,
+        title: notification.title,
+        message: notification.message,
+        type: notification.type,
+        read: notification.isRead,
+        createdAt: notification.createdAt.toISOString(),
+        updatedAt: notification.updatedAt.toISOString(),
+      };
+
+      // Envoyer à la room de l'enfant
+      sendNotificationToChild(childId, notificationData);
+
+      // Envoyer aussi à la room "parent" si le parent a un numéro de téléphone
+      if (child.phoneParent) {
+        sendNotificationToParent(child.phoneParent, notificationData);
+      }
+    }
+
+    return notification;
+  } catch (error) {
+    console.error("Erreur création/envoi notification enfant:", error);
+    return null;
+  }
+};
+
+/**
+ * Notifie le parent qu'un rendez-vous de vaccination a été programmé
+ * @param {Object} params
+ * @param {string} params.childId - ID de l'enfant
+ * @param {string} params.vaccineName - Nom du vaccin
+ * @param {Date|string} params.scheduledDate - Date du rendez-vous
+ */
+const notifyVaccineScheduled = async ({ childId, vaccineName, scheduledDate }) => {
+  try {
+    const formattedDate = new Date(scheduledDate).toLocaleDateString("fr-FR", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    return await createAndSendNotification({
+      childId,
+      title: "Nouveau rendez-vous de vaccination",
+      message: `Un rendez-vous de vaccination a été programmé pour le vaccin ${vaccineName} le ${formattedDate}.`,
+      type: "appointment",
+      sendSocket: true,
+    });
+  } catch (error) {
+    console.error("Erreur notification rendez-vous programmé:", error);
+    return null;
+  }
+};
+
+/**
+ * Notifie le parent qu'un rendez-vous de vaccination a été manqué
+ */
+const notifyVaccineMissed = async ({ childId, vaccineName, dueDate }) => {
+  try {
+    return await createAndSendNotification({
+      childId,
+      title: "Vaccin raté",
+      message: `Le vaccin ${vaccineName} était prévu pour le ${new Date(dueDate).toLocaleDateString("fr-FR")} et n'a pas été effectué`,
+      type: "vaccination",
+      sendSocket: true,
+    });
+  } catch (error) {
+    console.error("Erreur notification rendez-vous manqué:", error);
+    return null;
+  }
+};
+
+/**
+ * Notifie le parent qu'un vaccin est en retard
+ */
+const notifyVaccineLate = async ({ childId, vaccineName, dueDate }) => {
+  try {
+    return await createAndSendNotification({
+      childId,
+      title: "Vaccin en retard",
+      message: `Le vaccin ${vaccineName} était prévu pour le ${new Date(dueDate).toLocaleDateString("fr-FR")} et est maintenant en retard`,
+      type: "vaccination",
+      sendSocket: true,
+    });
+  } catch (error) {
+    console.error("Erreur notification vaccin en retard:", error);
+    return null;
+  }
+};
+
+/**
+ * Notifie le parent qu'un rendez-vous a été modifié
+ */
+const notifyAppointmentUpdated = async ({ childId, updates }) => {
+  if (!childId || !Array.isArray(updates) || updates.length === 0) {
+    return null;
+  }
+
+  try {
+    return await Promise.all(
+      updates.map((update) =>
+        createAndSendNotification({
+          childId,
+          title: update.title ?? "Rendez-vous modifié",
+          message: update.message ?? "Un rendez-vous a été modifié.",
+          type: "appointment",
+          sendSocket: true,
+        }),
+      ),
+    );
+  } catch (error) {
+    console.error("Erreur notification rendez-vous modifié:", error);
+    return null;
+  }
+};
+
+/**
+ * Notifie le parent qu'un rendez-vous a été annulé
+ */
+const notifyAppointmentCancelled = async ({ childId, vaccineName, scheduledDate }) => {
+  try {
+    return await createAndSendNotification({
+      childId,
+      title: "Rendez-vous annulé",
+      message: `Le rendez-vous pour le vaccin ${vaccineName} prévu le ${new Date(scheduledDate).toLocaleDateString("fr-FR")} a été annulé.`,
+      type: "appointment",
+      sendSocket: true,
+    });
+  } catch (error) {
+    console.error("Erreur notification rendez-vous annulé:", error);
+    return null;
+  }
+};
+
+/**
+ * Créer une notification pour un nouveau conseil
+ */
+const notifyNewAdvice = async ({ childId, adviceTitle }) => {
+  try {
+    return await createAndSendNotification({
+      childId,
+      title: "Nouveau conseil disponible",
+      message: `Un nouveau conseil est disponible : ${adviceTitle}`,
+      type: "advice",
+      sendSocket: true,
+    });
+  } catch (error) {
+    console.error("Erreur notification nouveau conseil:", error);
+    return null;
+  }
+};
+
+/**
+ * Créer une notification pour une nouvelle campagne
+ */
+const notifyNewCampaign = async ({ childId, campaignTitle }) => {
+  try {
+    return await createAndSendNotification({
+      childId,
+      title: "Nouvelle campagne de vaccination",
+      message: `Une nouvelle campagne est disponible : ${campaignTitle}`,
+      type: "campaign",
+      sendSocket: true,
+    });
+  } catch (error) {
+    console.error("Erreur notification nouvelle campagne:", error);
+    return null;
+  }
+};
+
+/**
+ * Créer une notification pour un rendez-vous
+ */
+const notifyAppointment = async ({ childId, vaccineName, appointmentDate }) => {
+  try {
+    return await createAndSendNotification({
+      childId,
+      title: "Rendez-vous de vaccination",
+      message: `Rendez-vous pour le vaccin ${vaccineName} le ${new Date(appointmentDate).toLocaleDateString("fr-FR")}`,
+      type: "appointment",
+      sendSocket: true,
+    });
+  } catch (error) {
+    console.error("Erreur notification rendez-vous:", error);
+    return null;
+  }
+};
+
+/**
+ * Créer une notification pour l'activation du compte enfant
+ */
+const notifyAccountActivated = async ({ childId, childName }) => {
+  try {
+    return await createAndSendNotification({
+      childId,
+      title: "Compte activé",
+      message: `Le compte de ${childName} a été activé avec succès. Vous pouvez maintenant accéder à toutes les fonctionnalités de l'application.`,
+      type: "account",
+      sendSocket: true,
+    });
+  } catch (error) {
+    console.error("Erreur notification activation compte:", error);
+    return null;
+  }
+};
+
 module.exports = {
   createNotification,
   createNotificationsForUsers,
@@ -217,4 +530,16 @@ module.exports = {
   deleteNotification,
   deleteAllNotifications,
   deleteAllReadNotifications,
+  createAndSendNotification,
+  notifyVaccineScheduled,
+  notifyVaccineMissed,
+  notifyVaccineLate,
+  notifyNewAdvice,
+  notifyNewCampaign,
+  notifyAppointment,
+  notifyAppointmentUpdated,
+  notifyAppointmentCancelled,
+  notifyAccountActivated,
+  getHealthCenterAgentIds,
+  notifyHealthCenterAgents,
 };

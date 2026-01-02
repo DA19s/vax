@@ -6,6 +6,7 @@ const {
 } = require("../services/vaccineBucketService");
 const { buildVaccineDoseMap } = require("../utils/vaccineDose");
 const { logEventAsync } = require("../services/eventLogService");
+const { notifyHealthCenterAgents } = require("../services/notificationService");
 
 const makeHttpError = (message, status = 400) => {
   const err = new Error(message);
@@ -487,7 +488,6 @@ const createChildren = async (req, res, next) => {
     address,
     gender,
     healthCenterId,
-    emailParent,
     phoneParent,
     fatherName,
     motherName,
@@ -564,7 +564,6 @@ const createChildren = async (req, res, next) => {
           gender,
           healthCenterId: finalHealthCenterId,
           status: "A_JOUR",
-          emailParent,
           phoneParent,
           fatherName,
           motherName,
@@ -747,6 +746,21 @@ const createChildren = async (req, res, next) => {
       },
     });
 
+    // Notifier les agents du centre (après la réponse pour ne pas bloquer)
+    setImmediate(async () => {
+      try {
+        await notifyHealthCenterAgents({
+          healthCenterId: fullChild.healthCenterId,
+          title: "Nouvel enfant enregistré",
+          message: `${req.user.firstName} ${req.user.lastName} a enregistré un nouvel enfant : ${fullChild.firstName} ${fullChild.lastName}`,
+          type: "CHILD_CREATED",
+          excludeUserId: req.user.id,
+        });
+      } catch (notifError) {
+        console.error("Erreur notification agents:", notifError);
+      }
+    });
+
     try {
       await sendParentAccessCode({
         to: fullChild.phoneParent,
@@ -815,6 +829,21 @@ const updateChildren = async (req, res, next) => {
           nextAppointment: updatedChild.nextAppointment,
         },
       },
+    });
+
+    // Notifier les agents du centre (après la réponse pour ne pas bloquer)
+    setImmediate(async () => {
+      try {
+        await notifyHealthCenterAgents({
+          healthCenterId: existingChild.healthCenterId,
+          title: "Enfant modifié",
+          message: `${req.user.firstName} ${req.user.lastName} a modifié les informations de ${existingChild.firstName} ${existingChild.lastName}`,
+          type: "CHILD_UPDATED",
+          excludeUserId: req.user.id,
+        });
+      } catch (notifError) {
+        console.error("Erreur notification agents:", notifError);
+      }
     });
 
     res.json(updatedChild);
@@ -1343,7 +1372,6 @@ const getParentsOverview = async (req, res, next) => {
         parentsMap.set(key, {
           parentPhone: child.phoneParent ?? "",
           parentName: child.fatherName || child.motherName || "Parent",
-          parentEmail: child.emailParent ?? null,
           children: [],
           regions: new Set(),
           healthCenters: new Set(),
@@ -1374,7 +1402,6 @@ const getParentsOverview = async (req, res, next) => {
     const data = Array.from(parentsMap.values()).map((entry) => ({
       parentPhone: entry.parentPhone,
       parentName: entry.parentName,
-      parentEmail: entry.parentEmail,
       childrenCount: entry.children.length,
       children: entry.children,
       regions: Array.from(entry.regions),
@@ -1465,6 +1492,21 @@ const deleteChild = async (req, res, next) => {
         lastName: child.lastName,
         healthCenterId: child.healthCenterId,
       },
+    });
+
+    // Notifier les agents du centre (après la réponse pour ne pas bloquer)
+    setImmediate(async () => {
+      try {
+        await notifyHealthCenterAgents({
+          healthCenterId: child.healthCenterId,
+          title: "Enfant supprimé",
+          message: `${req.user.firstName} ${req.user.lastName} a supprimé l'enfant ${child.firstName} ${child.lastName}`,
+          type: "CHILD_DELETED",
+          excludeUserId: req.user.id,
+        });
+      } catch (notifError) {
+        console.error("Erreur notification agents:", notifError);
+      }
     });
 
     res.json({ message: "Enfant supprimé avec succès" });
@@ -1640,22 +1682,10 @@ const requestPhotos = async (req, res, next) => {
 
     // Envoyer un message WhatsApp au parent
     const { sendPhotoRequestWhatsApp } = require("../services/whatsapp");
-    const { notifyPhotoRequest } = require("../services/notificationService");
     try {
       const parentName = child.fatherName || child.motherName || "Parent";
       const childName = `${child.firstName} ${child.lastName}`;
       await sendPhotoRequestWhatsApp(child.phoneParent, parentName, childName);
-      
-      // Créer une notification dans l'application mobile
-      try {
-        await notifyPhotoRequest({
-          childId: child.id,
-          childName,
-        });
-      } catch (notificationError) {
-        console.error("Erreur création notification demande photos:", notificationError);
-        // Ne pas bloquer la demande si la notification échoue
-      }
     } catch (whatsappError) {
       console.error("Erreur envoi WhatsApp:", whatsappError);
       // Ne pas bloquer la demande si WhatsApp échoue

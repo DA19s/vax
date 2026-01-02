@@ -187,6 +187,56 @@ const login = async (req, res, next) => {
   }
 };
 
+const refreshToken = async (req, res, next) => {
+  try {
+    const { refreshToken: token } = req.body;
+
+    if (!token) {
+      return res.status(400).json({ message: "Refresh token requis" });
+    }
+
+    // Vérifier le refresh token
+    let payload;
+    try {
+      payload = tokenService.verifyRefreshToken(token);
+    } catch (error) {
+      return res.status(401).json({ message: "Refresh token invalide ou expiré" });
+    }
+
+    // Vérifier que l'utilisateur existe toujours
+    const user = await prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: {
+        id: true,
+        role: true,
+        agentLevel: true,
+        isActive: true,
+      },
+    });
+
+    if (!user || !user.isActive) {
+      return res.status(401).json({ message: "Utilisateur non trouvé ou inactif" });
+    }
+
+    // Générer de nouveaux tokens
+    const newPayload = {
+      sub: user.id,
+      role: user.role,
+      agentLevel: user.agentLevel,
+    };
+
+    const newAccessToken = tokenService.signAccessToken(newPayload);
+    const newRefreshToken = tokenService.signRefreshToken(newPayload);
+
+    res.json({
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const logout = async (req, res, next) => {
   try {
     res.status(204).send();
@@ -447,6 +497,7 @@ const updatePasswordAfterReset = async (req, res, next) => {
 module.exports = {
   login,
   logout,
+  refreshToken,
   requestPasswordReset,
   verifyPasswordResetCode,
   resendPasswordResetCode,

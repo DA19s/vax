@@ -790,8 +790,15 @@ export function NationalStocksPage() {
       return;
     }
 
-    // Si la quantité à diminuer est supérieure à celle du lot, on diminue le lot au maximum
-    const actualQuantityToReduce = Math.min(quantityValue, selectedLot.remainingQuantity);
+    // Vérifier que la quantité à réduire ne dépasse pas le stock disponible
+    if (quantityValue > selectedLot.remainingQuantity) {
+      setReduceError(
+        `La quantité à réduire (${quantityValue.toLocaleString("fr-FR")}) dépasse le stock disponible (${selectedLot.remainingQuantity.toLocaleString("fr-FR")} doses).`
+      );
+      return;
+    }
+
+    const actualQuantityToReduce = quantityValue;
 
     try {
       setReduceError(null);
@@ -819,17 +826,9 @@ export function NationalStocksPage() {
       // Recharger les lots
       await loadLotsForReduce();
       
-      // Si on a encore de la quantité à diminuer, réinitialiser la sélection
-      const remainingToReduce = parsedReduceQuantity - actualQuantityToReduce;
-      if (remainingToReduce > 0) {
-        // Il reste de la quantité à diminuer, on continue
-        setReduceQuantity(String(remainingToReduce));
-        setSelectedLotId(null);
-      } else {
-        // On a terminé la diminution
-        resetUpdateModal();
-        await Promise.all([fetchNationalStocks(), fetchNationalStats()]);
-      }
+      // La diminution est terminée
+      resetUpdateModal();
+      await Promise.all([fetchNationalStocks(), fetchNationalStats()]);
     } catch (err) {
       console.error("Erreur diminution lot:", err);
       setReduceError(
@@ -2690,6 +2689,9 @@ type HealthCenterStock = {
   } | null;
   hasExpiredLot?: boolean;
   nearestExpiration?: string | null;
+  lotCount?: number;
+  expiredLotCount?: number;
+  expiredQuantity?: number;
 };
 
 export function RegionalStocksPage() {
@@ -3673,8 +3675,15 @@ export function RegionalStocksPage() {
       return;
     }
 
-    const actualQuantityToReduce = Math.min(quantityValue, selectedLot.remainingQuantity);
-    const parsedReduceQuantity = quantityValue;
+    // Vérifier que la quantité à réduire ne dépasse pas le stock disponible
+    if (quantityValue > selectedLot.remainingQuantity) {
+      setReduceError(
+        `La quantité à réduire (${quantityValue.toLocaleString("fr-FR")}) dépasse le stock disponible (${selectedLot.remainingQuantity.toLocaleString("fr-FR")} doses).`
+      );
+      return;
+    }
+
+    const actualQuantityToReduce = quantityValue;
 
     try {
       setReduceError(null);
@@ -3701,17 +3710,9 @@ export function RegionalStocksPage() {
 
       await loadLotsForReduce();
       
-      const remainingToReduce = parsedReduceQuantity - actualQuantityToReduce;
-      if (remainingToReduce > 0) {
-        setReduceQuantity(String(remainingToReduce));
-        setSelectedLotId(null);
-        alert(
-          `Diminution partielle effectuée. Il reste ${remainingToReduce} doses à diminuer. Veuillez sélectionner un autre lot.`
-        );
-      } else {
-        resetUpdateModal();
-        await Promise.all([fetchRegionalStocks(), fetchRegionalStats()]);
-      }
+      // La diminution est terminée
+      resetUpdateModal();
+      await Promise.all([fetchRegionalStocks(), fetchRegionalStats()]);
     } catch (err) {
       console.error("Erreur diminution stock régional:", err);
       setReduceError(
@@ -6046,8 +6047,15 @@ export function DistrictStocksPage() {
       return;
     }
 
-    const actualQuantityToReduce = Math.min(quantityValue, selectedLot.remainingQuantity);
-    const parsedReduceQuantity = quantityValue;
+    // Vérifier que la quantité à réduire ne dépasse pas le stock disponible
+    if (quantityValue > selectedLot.remainingQuantity) {
+      setReduceError(
+        `La quantité à réduire (${quantityValue.toLocaleString("fr-FR")}) dépasse le stock disponible (${selectedLot.remainingQuantity.toLocaleString("fr-FR")} doses).`
+      );
+      return;
+    }
+
+    const actualQuantityToReduce = quantityValue;
 
     try {
       setReduceError(null);
@@ -6074,17 +6082,9 @@ export function DistrictStocksPage() {
 
       await loadLotsForReduce();
       
-      const remainingToReduce = parsedReduceQuantity - actualQuantityToReduce;
-      if (remainingToReduce > 0) {
-        setReduceQuantity(String(remainingToReduce));
-        setSelectedLotId(null);
-        alert(
-          `Diminution partielle effectuée. Il reste ${remainingToReduce} doses à diminuer. Veuillez sélectionner un autre lot.`
-        );
-      } else {
-        resetUpdateModal();
-        await Promise.all([fetchDistrictStocks(), fetchDistrictStats()]);
-      }
+      // La diminution est terminée
+      resetUpdateModal();
+      await Promise.all([fetchDistrictStocks(), fetchDistrictStats()]);
     } catch (err) {
       console.error("Erreur diminution stock district:", err);
       setReduceError(
@@ -7424,6 +7424,7 @@ export function AgentAdminStocksPage() {
   const [vaccines, setVaccines] = useState<VaccineInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [healthCenterId, setHealthCenterId] = useState<string | null>(null);
 
   const [stats, setStats] = useState<StockStats>(emptyStats);
   const [statsLoading, setStatsLoading] = useState(true);
@@ -7444,7 +7445,7 @@ export function AgentAdminStocksPage() {
   // États pour l'ajustement
   const canAdjust = user?.role === "SUPERADMIN";
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
-  const [updateContext, setUpdateContext] = useState<{ vaccineId: string; vaccineName: string; currentQuantity: number } | null>(null);
+  const [updateContext, setUpdateContext] = useState<{ vaccineId: string; vaccineName: string; currentQuantity: number; healthCenterId?: string } | null>(null);
   const [updateQuantity, setUpdateQuantity] = useState<string>("");
   const [updateMode, setUpdateMode] = useState<"reduce" | "add">("add");
   const [reduceQuantity, setReduceQuantity] = useState<string>("");
@@ -7610,6 +7611,13 @@ export function AgentAdminStocksPage() {
       );
       
       setStocks(stocksWithLots);
+      
+      // Stocker le healthCenterId depuis les stocks chargés
+      if (stocksWithLots.length > 0 && stocksWithLots[0].healthCenterId) {
+        setHealthCenterId(stocksWithLots[0].healthCenterId);
+      } else if (stockItems.length > 0 && stockItems[0].healthCenterId) {
+        setHealthCenterId(stockItems[0].healthCenterId);
+      }
 
       const vaccinePayload: VaccineResponse = await vaccineRes.json();
       setVaccines(
@@ -7915,6 +7923,19 @@ export function AgentAdminStocksPage() {
     event.preventDefault();
     if (!createVaccineId || !accessToken) return;
 
+    // Récupérer le healthCenterId depuis l'état ou depuis les stocks existants
+    let currentHealthCenterId = healthCenterId;
+    
+    if (!currentHealthCenterId && stocks.length > 0 && stocks[0].healthCenterId) {
+      currentHealthCenterId = stocks[0].healthCenterId;
+      setHealthCenterId(currentHealthCenterId);
+    }
+
+    if (!currentHealthCenterId) {
+      setError("Impossible de déterminer le centre de santé. Veuillez rafraîchir la page.");
+      return;
+    }
+
     try {
       setCreating(true);
       const response = await fetch(`${API_URL}/api/stock/health-center`, {
@@ -7923,7 +7944,10 @@ export function AgentAdminStocksPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${accessToken}`,
         },
-        body: JSON.stringify({ vaccineId: createVaccineId }),
+        body: JSON.stringify({ 
+          vaccineId: createVaccineId,
+          healthCenterId: currentHealthCenterId,
+        }),
       });
 
       if (!response.ok) {
@@ -7979,6 +8003,54 @@ export function AgentAdminStocksPage() {
     setLotError(null);
   }, []);
 
+  const handleDeleteHealthCenterStock = useCallback(
+    async (stock: HealthCenterStock) => {
+      if (!accessToken) return;
+
+      const confirmed = window.confirm(
+        `Supprimer le stock pour le vaccin ${stock.vaccine.name} ?`,
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      try {
+        setHealthDeletingId(stock.id);
+        setError(null);
+
+        const payload: Record<string, string> = { vaccineId: stock.vaccineId };
+        if (stock.healthCenterId) {
+          payload.healthCenterId = stock.healthCenterId;
+        }
+
+        const response = await fetch(`${API_URL}/api/stock/health-center`, {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => null);
+          throw new Error(data?.message ?? `status ${response.status}`);
+        }
+
+        await Promise.all([fetchHealthCenterStocks(), fetchHealthCenterStats()]);
+      } catch (err) {
+        console.error("Erreur suppression stock centre:", err);
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Impossible de supprimer ce stock de centre.",
+        );
+      } finally {
+        setHealthDeletingId(null);
+      }
+    },
+    [accessToken, fetchHealthCenterStocks, fetchHealthCenterStats],
+  );
 
   const handleDeleteHealthCenterLot = useCallback(
     async (lotId: string) => {
@@ -8049,6 +8121,7 @@ export function AgentAdminStocksPage() {
       vaccineId: stock.vaccineId,
       vaccineName: stock.vaccine.name,
       currentQuantity: stock.quantity ?? 0,
+      healthCenterId: stock.healthCenterId,
     });
     setUpdateQuantity(String(stock.quantity ?? 0));
     setUpdateMode("add");
@@ -8135,6 +8208,25 @@ export function AgentAdminStocksPage() {
       return;
     }
 
+    // Récupérer le healthCenterId depuis le contexte ou depuis les stocks existants
+    let currentHealthCenterId: string | undefined = updateContext.healthCenterId;
+    
+    if (!currentHealthCenterId && stocks.length > 0) {
+      const stock = stocks.find((s) => s.vaccineId === updateContext.vaccineId);
+      if (stock?.healthCenterId) {
+        currentHealthCenterId = stock.healthCenterId;
+      }
+    }
+
+    if (!currentHealthCenterId && healthCenterId) {
+      currentHealthCenterId = healthCenterId;
+    }
+
+    if (!currentHealthCenterId) {
+      setAddQuantityError("Impossible de déterminer le centre de santé. Veuillez rafraîchir la page.");
+      return;
+    }
+
     try {
       setAddQuantityError(null);
       setUpdating(true);
@@ -8146,6 +8238,7 @@ export function AgentAdminStocksPage() {
         },
         body: JSON.stringify({
           vaccineId: updateContext.vaccineId,
+          healthCenterId: currentHealthCenterId,
           quantity: quantityValue,
           expiration: `${addExpiration}T00:00:00.000Z`,
         }),
@@ -8186,8 +8279,15 @@ export function AgentAdminStocksPage() {
       return;
     }
 
-    const actualQuantityToReduce = Math.min(quantityValue, selectedLot.remainingQuantity);
-    const parsedReduceQuantity = quantityValue;
+    // Vérifier que la quantité à réduire ne dépasse pas le stock disponible
+    if (quantityValue > selectedLot.remainingQuantity) {
+      setReduceError(
+        `La quantité à réduire (${quantityValue.toLocaleString("fr-FR")}) dépasse le stock disponible (${selectedLot.remainingQuantity.toLocaleString("fr-FR")} doses).`
+      );
+      return;
+    }
+
+    const actualQuantityToReduce = quantityValue;
 
     try {
       setReduceError(null);
@@ -8214,17 +8314,9 @@ export function AgentAdminStocksPage() {
 
       await loadLotsForReduce();
       
-      const remainingToReduce = parsedReduceQuantity - actualQuantityToReduce;
-      if (remainingToReduce > 0) {
-        setReduceQuantity(String(remainingToReduce));
-        setSelectedLotId(null);
-        alert(
-          `Diminution partielle effectuée. Il reste ${remainingToReduce} doses à diminuer. Veuillez sélectionner un autre lot.`
-        );
-      } else {
-        resetUpdateModal();
-        await Promise.all([fetchHealthCenterStocks(), fetchHealthCenterStats()]);
-      }
+      // La diminution est terminée
+      resetUpdateModal();
+      await Promise.all([fetchHealthCenterStocks(), fetchHealthCenterStats()]);
     } catch (err) {
       console.error("Erreur diminution stock centre:", err);
       setReduceError(
@@ -8524,7 +8616,7 @@ export function AgentAdminStocksPage() {
                               Ajuster
                             </button>
                           )}
-                          {isAgentAdmin && (user?.role === "SUPERADMIN" || (stock.expiredLotCount ?? 0) > 0) && (
+                          {(isAgentAdmin || user?.role === "SUPERADMIN") && (user?.role === "SUPERADMIN" || (stock.expiredLotCount ?? 0) > 0) && (
                             <button
                               type="button"
                               onClick={() => handleDeleteHealthCenterStock(stock)}
@@ -8951,7 +9043,7 @@ export function AgentAdminStocksPage() {
         )}
       </div>
 
-      {isAgentAdmin && createModalOpen && (
+      {(isAgentAdmin || user?.role === "SUPERADMIN") && createModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
           <div className="w-full max-w-[95vw] md:max-w-lg rounded-3xl bg-white shadow-2xl">
             <form onSubmit={handleCreateStock} className="space-y-4 p-6">
@@ -9104,7 +9196,7 @@ export function AgentAdminStocksPage() {
                               )}
                             </div>
                           </td>
-                          {isAgentAdmin && (user?.role === "SUPERADMIN" || expired) && (
+                          {(isAgentAdmin || user?.role === "SUPERADMIN") && (user?.role === "SUPERADMIN" || expired) && (
                             <td className="px-4 py-3 text-right">
                               <div className="flex justify-end">
                                 <button

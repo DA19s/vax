@@ -22,7 +22,6 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
 
   // Contrôleurs parent
   final _parentPhoneController = TextEditingController();
-  final _parentEmailController = TextEditingController();
   final _fatherNameController = TextEditingController();
   final _motherNameController = TextEditingController();
 
@@ -56,7 +55,6 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
   @override
   void dispose() {
     _parentPhoneController.dispose();
-    _parentEmailController.dispose();
     _fatherNameController.dispose();
     _motherNameController.dispose();
     _childFirstNameController.dispose();
@@ -172,9 +170,6 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
         body: jsonEncode({
           // Informations parent
           "parentPhone": _parentPhoneController.text.trim(),
-          "parentEmail": _parentEmailController.text.trim().isEmpty
-              ? null
-              : _parentEmailController.text.trim(),
           
           // Informations enfant
           "childFirstName": _childFirstNameController.text.trim(),
@@ -462,14 +457,6 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
               }
               return null;
             },
-          ),
-          const SizedBox(height: 20),
-          _buildTextField(
-            controller: _parentEmailController,
-            label: "Email (optionnel)",
-            hint: "exemple@email.com",
-            icon: Icons.email_outlined,
-            keyboardType: TextInputType.emailAddress,
           ),
         ],
       ),

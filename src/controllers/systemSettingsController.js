@@ -13,8 +13,13 @@ const getSystemSettings = async (_req, res) => {
       });
     }
 
+    // Si appName est null ou une chaîne vide, utiliser "Imunia"
+    const appName = settings.appName && settings.appName.trim() !== "" 
+      ? settings.appName.trim() 
+      : "Imunia";
+    
     res.json({
-      appName: settings.appName || "Imunia",
+      appName: appName,
       appSubtitle: "Plateforme de gestion de vaccination",
       logoUrl: settings.logoPath || "/logo.png",
     });

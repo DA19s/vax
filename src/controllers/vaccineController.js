@@ -6,6 +6,7 @@ const {
   notifyVaccineLate,
   notifyAppointmentUpdated,
   notifyAppointmentCancelled,
+  notifyHealthCenterAgents,
 } = require("../services/notificationService");
 const { get } = require("../routes");
 const {
@@ -1663,8 +1664,15 @@ const ScheduleVaccine = async (req, res, next) => {
       }
 
       // Vérifier si le vaccin correspond au genre de l'enfant
+      // Si le vaccin n'est pas dans le calendrier vaccinal (vaccineCalendarId est null),
+      // on ne bloque pas mais on retourne un warning
       const isSuitable = !vaccine.gender || vaccine.gender === child.gender;
-      if (!isSuitable) {
+      let genderWarning = null;
+      if (!isSuitable && !vaccineCalendarId) {
+        // Si c'est un vaccin "autre" (pas dans le calendrier), on ne bloque pas mais on avertit
+        genderWarning = "Ce vaccin n'est pas adapté au genre de l'enfant selon le calendrier vaccinal, mais vous pouvez continuer.";
+      } else if (!isSuitable) {
+        // Si c'est un vaccin du calendrier, on bloque
         throw Object.assign(
           new Error("Ce vaccin n'est pas adapté au genre de l'enfant"),
           { status: 400 }
@@ -1733,13 +1741,14 @@ const ScheduleVaccine = async (req, res, next) => {
 
       // Créer une notification pour le parent (après la transaction)
       // On le fait après la transaction pour éviter les problèmes de rollback
-      if (created.child) {
+      const finalSchedule = createdWithCorrectDose || created;
+      if (finalSchedule && finalSchedule.child) {
         setImmediate(async () => {
           try {
             await notifyVaccineScheduled({
-              childId: created.child.id,
-              vaccineName: created.vaccine.name,
-              scheduledDate: created.scheduledFor,
+              childId: finalSchedule.child.id,
+              vaccineName: finalSchedule.vaccine.name,
+              scheduledDate: finalSchedule.scheduledFor,
             });
           } catch (notifError) {
             console.error("Erreur création notification:", notifError);
@@ -1755,8 +1764,13 @@ const ScheduleVaccine = async (req, res, next) => {
       // Mettre à jour nextAppointment avec le prochain rendez-vous le plus proche
       await updateNextAppointment(tx, childId);
 
-      return createdWithCorrectDose || created;
+      return { 
+        appointment: createdWithCorrectDose || created,
+        genderWarning 
+      };
     });
+
+    const appointment = result.appointment || result;
 
     // Enregistrer l'événement
     logEventAsync({
@@ -1770,18 +1784,26 @@ const ScheduleVaccine = async (req, res, next) => {
         role: req.user.role,
       },
       entityType: "APPOINTMENT",
-      entityId: result.id,
-      entityName: result.vaccine?.name || "Vaccin",
+      entityId: appointment.id,
+      entityName: appointment.vaccine?.name || "Vaccin",
       details: {
-        childId: result.childId,
-        vaccineId: result.vaccineId,
-        scheduledFor: result.scheduledFor,
-        dose: result.dose,
-        vaccineCalendarId: result.vaccineCalendarId,
+        childId: appointment.childId,
+        vaccineId: appointment.vaccineId,
+        scheduledFor: appointment.scheduledFor,
+        dose: appointment.dose,
+        vaccineCalendarId: appointment.vaccineCalendarId,
       },
     });
 
-    res.status(201).json(result);
+    // Si on a un warning mais que le rendez-vous a été créé, retourner le résultat avec le warning
+    if (result.genderWarning) {
+      return res.status(201).json({
+        ...appointment,
+        warning: result.genderWarning,
+      });
+    }
+
+    res.status(201).json(appointment);
   } catch (error) {
     // Gérer les erreurs Prisma spécifiques
     if (error.code === "P2002") {
@@ -1904,6 +1926,13 @@ const listScheduledVaccines = async (req, res, next) => {
             lastName: true,
           },
         },
+        administeredBy: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
       },
       orderBy: [
         { scheduledFor: "asc" },
@@ -1961,11 +1990,11 @@ const listScheduledVaccines = async (req, res, next) => {
             }
           : null,
         dose: entry.dose ?? 1,
-        administeredBy: entry.planner
+        administeredBy: entry.administeredBy
           ? {
-              id: entry.planner.id,
-              firstName: entry.planner.firstName,
-              lastName: entry.planner.lastName,
+              id: entry.administeredBy.id,
+              firstName: entry.administeredBy.firstName,
+              lastName: entry.administeredBy.lastName,
             }
           : null,
       };
@@ -1996,6 +2025,7 @@ const completeVaccine = async (req, res, next) => {
           plannerId: true,
           administeredById: true,
           dose: true,
+          scheduledFor: true,
           child: { select: { healthCenterId: true } },
         },
       });
@@ -2008,6 +2038,16 @@ const completeVaccine = async (req, res, next) => {
 
       if (scheduled.child?.healthCenterId !== req.user.healthCenterId) {
         throw Object.assign(new Error("Accès refusé"), { status: 403 });
+      }
+
+      // Vérifier que la date et l'heure du rendez-vous sont passées
+      const now = new Date();
+      const appointmentDate = new Date(scheduled.scheduledFor);
+      if (appointmentDate > now) {
+        throw Object.assign(
+          new Error("Vous ne pouvez marquer ce rendez-vous comme effectué qu'à partir de la date et heure prévues"),
+          { status: 400 }
+        );
       }
 
       const dose = scheduled.dose ?? 1;
@@ -2132,6 +2172,34 @@ const completeVaccine = async (req, res, next) => {
       });
 
       return newVaccineCompleted;
+    });
+
+    // Notifier les agents du centre (après la réponse pour ne pas bloquer)
+    setImmediate(async () => {
+      try {
+        const completedWithDetails = await prisma.childVaccineCompleted.findUnique({
+          where: { id: completed.id },
+          include: {
+            child: {
+              select: { healthCenterId: true, firstName: true, lastName: true },
+            },
+            vaccine: {
+              select: { name: true },
+            },
+          },
+        });
+        if (completedWithDetails?.child?.healthCenterId) {
+          await notifyHealthCenterAgents({
+            healthCenterId: completedWithDetails.child.healthCenterId,
+            title: "Vaccin administré",
+            message: `${req.user.firstName} ${req.user.lastName} a administré le vaccin ${completedWithDetails.vaccine?.name || "Vaccin"} (Dose ${completed.dose}) à ${completedWithDetails.child.firstName} ${completedWithDetails.child.lastName}`,
+            type: "APPOINTMENT_COMPLETED",
+            excludeUserId: req.user.id,
+          });
+        }
+      } catch (notifError) {
+        console.error("Erreur notification agents:", notifError);
+      }
     });
 
     return res.status(201).json(completed);
@@ -2523,11 +2591,12 @@ const updateScheduledVaccine = async (req, res, next) => {
         new Date(originalSnapshot.scheduledFor).getTime() !==
           new Date(updated.scheduledFor).getTime()
       ) {
+        const vaccineName = updated.vaccine?.name || "vaccin";
         updates.push({
           title: "Date du rendez-vous modifiée",
           message: originalDateLabel
-            ? `Le rendez-vous est désormais prévu le ${newDateLabel ?? ""} (au lieu du ${originalDateLabel}).`
-            : `Le rendez-vous est désormais prévu le ${newDateLabel ?? ""}.`,
+            ? `Le rendez-vous pour le vaccin ${vaccineName} est désormais prévu le ${newDateLabel ?? ""} (au lieu du ${originalDateLabel}).`
+            : `Le rendez-vous pour le vaccin ${vaccineName} est désormais prévu le ${newDateLabel ?? ""}.`,
         });
       }
 
@@ -2540,21 +2609,11 @@ const updateScheduledVaccine = async (req, res, next) => {
         });
       }
 
-      if (
-        (originalSnapshot.vaccineCalendarId ?? null) !==
-        (updated.vaccineCalendarId ?? null)
-      ) {
-        updates.push({
-          title: "Tranche d'âge ajustée",
-          message:
-            "La tranche d'âge ou le calendrier associé à ce rendez-vous a été mis à jour.",
-        });
-      }
-
       if ((originalSnapshot.dose ?? 1) !== (updated.dose ?? 1)) {
+        const vaccineName = updated.vaccine?.name || "vaccin";
         updates.push({
           title: "Dose mise à jour",
-          message: `La dose prévue pour ce rendez-vous est désormais la dose ${updated.dose ?? 1}.`,
+          message: `La dose prévue pour le rendez-vous du vaccin ${vaccineName} est désormais la dose ${updated.dose ?? 1}.`,
         });
       }
 
@@ -2564,14 +2623,16 @@ const updateScheduledVaccine = async (req, res, next) => {
       if (originalAdministeredById !== newAdministeredById) {
         if (newAdministeredById && updated.administeredBy) {
           const agentName = `${updated.administeredBy.firstName} ${updated.administeredBy.lastName}`.trim();
+          const vaccineName = updated.vaccine?.name || "vaccin";
           updates.push({
             title: "Agent modifié",
-            message: `L'agent qui va administrer le vaccin est désormais ${agentName}.`,
+            message: `L'agent qui va administrer le vaccin ${vaccineName} est désormais ${agentName}.`,
           });
         } else if (originalAdministeredById && !newAdministeredById) {
+          const vaccineName = updated.vaccine?.name || "vaccin";
           updates.push({
             title: "Agent retiré",
-            message: "L'agent assigné à ce rendez-vous a été retiré.",
+            message: `L'agent assigné au rendez-vous du vaccin ${vaccineName} a été retiré.`,
           });
         }
       }
@@ -2587,6 +2648,35 @@ const updateScheduledVaccine = async (req, res, next) => {
         }
       }
     }
+
+    // Notifier les agents du centre (après la réponse pour ne pas bloquer)
+    setImmediate(async () => {
+      try {
+        const child = await prisma.children.findUnique({
+          where: { id: originalSnapshot?.childId || updated?.childId },
+          select: { healthCenterId: true, firstName: true, lastName: true },
+        });
+        if (child && child.healthCenterId) {
+          const formattedDate = new Date(updated.scheduledFor).toLocaleDateString("fr-FR", {
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+          await notifyHealthCenterAgents({
+            healthCenterId: child.healthCenterId,
+            title: "Rendez-vous modifié",
+            message: `${req.user.firstName} ${req.user.lastName} a modifié un rendez-vous pour ${child.firstName} ${child.lastName} - ${updated.vaccine?.name || "Vaccin"} (Dose ${updated.dose}) le ${formattedDate}`,
+            type: "APPOINTMENT_UPDATED",
+            excludeUserId: req.user.id,
+          });
+        }
+      } catch (notifError) {
+        console.error("Erreur notification agents:", notifError);
+      }
+    });
 
     res.json(updated);
   } catch (error) {
@@ -2686,6 +2776,35 @@ const cancelScheduledVaccine = async (req, res, next) => {
         }
       });
     }
+
+    // Notifier les agents du centre (après la réponse pour ne pas bloquer)
+    setImmediate(async () => {
+      try {
+        const child = await prisma.children.findUnique({
+          where: { id: appointmentInfo?.childId },
+          select: { healthCenterId: true, firstName: true, lastName: true },
+        });
+        if (child && child.healthCenterId && appointmentInfo) {
+          const formattedDate = new Date(appointmentInfo.scheduledDate).toLocaleDateString("fr-FR", {
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+          await notifyHealthCenterAgents({
+            healthCenterId: child.healthCenterId,
+            title: "Rendez-vous annulé",
+            message: `${req.user.firstName} ${req.user.lastName} a annulé un rendez-vous pour ${child.firstName} ${child.lastName} - ${appointmentInfo.vaccineName} prévu le ${formattedDate}`,
+            type: "APPOINTMENT_DELETED",
+            excludeUserId: req.user.id,
+          });
+        }
+      } catch (notifError) {
+        console.error("Erreur notification agents:", notifError);
+      }
+    });
 
     // Enregistrer l'événement
     if (appointmentInfo) {
