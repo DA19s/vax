@@ -265,6 +265,10 @@ const listDistricts = async (req, res, next) => {
   try {
     let whereClause = {};
 
+    // Pour SUPERADMIN, accepter regionId ou communeId depuis query params
+    const overrideRegionId = req.user.role === "SUPERADMIN" ? req.query.regionId : null;
+    const overrideCommuneId = req.user.role === "SUPERADMIN" ? req.query.communeId : null;
+
     if (req.user.role === "REGIONAL") {
       if (!req.user.regionId) {
         return res.json({ total: 0, items: [] });
@@ -274,9 +278,22 @@ const listDistricts = async (req, res, next) => {
           regionId: req.user.regionId,
         },
       };
-    } else if (req.user.role !== "NATIONAL") {
+    } else if (req.user.role === "SUPERADMIN" && overrideCommuneId) {
+      // Filtrer par communeId pour le superadmin (priorité sur regionId)
+      whereClause = {
+        communeId: overrideCommuneId,
+      };
+    } else if (req.user.role === "SUPERADMIN" && overrideRegionId) {
+      // Filtrer par regionId pour le superadmin
+      whereClause = {
+        commune: {
+          regionId: overrideRegionId,
+        },
+      };
+    } else if (!["SUPERADMIN", "NATIONAL"].includes(req.user.role)) {
       return res.status(403).json({ message: "Accès refusé" });
     }
+    // Si SUPERADMIN sans regionId ni communeId ou NATIONAL : voir tous les districts (whereClause reste vide)
 
     const districts = await prisma.district.findMany({
       where: whereClause,
@@ -303,7 +320,10 @@ const listDistricts = async (req, res, next) => {
 
 const createDistrict = async (req, res, next) => {
   try {
-    ensureRegional(req.user);
+    // Pour SUPERADMIN, pas de vérification de région
+    if (req.user.role !== "SUPERADMIN") {
+      ensureRegional(req.user);
+    }
 
     const { name, communeId } = req.body ?? {};
 
@@ -311,7 +331,18 @@ const createDistrict = async (req, res, next) => {
       return res.status(400).json({ message: "Nom et commune requis" });
     }
 
-    await ensureCommuneBelongsToRegion(communeId, req.user.regionId);
+    // Pour SUPERADMIN, on vérifie juste que la commune existe
+    if (req.user.role === "SUPERADMIN") {
+      const commune = await prisma.commune.findUnique({
+        where: { id: communeId },
+        select: { id: true },
+      });
+      if (!commune) {
+        return res.status(400).json({ message: "Commune introuvable" });
+      }
+    } else {
+      await ensureCommuneBelongsToRegion(communeId, req.user.regionId);
+    }
 
     const district = await prisma.district.create({
       data: {
@@ -381,10 +412,22 @@ const updateDistrict = async (req, res, next) => {
 
 const deleteDistrict = async (req, res, next) => {
   try {
-    ensureRegional(req.user);
-
     const { id } = req.params;
-    await ensureDistrictBelongsToRegion(id, req.user.regionId);
+
+    // Pour SUPERADMIN, pas de vérification de région
+    if (req.user.role !== "SUPERADMIN") {
+      ensureRegional(req.user);
+      await ensureDistrictBelongsToRegion(id, req.user.regionId);
+    } else {
+      // Pour SUPERADMIN, vérifier juste que le district existe
+      const district = await prisma.district.findUnique({
+        where: { id },
+        select: { id: true },
+      });
+      if (!district) {
+        return res.status(404).json({ message: "District introuvable" });
+      }
+    }
 
     await prisma.$transaction(async (tx) => {
       const cascadeData = await collectDistrictCascadeData(tx, id);
@@ -513,9 +556,22 @@ const deleteDistrict = async (req, res, next) => {
 
 const getDistrictDeletionSummary = async (req, res, next) => {
   try {
-    ensureRegional(req.user);
     const { id } = req.params;
-    await ensureDistrictBelongsToRegion(id, req.user.regionId);
+    
+    // Pour SUPERADMIN, pas de vérification de région
+    if (req.user.role !== "SUPERADMIN") {
+      ensureRegional(req.user);
+      await ensureDistrictBelongsToRegion(id, req.user.regionId);
+    } else {
+      // Vérifier juste que le district existe
+      const district = await prisma.district.findUnique({
+        where: { id },
+        select: { id: true },
+      });
+      if (!district) {
+        return res.status(404).json({ message: "District introuvable" });
+      }
+    }
 
     const summary = await prisma.$transaction((tx) =>
       collectDistrictCascadeData(tx, id),

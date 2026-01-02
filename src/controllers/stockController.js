@@ -10,8 +10,14 @@ const {
   updateNearestExpiration,
   restoreOrRecreateLotForRejectedTransfer,
 } = require("../services/stockLotService");
+const { logEventAsync } = require("../services/eventLogService");
 
-const resolveRegionIdForUser = async (user) => {
+const resolveRegionIdForUser = async (user, overrideRegionId = null) => {
+  // Pour SUPERADMIN, utiliser l'override si fourni
+  if (user.role === "SUPERADMIN" && overrideRegionId) {
+    return overrideRegionId;
+  }
+  
   if (user.regionId) {
     return user.regionId;
   }
@@ -24,7 +30,12 @@ const resolveRegionIdForUser = async (user) => {
   return dbUser?.regionId ?? null;
 };
 
-const resolveDistrictIdForUser = async (user) => {
+const resolveDistrictIdForUser = async (user, overrideDistrictId = null) => {
+  // Pour SUPERADMIN, utiliser l'override si fourni
+  if (user.role === "SUPERADMIN" && overrideDistrictId) {
+    return overrideDistrictId;
+  }
+  
   if (user.districtId) {
     return user.districtId;
   }
@@ -37,7 +48,12 @@ const resolveDistrictIdForUser = async (user) => {
   return dbUser?.districtId ?? null;
 };
 
-const resolveHealthCenterIdForUser = async (user) => {
+const resolveHealthCenterIdForUser = async (user, overrideHealthCenterId = null) => {
+  // Pour SUPERADMIN, utiliser l'override si fourni
+  if (user.role === "SUPERADMIN" && overrideHealthCenterId) {
+    return overrideHealthCenterId;
+  }
+  
   if (user.healthCenterId) {
     return user.healthCenterId;
   }
@@ -428,7 +444,7 @@ const fetchExpiredLotsSet = async ({
 };
 
 const getStockNATIONAL = async (req, res, next) => {
-  if (req.user.role !== "NATIONAL") {
+  if (req.user.role !== "NATIONAL" && req.user.role !== "SUPERADMIN") {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -463,7 +479,7 @@ const getStockNATIONAL = async (req, res, next) => {
 };
 
 const listNationalLots = async (req, res, next) => {
-  if (req.user.role !== "NATIONAL") {
+  if (req.user.role !== "NATIONAL" && req.user.role !== "SUPERADMIN") {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -489,7 +505,7 @@ const listNationalLots = async (req, res, next) => {
 };
 
 const listRegionalLots = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -504,12 +520,15 @@ const listRegionalLots = async (req, res, next) => {
   }
 
   try {
-    if (req.user.role === "REGIONAL") {
-      regionId = await resolveRegionIdForUser(req.user);
+    // Pour SUPERADMIN, accepter regionId depuis query params
+    const overrideRegionId = req.user.role === "SUPERADMIN" ? req.query.regionId : null;
+    
+    if (req.user.role === "REGIONAL" || (req.user.role === "SUPERADMIN" && overrideRegionId)) {
+      regionId = await resolveRegionIdForUser(req.user, overrideRegionId);
       if (!regionId) {
         throw createHttpError(400, "Impossible d'identifier votre région");
       }
-    } else if (!regionId) {
+    } else if (req.user.role !== "SUPERADMIN" && !regionId) {
       throw createHttpError(400, "regionId est requis");
     }
 
@@ -526,7 +545,7 @@ const listRegionalLots = async (req, res, next) => {
 };
 
 const listDistrictLots = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -541,21 +560,27 @@ const listDistrictLots = async (req, res, next) => {
   }
 
   try {
-    if (req.user.role === "DISTRICT") {
-      districtId = await resolveDistrictIdForUser(req.user);
+    // Pour SUPERADMIN, accepter districtId ou regionId depuis query params
+    const overrideDistrictId = req.user.role === "SUPERADMIN" ? req.query.districtId : null;
+    const overrideRegionId = req.user.role === "SUPERADMIN" ? req.query.regionId : null;
+    
+    if (req.user.role === "DISTRICT" || (req.user.role === "SUPERADMIN" && overrideDistrictId)) {
+      districtId = await resolveDistrictIdForUser(req.user, overrideDistrictId);
       if (!districtId) {
         throw createHttpError(400, "Impossible d'identifier votre district");
       }
-    } else if (!districtId) {
+    } else if (req.user.role !== "SUPERADMIN" && !districtId) {
       throw createHttpError(400, "districtId est requis");
     }
 
-    if (req.user.role === "REGIONAL") {
-      const regionId = await resolveRegionIdForUser(req.user);
+    if (req.user.role === "REGIONAL" || (req.user.role === "SUPERADMIN" && overrideRegionId && !overrideDistrictId)) {
+      const regionId = await resolveRegionIdForUser(req.user, overrideRegionId);
       if (!regionId) {
         throw createHttpError(400, "Impossible d'identifier votre région");
       }
-      await ensureDistrictBelongsToRegion(districtId, regionId);
+      if (districtId) {
+        await ensureDistrictBelongsToRegion(districtId, regionId);
+      }
     }
 
     const lots = await fetchLotsForOwner({
@@ -572,7 +597,7 @@ const listDistrictLots = async (req, res, next) => {
 
 const listHealthCenterLots = async (req, res, next) => {
   if (
-    !["NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)
+    !["SUPERADMIN", "NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)
   ) {
     return res.status(403).json({ message: "Accès refusé" });
   }
@@ -590,22 +615,29 @@ const listHealthCenterLots = async (req, res, next) => {
   }
 
   try {
-    if (req.user.role === "AGENT") {
+    // Pour SUPERADMIN, accepter healthCenterId, districtId ou regionId depuis query params
+    const overrideHealthCenterId = req.user.role === "SUPERADMIN" ? req.query.healthCenterId : null;
+    const overrideDistrictId = req.user.role === "SUPERADMIN" ? req.query.districtId : null;
+    const overrideRegionId = req.user.role === "SUPERADMIN" ? req.query.regionId : null;
+    
+    if (req.user.role === "AGENT" || (req.user.role === "SUPERADMIN" && overrideHealthCenterId)) {
       // Permettre l'accès en lecture aux agents ADMIN et STAFF
-      if (req.user.agentLevel !== "ADMIN" && req.user.agentLevel !== "STAFF") {
+      if (req.user.role === "AGENT" && req.user.agentLevel !== "ADMIN" && req.user.agentLevel !== "STAFF") {
         return res.status(403).json({ message: "Accès refusé" });
       }
-      healthCenterId = await resolveHealthCenterIdForUser(req.user);
+      healthCenterId = await resolveHealthCenterIdForUser(req.user, overrideHealthCenterId);
       if (!healthCenterId) {
         throw createHttpError(
           400,
           "Impossible d'identifier votre centre de santé",
         );
       }
-    } else if (!healthCenterId) {
+    } else if (req.user.role !== "SUPERADMIN" && !healthCenterId) {
       throw createHttpError(400, "healthCenterId est requis");
-    } else if (req.user.role === "DISTRICT" || req.user.role === "REGIONAL") {
-      await ensureHealthCenterAccessible(req.user, healthCenterId);
+    } else if (req.user.role === "DISTRICT" || req.user.role === "REGIONAL" || (req.user.role === "SUPERADMIN" && (overrideDistrictId || overrideRegionId))) {
+      if (healthCenterId) {
+        await ensureHealthCenterAccessible(req.user, healthCenterId);
+      }
     }
 
     const lots = await fetchLotsForOwner({
@@ -653,7 +685,7 @@ const listHealthCenterLots = async (req, res, next) => {
 };
 
 const getStockREGIONAL = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -661,13 +693,24 @@ const getStockREGIONAL = async (req, res, next) => {
     let whereClause = {};
     let resolvedDistrictId = null;
 
+    // Pour SUPERADMIN, accepter regionId depuis query params
+    const overrideRegionId = req.user.role === "SUPERADMIN" ? req.query.regionId : null;
+
     if (req.user.role === "REGIONAL") {
       const regionId = await resolveRegionIdForUser(req.user);
       if (!regionId) {
         return res.json({ regional: [] });
       }
       whereClause = { regionId };
+    } else if (req.user.role === "SUPERADMIN" && overrideRegionId) {
+      // Superadmin avec regionId spécifique : filtrer par cette région
+      const regionId = await resolveRegionIdForUser(req.user, overrideRegionId);
+      if (!regionId) {
+        return res.json({ regional: [] });
+      }
+      whereClause = { regionId };
     }
+    // Si SUPERADMIN sans regionId ou NATIONAL : voir tous les stocks régionaux (whereClause reste vide)
 
     const regional = await prisma.stockREGIONAL.findMany({
       where: whereClause,
@@ -712,15 +755,20 @@ const getStockREGIONAL = async (req, res, next) => {
 };
 
 const getStockDISTRICT = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
   try {
     let whereClause = {};
+    let resolvedDistrictId = null;
 
-    if (req.user.role === "REGIONAL") {
-      const regionId = await resolveRegionIdForUser(req.user);
+    // Pour SUPERADMIN, accepter districtId ou regionId depuis query params
+    const overrideDistrictId = req.user.role === "SUPERADMIN" ? req.query.districtId : null;
+    const overrideRegionId = req.user.role === "SUPERADMIN" ? req.query.regionId : null;
+
+    if (req.user.role === "REGIONAL" || (req.user.role === "SUPERADMIN" && overrideRegionId && !overrideDistrictId)) {
+      const regionId = await resolveRegionIdForUser(req.user, overrideRegionId);
       if (!regionId) {
         return res.json({ district: [] });
       }
@@ -731,14 +779,15 @@ const getStockDISTRICT = async (req, res, next) => {
       }
 
       whereClause = { districtId: { in: districtIds } };
-    } else if (req.user.role === "DISTRICT") {
-      const districtId = await resolveDistrictIdForUser(req.user);
+    } else if (req.user.role === "DISTRICT" || (req.user.role === "SUPERADMIN" && overrideDistrictId)) {
+      const districtId = await resolveDistrictIdForUser(req.user, overrideDistrictId);
       if (!districtId) {
         return res.json({ district: [] });
       }
       resolvedDistrictId = districtId;
       whereClause = { districtId };
     }
+    // Si SUPERADMIN sans districtId ni regionId : voir tous les stocks districtaux (whereClause reste vide)
 
     const district = await prisma.stockDISTRICT.findMany({
       where: whereClause,
@@ -749,7 +798,7 @@ const getStockDISTRICT = async (req, res, next) => {
       ],
     });
 
-  const districtIds = district.map((stock) => stock.districtId ?? null).filter(Boolean);
+    const districtIds = district.map((stock) => stock.districtId ?? null).filter(Boolean);
     const expiredSet = await fetchExpiredLotsSet({
       ownerType: OWNER_TYPES.DISTRICT,
       ownerIds: districtIds.length > 0 ? districtIds : undefined,
@@ -784,7 +833,7 @@ const getStockDISTRICT = async (req, res, next) => {
 
 const getStockHEALTHCENTER = async (req, res, next) => {
   if (
-    !["NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)
+    !["SUPERADMIN", "NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)
   ) {
     return res.status(403).json({ message: "Accès refusé" });
   }
@@ -792,20 +841,25 @@ const getStockHEALTHCENTER = async (req, res, next) => {
   try {
     let whereClause = {};
 
-    if (req.user.role === "AGENT") {
+    // Pour SUPERADMIN, accepter healthCenterId, districtId ou regionId depuis query params
+    const overrideHealthCenterId = req.user.role === "SUPERADMIN" ? req.query.healthCenterId : null;
+    const overrideDistrictId = req.user.role === "SUPERADMIN" ? req.query.districtId : null;
+    const overrideRegionId = req.user.role === "SUPERADMIN" ? req.query.regionId : null;
+
+    if (req.user.role === "AGENT" || (req.user.role === "SUPERADMIN" && overrideHealthCenterId)) {
       // Permettre l'accès en lecture aux agents ADMIN et STAFF
-      if (req.user.agentLevel !== "ADMIN" && req.user.agentLevel !== "STAFF") {
+      if (req.user.role === "AGENT" && req.user.agentLevel !== "ADMIN" && req.user.agentLevel !== "STAFF") {
         return res.status(403).json({ message: "Accès refusé" });
       }
 
-      const healthCenterId = await resolveHealthCenterIdForUser(req.user);
+      const healthCenterId = await resolveHealthCenterIdForUser(req.user, overrideHealthCenterId);
       if (!healthCenterId) {
         return res.json({ healthCenter: [] });
       }
 
       whereClause = { healthCenterId };
-    } else if (req.user.role === "DISTRICT") {
-      const districtId = await resolveDistrictIdForUser(req.user);
+    } else if (req.user.role === "DISTRICT" || (req.user.role === "SUPERADMIN" && overrideDistrictId && !overrideHealthCenterId)) {
+      const districtId = await resolveDistrictIdForUser(req.user, overrideDistrictId);
       if (!districtId) {
         return res.json({ healthCenter: [] });
       }
@@ -814,8 +868,8 @@ const getStockHEALTHCENTER = async (req, res, next) => {
           districtId,
         },
       };
-    } else if (req.user.role === "REGIONAL") {
-      const regionId = await resolveRegionIdForUser(req.user);
+    } else if (req.user.role === "REGIONAL" || (req.user.role === "SUPERADMIN" && overrideRegionId && !overrideDistrictId && !overrideHealthCenterId)) {
+      const regionId = await resolveRegionIdForUser(req.user, overrideRegionId);
       if (!regionId) {
         return res.json({ healthCenter: [] });
       }
@@ -874,7 +928,7 @@ const getStockHEALTHCENTER = async (req, res, next) => {
 
 const createStockNATIONAL = async (req, res, next) => {
 
-  if (req.user.role !== "NATIONAL") {
+  if (req.user.role !== "NATIONAL" && req.user.role !== "SUPERADMIN") {
     return res.status(403).json({ message: "Accès refusé" });
   }  
 
@@ -894,7 +948,7 @@ const createStockNATIONAL = async (req, res, next) => {
 
 const createStockREGIONAL = async (req, res, next) => {
 
-  if (req.user.role !== "NATIONAL" && req.user.role !== "REGIONAL") {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }  
 
@@ -937,7 +991,7 @@ const createStockREGIONAL = async (req, res, next) => {
 
 const createStockDISTRICT = async (req, res, next) => {
 
-  if (req.user.role !== "REGIONAL" && req.user.role !== "DISTRICT") {
+  if (!["SUPERADMIN", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }  
 
@@ -985,7 +1039,7 @@ const createStockDISTRICT = async (req, res, next) => {
 
 const createStockHEALTHCENTER = async (req, res, next) => {
 
-  if (req.user.role !== "DISTRICT" && req.user.role !== "AGENT") {
+  if (!["SUPERADMIN", "DISTRICT", "AGENT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }  
 
@@ -1056,7 +1110,7 @@ const createStockHEALTHCENTER = async (req, res, next) => {
 };
 
 const addStockNATIONAL = async (req, res, next) => {
-  if (req.user.role !== "NATIONAL") {
+  if (req.user.role !== "NATIONAL" && req.user.role !== "SUPERADMIN") {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -1119,7 +1173,7 @@ const addStockNATIONAL = async (req, res, next) => {
 };
 
 const addStockREGIONAL = async (req, res, next) => {
-  if (req.user.role !== "NATIONAL") {
+  if (req.user.role !== "NATIONAL" && req.user.role !== "SUPERADMIN") {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -1139,15 +1193,21 @@ const addStockREGIONAL = async (req, res, next) => {
     let vaccineName = null;
 
     await prisma.$transaction(async (tx) => {
-      // Vérifier que le stock régional existe
-      const regionalStock = await tx.stockREGIONAL.findUnique({
+      // Vérifier que le stock régional existe, sinon le créer
+      let regionalStock = await tx.stockREGIONAL.findUnique({
         where: { vaccineId_regionId: { vaccineId, regionId } },
         include: { region: true, vaccine: true },
       });
 
       if (!regionalStock) {
-        throw Object.assign(new Error("Stock régional introuvable"), {
-          status: 404,
+        // Créer automatiquement le stock régional s'il n'existe pas
+        regionalStock = await tx.stockREGIONAL.create({
+          data: {
+            vaccineId,
+            regionId,
+            quantity: 0,
+          },
+          include: { region: true, vaccine: true },
         });
       }
 
@@ -1250,35 +1310,66 @@ const addStockREGIONAL = async (req, res, next) => {
       message: "Envoi créé avec succès. Le stock régional sera mis à jour après confirmation de réception.",
     });
 
-    // Envoyer un email à tous les régionaux de cette région (après la réponse)
-    try {
-      const { sendStockTransferNotificationEmail } = require("../services/emailService");
-      const regionalUsers = await prisma.user.findMany({
-        where: {
-          role: "REGIONAL",
-          regionId: regionId,
-          isActive: true,
-        },
-        select: {
-          email: true,
-        },
-      });
+    // Enregistrer l'événement
+    logEventAsync({
+      type: "STOCK_TRANSFER",
+      subtype: "REGIONAL",
+      action: "TRANSFER_SENT",
+      user: {
+        id: req.user.id,
+        firstName: req.user.firstName,
+        lastName: req.user.lastName,
+        email: req.user.email,
+        role: req.user.role,
+      },
+      entityType: "STOCK",
+      entityId: pendingTransfer.id,
+      entityName: vaccineName,
+      details: {
+        fromType: "NATIONAL",
+        toType: "REGIONAL",
+        toId: regionId,
+        toName: regionName,
+        quantity: qty,
+        vaccineId,
+        vaccineName,
+      },
+    });
 
-      if (regionalUsers.length > 0) {
-        const emails = regionalUsers.map((u) => u.email).filter(Boolean);
-        if (emails.length > 0) {
-          await sendStockTransferNotificationEmail({
-            emails,
-            vaccineName,
-            quantity: qty,
-            regionName,
-          });
+    // Envoyer un email à tous les régionaux de cette région en arrière-plan (non bloquant)
+    setImmediate(async () => {
+      try {
+        const { sendStockTransferNotificationEmail } = require("../services/emailService");
+        const regionalUsers = await prisma.user.findMany({
+          where: {
+            role: "REGIONAL",
+            regionId: regionId,
+            isActive: true,
+          },
+          select: {
+            id: true,
+            email: true,
+          },
+        });
+
+        if (regionalUsers.length > 0) {
+          const emails = regionalUsers.map((u) => u.email).filter(Boolean);
+          const userIds = regionalUsers.map((u) => u.id).filter(Boolean);
+          if (emails.length > 0) {
+            await sendStockTransferNotificationEmail({
+              emails,
+              userIds,
+              vaccineName,
+              quantity: qty,
+              regionName,
+            });
+          }
         }
+      } catch (emailError) {
+        console.error("Erreur envoi email notification transfert:", emailError);
+        // Ne pas bloquer la réponse si l'email échoue
       }
-    } catch (emailError) {
-      console.error("Erreur envoi email notification transfert:", emailError);
-      // Ne pas bloquer la réponse si l'email échoue
-    }
+    });
   } catch (error) {
     if (error.status) {
       return res.status(error.status).json({ message: error.message });
@@ -1288,7 +1379,7 @@ const addStockREGIONAL = async (req, res, next) => {
 };
 
 const addStockDISTRICT = async (req, res, next) => {
-  if (!["REGIONAL", "NATIONAL"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "REGIONAL", "NATIONAL"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -1344,14 +1435,21 @@ const addStockDISTRICT = async (req, res, next) => {
     let vaccineName = null;
 
     await prisma.$transaction(async (tx) => {
-      const districtStock = await tx.stockDISTRICT.findUnique({
+      // Vérifier que le stock district existe, sinon le créer
+      let districtStock = await tx.stockDISTRICT.findUnique({
         where: { vaccineId_districtId: { vaccineId, districtId } },
         include: { district: true, vaccine: true },
       });
 
       if (!districtStock) {
-        throw Object.assign(new Error("Stock district introuvable"), {
-          status: 404,
+        // Créer automatiquement le stock district s'il n'existe pas
+        districtStock = await tx.stockDISTRICT.create({
+          data: {
+            vaccineId,
+            districtId,
+            quantity: 0,
+          },
+          include: { district: true, vaccine: true },
         });
       }
 
@@ -1454,35 +1552,67 @@ const addStockDISTRICT = async (req, res, next) => {
       message: "Envoi créé avec succès. Le stock district sera mis à jour après confirmation de réception.",
     });
 
-    // Envoyer un email à tous les utilisateurs du district (après la réponse)
-    try {
-      const { sendStockTransferNotificationEmail } = require("../services/emailService");
-      const districtUsers = await prisma.user.findMany({
-        where: {
-          role: "DISTRICT",
-          districtId: districtId,
-          isActive: true,
-        },
-        select: {
-          email: true,
-        },
-      });
+    // Enregistrer l'événement
+    logEventAsync({
+      type: "STOCK_TRANSFER",
+      subtype: "DISTRICT",
+      action: "TRANSFER_SENT",
+      user: {
+        id: req.user.id,
+        firstName: req.user.firstName,
+        lastName: req.user.lastName,
+        email: req.user.email,
+        role: req.user.role,
+      },
+      entityType: "STOCK",
+      entityId: pendingTransfer.id,
+      entityName: vaccineName,
+      details: {
+        fromType: "REGIONAL",
+        fromId: regionIdPayload,
+        toType: "DISTRICT",
+        toId: districtId,
+        toName: districtName,
+        quantity: qty,
+        vaccineId,
+        vaccineName,
+      },
+    });
 
-      if (districtUsers.length > 0) {
-        const emails = districtUsers.map((u) => u.email).filter(Boolean);
-        if (emails.length > 0) {
-          await sendStockTransferNotificationEmail({
-            emails,
-            vaccineName,
-            quantity: qty,
-            regionName: districtName,
-          });
+    // Envoyer un email à tous les utilisateurs du district en arrière-plan (non bloquant)
+    setImmediate(async () => {
+      try {
+        const { sendStockTransferNotificationEmail } = require("../services/emailService");
+        const districtUsers = await prisma.user.findMany({
+          where: {
+            role: "DISTRICT",
+            districtId: districtId,
+            isActive: true,
+          },
+          select: {
+            id: true,
+            email: true,
+          },
+        });
+
+        if (districtUsers.length > 0) {
+          const emails = districtUsers.map((u) => u.email).filter(Boolean);
+          const userIds = districtUsers.map((u) => u.id).filter(Boolean);
+          if (emails.length > 0) {
+            await sendStockTransferNotificationEmail({
+              emails,
+              userIds,
+              vaccineName,
+              quantity: qty,
+              regionName: districtName,
+            });
+          }
         }
+      } catch (emailError) {
+        console.error("Erreur envoi email notification transfert:", emailError);
+        // Ne pas bloquer la réponse si l'email échoue
       }
-    } catch (emailError) {
-      console.error("Erreur envoi email notification transfert:", emailError);
-      // Ne pas bloquer la réponse si l'email échoue
-    }
+    });
   } catch (error) {
     if (error.status) {
       return res.status(error.status).json({ message: error.message });
@@ -1492,7 +1622,7 @@ const addStockDISTRICT = async (req, res, next) => {
 };
 
 const addStockHEALTHCENTER = async (req, res, next) => {
-  if (req.user.role !== "DISTRICT") {
+  if (!["SUPERADMIN", "DISTRICT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -1540,16 +1670,22 @@ const addStockHEALTHCENTER = async (req, res, next) => {
     let vaccineName = null;
 
     await prisma.$transaction(async (tx) => {
-      const healthCenterStock = await tx.stockHEALTHCENTER.findUnique({
+      // Vérifier que le stock centre de santé existe, sinon le créer
+      let healthCenterStock = await tx.stockHEALTHCENTER.findUnique({
         where: { vaccineId_healthCenterId: { vaccineId, healthCenterId } },
         include: { healthCenter: true, vaccine: true },
       });
 
       if (!healthCenterStock) {
-        throw Object.assign(
-          new Error("Stock centre de santé introuvable"),
-          { status: 404 },
-        );
+        // Créer automatiquement le stock centre de santé s'il n'existe pas
+        healthCenterStock = await tx.stockHEALTHCENTER.create({
+          data: {
+            vaccineId,
+            healthCenterId,
+            quantity: 0,
+          },
+          include: { healthCenter: true, vaccine: true },
+        });
       }
 
       healthCenterName = healthCenterStock.healthCenter.name;
@@ -1651,36 +1787,68 @@ const addStockHEALTHCENTER = async (req, res, next) => {
       message: "Envoi créé avec succès. Le stock du centre de santé sera mis à jour après confirmation de réception.",
     });
 
-    // Envoyer un email à tous les agents admin du centre de santé (après la réponse)
-    try {
-      const { sendStockTransferNotificationEmail } = require("../services/emailService");
-      const healthCenterAdminAgents = await prisma.user.findMany({
-        where: {
-          role: "AGENT",
-          agentLevel: "ADMIN",
-          healthCenterId: healthCenterId,
-          isActive: true,
-        },
-        select: {
-          email: true,
-        },
-      });
+    // Enregistrer l'événement
+    logEventAsync({
+      type: "STOCK_TRANSFER",
+      subtype: "HEALTHCENTER",
+      action: "TRANSFER_SENT",
+      user: {
+        id: req.user.id,
+        firstName: req.user.firstName,
+        lastName: req.user.lastName,
+        email: req.user.email,
+        role: req.user.role,
+      },
+      entityType: "STOCK",
+      entityId: pendingTransfer.id,
+      entityName: vaccineName,
+      details: {
+        fromType: "DISTRICT",
+        fromId: districtId,
+        toType: "HEALTHCENTER",
+        toId: healthCenterId,
+        toName: healthCenterName,
+        quantity: qty,
+        vaccineId,
+        vaccineName,
+      },
+    });
 
-      if (healthCenterAdminAgents.length > 0) {
-        const emails = healthCenterAdminAgents.map((u) => u.email).filter(Boolean);
-        if (emails.length > 0) {
-          await sendStockTransferNotificationEmail({
-            emails,
-            vaccineName,
-            quantity: qty,
-            regionName: healthCenterName,
-          });
+    // Envoyer un email à tous les agents admin du centre de santé en arrière-plan (non bloquant)
+    setImmediate(async () => {
+      try {
+        const { sendStockTransferNotificationEmail } = require("../services/emailService");
+        const healthCenterAdminAgents = await prisma.user.findMany({
+          where: {
+            role: "AGENT",
+            agentLevel: "ADMIN",
+            healthCenterId: healthCenterId,
+            isActive: true,
+          },
+          select: {
+            id: true,
+            email: true,
+          },
+        });
+
+        if (healthCenterAdminAgents.length > 0) {
+          const emails = healthCenterAdminAgents.map((u) => u.email).filter(Boolean);
+          const userIds = healthCenterAdminAgents.map((u) => u.id).filter(Boolean);
+          if (emails.length > 0) {
+            await sendStockTransferNotificationEmail({
+              emails,
+              userIds,
+              vaccineName,
+              quantity: qty,
+              regionName: healthCenterName,
+            });
+          }
         }
+      } catch (emailError) {
+        console.error("Erreur envoi email notification transfert:", emailError);
+        // Ne pas bloquer la réponse si l'email échoue
       }
-    } catch (emailError) {
-      console.error("Erreur envoi email notification transfert:", emailError);
-      // Ne pas bloquer la réponse si l'email échoue
-    }
+    });
   } catch (error) {
     if (error.status) {
       return res.status(error.status).json({ message: error.message });
@@ -1691,7 +1859,7 @@ const addStockHEALTHCENTER = async (req, res, next) => {
 
 
 const updateStockNATIONAL = async (req, res, next) => {
-  if (req.user.role !== "NATIONAL") {
+  if (req.user.role !== "NATIONAL" && req.user.role !== "SUPERADMIN") {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -1706,6 +1874,8 @@ const updateStockNATIONAL = async (req, res, next) => {
     }
 
     let updatedStock = null;
+    let previousQuantity = 0;
+    let delta = 0;
 
     await prisma.$transaction(async (tx) => {
       const stock = await tx.stockNATIONAL.findUnique({ where: { vaccineId } });
@@ -1715,8 +1885,8 @@ const updateStockNATIONAL = async (req, res, next) => {
         });
       }
 
-      const previousQuantity = stock.quantity ?? 0;
-      const delta = qty - previousQuantity;
+      previousQuantity = stock.quantity ?? 0;
+      delta = qty - previousQuantity;
 
       await tx.stockNATIONAL.update({
         where: { vaccineId },
@@ -1764,7 +1934,7 @@ const updateStockNATIONAL = async (req, res, next) => {
 };
 
 const updateStockREGIONAL = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -1794,6 +1964,8 @@ const updateStockREGIONAL = async (req, res, next) => {
     });
 
     let updated = null;
+    let previousQuantity = 0;
+    let delta = 0;
 
     await prisma.$transaction(async (tx) => {
       const current = await tx.stockREGIONAL.findUnique({
@@ -1806,8 +1978,8 @@ const updateStockREGIONAL = async (req, res, next) => {
         });
       }
 
-      const previousQuantity = current.quantity ?? 0;
-      const delta = qty - previousQuantity;
+      previousQuantity = current.quantity ?? 0;
+      delta = qty - previousQuantity;
 
       await tx.stockREGIONAL.update({
         where: { vaccineId_regionId: { vaccineId, regionId } },
@@ -1845,6 +2017,30 @@ const updateStockREGIONAL = async (req, res, next) => {
       });
     });
 
+    // Enregistrer l'événement d'ajustement
+    logEventAsync({
+      type: "STOCK",
+      subtype: "REGIONAL",
+      action: "UPDATE",
+      user: {
+        id: req.user.id,
+        firstName: req.user.firstName,
+        lastName: req.user.lastName,
+        email: req.user.email,
+        role: req.user.role,
+      },
+      entityType: "STOCK",
+      entityId: updated?.id,
+      entityName: updated?.vaccine?.name || "Vaccin",
+      details: {
+        before: { quantity: previousQuantity },
+        after: { quantity: qty },
+        delta: delta,
+        vaccineId,
+        regionId,
+      },
+    });
+
     res.json(updated);
   } catch (error) {
     if (error.status) {
@@ -1855,7 +2051,7 @@ const updateStockREGIONAL = async (req, res, next) => {
 };
 
 const updateStockDISTRICT = async (req, res, next) => {
-  if (!["REGIONAL", "DISTRICT"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -1957,7 +2153,7 @@ const updateStockDISTRICT = async (req, res, next) => {
 };
 
 const updateStockHEALTHCENTER = async (req, res, next) => {
-  if (!["DISTRICT", "AGENT"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "DISTRICT", "AGENT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -2043,7 +2239,7 @@ const updateStockHEALTHCENTER = async (req, res, next) => {
 };
 
 const reduceLotNATIONAL = async (req, res, next) => {
-  if (req.user.role !== "NATIONAL") {
+  if (req.user.role !== "NATIONAL" && req.user.role !== "SUPERADMIN") {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -2142,7 +2338,7 @@ const reduceLotNATIONAL = async (req, res, next) => {
 };
 
 const deleteLot = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -2180,6 +2376,19 @@ const deleteLot = async (req, res, next) => {
         ) {
           throw Object.assign(new Error("Accès refusé"), { status: 403 });
         }
+        
+        // Vérifier si le lot est expiré
+        if (existing.status !== LOT_STATUS.EXPIRED) {
+          const expirationDate = new Date(existing.expiration);
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          if (expirationDate >= today) {
+            throw Object.assign(
+              new Error("Vous ne pouvez supprimer que les lots expirés"),
+              { status: 403 }
+            );
+          }
+        }
       } else if (req.user.role === "DISTRICT") {
         const districtId = await resolveDistrictIdForUser(req.user);
         if (
@@ -2188,6 +2397,19 @@ const deleteLot = async (req, res, next) => {
         ) {
           throw Object.assign(new Error("Accès refusé"), { status: 403 });
         }
+        
+        // Vérifier si le lot est expiré
+        if (existing.status !== LOT_STATUS.EXPIRED) {
+          const expirationDate = new Date(existing.expiration);
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          if (expirationDate >= today) {
+            throw Object.assign(
+              new Error("Vous ne pouvez supprimer que les lots expirés"),
+              { status: 403 }
+            );
+          }
+        }
       } else if (req.user.role === "AGENT") {
         const healthCenterId = await resolveHealthCenterIdForUser(req.user);
         if (
@@ -2195,6 +2417,19 @@ const deleteLot = async (req, res, next) => {
           existing.ownerId !== healthCenterId
         ) {
           throw Object.assign(new Error("Accès refusé"), { status: 403 });
+        }
+        
+        // Vérifier si le lot est expiré
+        if (existing.status !== LOT_STATUS.EXPIRED) {
+          const expirationDate = new Date(existing.expiration);
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          if (expirationDate >= today) {
+            throw Object.assign(
+              new Error("Vous ne pouvez supprimer que les lots expirés"),
+              { status: 403 }
+            );
+          }
         }
       } else if (req.user.role === "NATIONAL") {
         if (existing.ownerType !== OWNER_TYPES.NATIONAL) {
@@ -2216,7 +2451,7 @@ const deleteLot = async (req, res, next) => {
 };
 
 const reduceStockNATIONAL = async (req, res, next) => {
-  if (req.user.role !== "NATIONAL") {
+  if (req.user.role !== "NATIONAL" && req.user.role !== "SUPERADMIN") {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -2247,7 +2482,7 @@ const reduceStockNATIONAL = async (req, res, next) => {
 };
 
 const reduceStockREGIONAL = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -2292,7 +2527,7 @@ const reduceStockREGIONAL = async (req, res, next) => {
 };
 
 const reduceStockDISTRICT = async (req, res, next) => {
-  if (!["REGIONAL", "DISTRICT"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -2348,7 +2583,7 @@ const reduceStockDISTRICT = async (req, res, next) => {
 };
 
 const reduceStockHEALTHCENTER = async (req, res, next) => {
-  if (!["DISTRICT", "AGENT"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "DISTRICT", "AGENT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -2387,7 +2622,7 @@ const reduceStockHEALTHCENTER = async (req, res, next) => {
 };
 
 const deleteStockNATIONAL = async (req, res, next) => {
-  if (req.user.role !== "NATIONAL") {
+  if (req.user.role !== "NATIONAL" && req.user.role !== "SUPERADMIN") {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -2410,7 +2645,7 @@ const deleteStockNATIONAL = async (req, res, next) => {
 };
 
 const deleteStockREGIONAL = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -2426,6 +2661,23 @@ const deleteStockREGIONAL = async (req, res, next) => {
       regionId = await resolveRegionIdForUser(req.user);
       if (!regionId) {
         throw createHttpError(400, "Impossible d'identifier votre région");
+      }
+      
+      // Vérifier si le stock a des lots expirés
+      const normalizedOwnerId = normalizeOwnerIdValue(OWNER_TYPES.REGIONAL, regionId);
+      const expiredLots = await prisma.stockLot.findFirst({
+        where: {
+          vaccineId,
+          ownerType: OWNER_TYPES.REGIONAL,
+          ownerId: normalizedOwnerId,
+          status: LOT_STATUS.EXPIRED,
+        },
+      });
+      
+      if (!expiredLots) {
+        return res.status(403).json({ 
+          message: "Vous ne pouvez supprimer que les stocks contenant des lots expirés" 
+        });
       }
     } else if (!regionId) {
       throw createHttpError(400, "regionId est requis");
@@ -2443,7 +2695,7 @@ const deleteStockREGIONAL = async (req, res, next) => {
 };
 
 const deleteStockDISTRICT = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -2459,6 +2711,23 @@ const deleteStockDISTRICT = async (req, res, next) => {
       districtId = await resolveDistrictIdForUser(req.user);
       if (!districtId) {
         throw createHttpError(400, "Impossible d'identifier votre district");
+      }
+      
+      // Vérifier si le stock a des lots expirés
+      const normalizedOwnerId = normalizeOwnerIdValue(OWNER_TYPES.DISTRICT, districtId);
+      const expiredLots = await prisma.stockLot.findFirst({
+        where: {
+          vaccineId,
+          ownerType: OWNER_TYPES.DISTRICT,
+          ownerId: normalizedOwnerId,
+          status: LOT_STATUS.EXPIRED,
+        },
+      });
+      
+      if (!expiredLots) {
+        return res.status(403).json({ 
+          message: "Vous ne pouvez supprimer que les stocks contenant des lots expirés" 
+        });
       }
     } else if (!districtId) {
       throw createHttpError(400, "districtId est requis");
@@ -2485,7 +2754,7 @@ const deleteStockDISTRICT = async (req, res, next) => {
 
 const deleteStockHEALTHCENTER = async (req, res, next) => {
   if (
-    !["NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)
+    !["SUPERADMIN", "NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)
   ) {
     return res.status(403).json({ message: "Accès refusé" });
   }
@@ -2510,6 +2779,23 @@ const deleteStockHEALTHCENTER = async (req, res, next) => {
           "Impossible d'identifier votre centre de santé",
         );
       }
+      
+      // Vérifier si le stock a des lots expirés
+      const normalizedOwnerId = normalizeOwnerIdValue(OWNER_TYPES.HEALTHCENTER, healthCenterId);
+      const expiredLots = await prisma.stockLot.findFirst({
+        where: {
+          vaccineId,
+          ownerType: OWNER_TYPES.HEALTHCENTER,
+          ownerId: normalizedOwnerId,
+          status: LOT_STATUS.EXPIRED,
+        },
+      });
+      
+      if (!expiredLots) {
+        return res.status(403).json({ 
+          message: "Vous ne pouvez supprimer que les stocks contenant des lots expirés" 
+        });
+      }
     } else if (!healthCenterId) {
       throw createHttpError(400, "healthCenterId est requis");
     } else if (
@@ -2533,7 +2819,7 @@ const deleteStockHEALTHCENTER = async (req, res, next) => {
 const LOW_STOCK_THRESHOLD = 50;
 
 const getNationalStockStats = async (req, res, next) => {
-  if (req.user.role !== "NATIONAL") {
+  if (req.user.role !== "NATIONAL" && req.user.role !== "SUPERADMIN") {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -2572,15 +2858,18 @@ const getNationalStockStats = async (req, res, next) => {
 };
 
 const getRegionalStockStats = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
   try {
     let whereClause = {};
 
-    if (req.user.role === "REGIONAL") {
-      const regionId = await resolveRegionIdForUser(req.user);
+    // Pour SUPERADMIN, accepter regionId depuis query params
+    const overrideRegionId = req.user.role === "SUPERADMIN" ? req.query.regionId : null;
+
+    if (req.user.role === "REGIONAL" || (req.user.role === "SUPERADMIN" && overrideRegionId)) {
+      const regionId = await resolveRegionIdForUser(req.user, overrideRegionId);
       if (!regionId) {
         return res.json({
           totalLots: 0,
@@ -2632,15 +2921,19 @@ const getRegionalStockStats = async (req, res, next) => {
 };
 
 const getDistrictStockStats = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
   try {
     let whereClause = {};
 
-    if (req.user.role === "REGIONAL") {
-      const regionId = await resolveRegionIdForUser(req.user);
+    // Pour SUPERADMIN, accepter districtId ou regionId depuis query params
+    const overrideDistrictId = req.user.role === "SUPERADMIN" ? req.query.districtId : null;
+    const overrideRegionId = req.user.role === "SUPERADMIN" ? req.query.regionId : null;
+
+    if (req.user.role === "REGIONAL" || (req.user.role === "SUPERADMIN" && overrideRegionId && !overrideDistrictId)) {
+      const regionId = await resolveRegionIdForUser(req.user, overrideRegionId);
       if (!regionId) {
         return res.json({
           totalLots: 0,
@@ -2659,8 +2952,8 @@ const getDistrictStockStats = async (req, res, next) => {
         });
       }
       whereClause = { districtId: { in: districtIds } };
-    } else if (req.user.role === "DISTRICT") {
-      const districtId = await resolveDistrictIdForUser(req.user);
+    } else if (req.user.role === "DISTRICT" || (req.user.role === "SUPERADMIN" && overrideDistrictId)) {
+      const districtId = await resolveDistrictIdForUser(req.user, overrideDistrictId);
       if (!districtId) {
         return res.json({
           totalLots: 0,
@@ -2721,20 +3014,25 @@ const getDistrictStockStats = async (req, res, next) => {
 };
 
 const getHealthCenterStockStats = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
   try {
     let whereClause = {};
 
-    if (req.user.role === "AGENT") {
+    // Pour SUPERADMIN, accepter healthCenterId, districtId ou regionId depuis query params
+    const overrideHealthCenterId = req.user.role === "SUPERADMIN" ? req.query.healthCenterId : null;
+    const overrideDistrictId = req.user.role === "SUPERADMIN" ? req.query.districtId : null;
+    const overrideRegionId = req.user.role === "SUPERADMIN" ? req.query.regionId : null;
+
+    if (req.user.role === "AGENT" || (req.user.role === "SUPERADMIN" && overrideHealthCenterId)) {
       // Permettre l'accès en lecture aux agents ADMIN et STAFF
-      if (req.user.agentLevel !== "ADMIN" && req.user.agentLevel !== "STAFF") {
+      if (req.user.role === "AGENT" && req.user.agentLevel !== "ADMIN" && req.user.agentLevel !== "STAFF") {
         return res.status(403).json({ message: "Accès refusé" });
       }
 
-      const healthCenterId = await resolveHealthCenterIdForUser(req.user);
+      const healthCenterId = await resolveHealthCenterIdForUser(req.user, overrideHealthCenterId);
       if (!healthCenterId) {
         return res.json({
           totalLots: 0,
@@ -2745,8 +3043,8 @@ const getHealthCenterStockStats = async (req, res, next) => {
       }
 
       whereClause = { healthCenterId };
-    } else if (req.user.role === "DISTRICT") {
-      const districtId = await resolveDistrictIdForUser(req.user);
+    } else if (req.user.role === "DISTRICT" || (req.user.role === "SUPERADMIN" && overrideDistrictId && !overrideHealthCenterId)) {
+      const districtId = await resolveDistrictIdForUser(req.user, overrideDistrictId);
       if (!districtId) {
         return res.json({
           totalLots: 0,
@@ -2761,8 +3059,8 @@ const getHealthCenterStockStats = async (req, res, next) => {
           districtId,
         },
       };
-    } else if (req.user.role === "REGIONAL") {
-      const regionId = await resolveRegionIdForUser(req.user);
+    } else if (req.user.role === "REGIONAL" || (req.user.role === "SUPERADMIN" && overrideRegionId && !overrideDistrictId && !overrideHealthCenterId)) {
+      const regionId = await resolveRegionIdForUser(req.user, overrideRegionId);
       if (!regionId) {
         return res.json({
           totalLots: 0,
@@ -2963,15 +3261,20 @@ const getHealthCenterReservations = async (req, res, next) => {
 
 // Lister les transferts en attente pour un régional
 const getPendingTransfers = async (req, res, next) => {
-  if (!["REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
   try {
     let whereClause = { status: "PENDING" };
 
-    if (req.user.role === "REGIONAL") {
-      const regionId = await resolveRegionIdForUser(req.user);
+    // Pour SUPERADMIN, accepter healthCenterId, districtId ou regionId depuis query params
+    const overrideHealthCenterId = req.user.role === "SUPERADMIN" ? req.query.healthCenterId : null;
+    const overrideDistrictId = req.user.role === "SUPERADMIN" ? req.query.districtId : null;
+    const overrideRegionId = req.user.role === "SUPERADMIN" ? req.query.regionId : null;
+
+    if (req.user.role === "REGIONAL" || (req.user.role === "SUPERADMIN" && overrideRegionId && !overrideDistrictId && !overrideHealthCenterId)) {
+      const regionId = await resolveRegionIdForUser(req.user, overrideRegionId);
       if (!regionId) {
         return res.json({ transfers: [] });
       }
@@ -2980,8 +3283,8 @@ const getPendingTransfers = async (req, res, next) => {
         toType: OWNER_TYPES.REGIONAL,
         toId: regionId,
       };
-    } else if (req.user.role === "DISTRICT") {
-      const districtId = await resolveDistrictIdForUser(req.user);
+    } else if (req.user.role === "DISTRICT" || (req.user.role === "SUPERADMIN" && overrideDistrictId && !overrideHealthCenterId)) {
+      const districtId = await resolveDistrictIdForUser(req.user, overrideDistrictId);
       if (!districtId) {
         return res.json({ transfers: [] });
       }
@@ -2990,19 +3293,23 @@ const getPendingTransfers = async (req, res, next) => {
         toType: OWNER_TYPES.DISTRICT,
         toId: districtId,
       };
-    } else if (req.user.role === "AGENT") {
-      // Seuls les agents admin peuvent voir les transferts en attente
-      if (req.user.agentLevel !== "ADMIN") {
+    } else if (req.user.role === "AGENT" || (req.user.role === "SUPERADMIN" && overrideHealthCenterId)) {
+      // Permettre l'accès en lecture aux agents ADMIN et STAFF
+      if (req.user.role === "AGENT" && req.user.agentLevel !== "ADMIN" && req.user.agentLevel !== "STAFF") {
         return res.status(403).json({ message: "Accès refusé" });
       }
-      if (!req.user.healthCenterId) {
+      const healthCenterId = await resolveHealthCenterIdForUser(req.user, overrideHealthCenterId);
+      if (!healthCenterId) {
         return res.json({ transfers: [] });
       }
       whereClause = {
         ...whereClause,
         toType: OWNER_TYPES.HEALTHCENTER,
-        toId: req.user.healthCenterId,
+        toId: healthCenterId,
       };
+    } else {
+      // Si aucun des cas précédents n'est vérifié, retourner une liste vide plutôt qu'une erreur
+      return res.json({ transfers: [] });
     }
 
     const transfers = await prisma.pendingStockTransfer.findMany({
@@ -3035,7 +3342,7 @@ const getPendingTransfers = async (req, res, next) => {
 
 // Confirmer un transfert en attente
 const confirmPendingTransfer = async (req, res, next) => {
-  if (!["REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -3068,6 +3375,7 @@ const confirmPendingTransfer = async (req, res, next) => {
       toId = req.user.healthCenterId;
       toType = OWNER_TYPES.HEALTHCENTER;
     }
+    // Pour SUPERADMIN, toId et toType seront déterminés depuis le transfert lui-même
 
     let updatedStock = null;
     let confirmedTransfer = null;
@@ -3090,8 +3398,15 @@ const confirmPendingTransfer = async (req, res, next) => {
         throw Object.assign(new Error("Transfert introuvable"), { status: 404 });
       }
 
-      if (pendingTransfer.toType !== toType || pendingTransfer.toId !== toId) {
-        throw Object.assign(new Error("Ce transfert ne vous appartient pas"), { status: 403 });
+      // Pour SUPERADMIN, utiliser les informations du transfert
+      if (req.user.role === "SUPERADMIN") {
+        toType = pendingTransfer.toType;
+        toId = pendingTransfer.toId;
+      } else {
+        // Pour les autres rôles, vérifier que le transfert leur appartient
+        if (pendingTransfer.toType !== toType || pendingTransfer.toId !== toId) {
+          throw Object.assign(new Error("Ce transfert ne vous appartient pas"), { status: 403 });
+        }
       }
 
       if (pendingTransfer.status !== "PENDING") {
@@ -3101,7 +3416,7 @@ const confirmPendingTransfer = async (req, res, next) => {
         );
       }
 
-      // Vérifier que le stock destination existe
+      // Vérifier que le stock destination existe, sinon le créer
       let stock = null;
       if (toType === OWNER_TYPES.REGIONAL) {
         stock = await tx.stockREGIONAL.findUnique({
@@ -3113,7 +3428,14 @@ const confirmPendingTransfer = async (req, res, next) => {
           },
         });
         if (!stock) {
-          throw Object.assign(new Error("Stock régional introuvable"), { status: 404 });
+          // Créer automatiquement le stock régional s'il n'existe pas
+          stock = await tx.stockREGIONAL.create({
+            data: {
+              vaccineId: pendingTransfer.vaccineId,
+              regionId: toId,
+              quantity: 0,
+            },
+          });
         }
       } else if (toType === OWNER_TYPES.DISTRICT) {
         stock = await tx.stockDISTRICT.findUnique({
@@ -3125,7 +3447,14 @@ const confirmPendingTransfer = async (req, res, next) => {
           },
         });
         if (!stock) {
-          throw Object.assign(new Error("Stock district introuvable"), { status: 404 });
+          // Créer automatiquement le stock district s'il n'existe pas
+          stock = await tx.stockDISTRICT.create({
+            data: {
+              vaccineId: pendingTransfer.vaccineId,
+              districtId: toId,
+              quantity: 0,
+            },
+          });
         }
       } else if (toType === OWNER_TYPES.HEALTHCENTER) {
         stock = await tx.stockHEALTHCENTER.findUnique({
@@ -3137,7 +3466,14 @@ const confirmPendingTransfer = async (req, res, next) => {
           },
         });
         if (!stock) {
-          throw Object.assign(new Error("Stock centre de santé introuvable"), { status: 404 });
+          // Créer automatiquement le stock centre de santé s'il n'existe pas
+          stock = await tx.stockHEALTHCENTER.create({
+            data: {
+              vaccineId: pendingTransfer.vaccineId,
+              healthCenterId: toId,
+              quantity: 0,
+            },
+          });
         }
       }
 
@@ -3347,6 +3683,31 @@ const confirmPendingTransfer = async (req, res, next) => {
                           toType === OWNER_TYPES.DISTRICT ? "district" : 
                           "centre de santé";
 
+    // Enregistrer l'événement
+    logEventAsync({
+      type: "STOCK_TRANSFER",
+      subtype: toType === OWNER_TYPES.REGIONAL ? "REGIONAL" : toType === OWNER_TYPES.DISTRICT ? "DISTRICT" : "HEALTHCENTER",
+      action: "TRANSFER_CONFIRMED",
+      user: {
+        id: req.user.id,
+        firstName: req.user.firstName,
+        lastName: req.user.lastName,
+        email: req.user.email,
+        role: req.user.role,
+      },
+      entityType: "STOCK",
+      entityId: transferId,
+      entityName: confirmedTransfer?.vaccine?.name || "Vaccin",
+      details: {
+        fromType: confirmedTransfer?.fromType,
+        fromId: confirmedTransfer?.fromId,
+        toType: toType,
+        toId: toId,
+        quantity: confirmedTransfer?.quantity,
+        vaccineId: confirmedTransfer?.vaccineId,
+      },
+    });
+
     res.json({
       transfer: confirmedTransfer,
       stock: updatedStock,
@@ -3362,7 +3723,7 @@ const confirmPendingTransfer = async (req, res, next) => {
 
 // Refuser un transfert en attente (destinataire)
 const rejectPendingTransfer = async (req, res, next) => {
-  if (!["REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -3395,6 +3756,7 @@ const rejectPendingTransfer = async (req, res, next) => {
       toId = req.user.healthCenterId;
       toType = OWNER_TYPES.HEALTHCENTER;
     }
+    // Pour SUPERADMIN, toId et toType seront déterminés depuis le transfert lui-même
 
     // Stocker les données pour les notifications avant la transaction
     let transferDataForNotification = null;
@@ -3417,8 +3779,15 @@ const rejectPendingTransfer = async (req, res, next) => {
         throw Object.assign(new Error("Transfert introuvable"), { status: 404 });
       }
 
-      if (pendingTransfer.toType !== toType || pendingTransfer.toId !== toId) {
-        throw Object.assign(new Error("Ce transfert ne vous appartient pas"), { status: 403 });
+      // Pour SUPERADMIN, utiliser les informations du transfert
+      if (req.user.role === "SUPERADMIN") {
+        toType = pendingTransfer.toType;
+        toId = pendingTransfer.toId;
+      } else {
+        // Pour les autres rôles, vérifier que le transfert leur appartient
+        if (pendingTransfer.toType !== toType || pendingTransfer.toId !== toId) {
+          throw Object.assign(new Error("Ce transfert ne vous appartient pas"), { status: 403 });
+        }
       }
 
       if (pendingTransfer.status !== "PENDING") {
@@ -3512,7 +3881,7 @@ const rejectPendingTransfer = async (req, res, next) => {
           toName: toName,
           quantity: pendingTransfer.quantity,
           sentAt: pendingTransfer.createdAt,
-          confirmedAt: null, // Pas de confirmation pour un transfert annulé
+          confirmedAt: new Date(), // Date d'annulation
           confirmedById: req.user.id,
           confirmedByName: cancelledByName,
           lotExpiration: lotExpiration,
@@ -3527,54 +3896,86 @@ const rejectPendingTransfer = async (req, res, next) => {
       });
     });
 
-    // Envoyer notification à l'expéditeur
-    try {
-      const { sendTransferRejectedEmail } = require("../services/emailService");
-      
-      if (transferDataForNotification) {
-        const fromName = await getOwnerName(prisma, transferDataForNotification.fromType, transferDataForNotification.fromId);
-        const toName = await getOwnerName(prisma, transferDataForNotification.toType, transferDataForNotification.toId);
-        
-        // Récupérer les utilisateurs expéditeurs
-        let senderUsers = [];
-        if (transferDataForNotification.fromType === OWNER_TYPES.NATIONAL) {
-          senderUsers = await prisma.user.findMany({
-            where: { role: "NATIONAL", isActive: true },
-            select: { email: true },
-          });
-        } else if (transferDataForNotification.fromType === OWNER_TYPES.REGIONAL) {
-          senderUsers = await prisma.user.findMany({
-            where: { role: "REGIONAL", regionId: transferDataForNotification.fromId, isActive: true },
-            select: { email: true },
-          });
-        } else if (transferDataForNotification.fromType === OWNER_TYPES.DISTRICT) {
-          senderUsers = await prisma.user.findMany({
-            where: { role: "DISTRICT", districtId: transferDataForNotification.fromId, isActive: true },
-            select: { email: true },
-          });
-        }
-
-        if (senderUsers.length > 0) {
-          const emails = senderUsers.map((u) => u.email).filter(Boolean);
-          if (emails.length > 0) {
-            await sendTransferRejectedEmail({
-              emails,
-              vaccineName: transferDataForNotification.vaccineName,
-              quantity: transferDataForNotification.quantity,
-              fromName: fromName || "Expéditeur",
-              toName: toName || "Destinataire",
-            });
-          }
-        }
-      }
-    } catch (emailError) {
-      console.error("Erreur envoi email refus transfert:", emailError);
-      // Ne pas bloquer la réponse si l'email échoue
-    }
-
+    // Répondre immédiatement
     res.json({
       success: true,
       message: "Transfert refusé. Les quantités ont été restaurées.",
+    });
+
+    // Enregistrer l'événement
+    if (transferDataForNotification) {
+      logEventAsync({
+        type: "STOCK_TRANSFER",
+        subtype: toType === OWNER_TYPES.REGIONAL ? "REGIONAL" : toType === OWNER_TYPES.DISTRICT ? "DISTRICT" : "HEALTHCENTER",
+        action: "TRANSFER_REJECTED",
+        user: {
+          id: req.user.id,
+          firstName: req.user.firstName,
+          lastName: req.user.lastName,
+          email: req.user.email,
+          role: req.user.role,
+        },
+        entityType: "STOCK",
+        entityId: transferId,
+        entityName: transferDataForNotification.vaccineName,
+        details: {
+          fromType: transferDataForNotification.fromType,
+          fromId: transferDataForNotification.fromId,
+          toType: transferDataForNotification.toType,
+          toId: transferDataForNotification.toId,
+          quantity: transferDataForNotification.quantity,
+          vaccineId: transferDataForNotification.vaccineId,
+        },
+      });
+    }
+
+    // Envoyer notification à l'expéditeur en arrière-plan (non bloquant)
+    setImmediate(async () => {
+      try {
+        const { sendTransferRejectedEmail } = require("../services/emailService");
+        
+        if (transferDataForNotification) {
+          const fromName = await getOwnerName(prisma, transferDataForNotification.fromType, transferDataForNotification.fromId);
+          const toName = await getOwnerName(prisma, transferDataForNotification.toType, transferDataForNotification.toId);
+          
+          // Récupérer les utilisateurs expéditeurs
+          let senderUsers = [];
+          if (transferDataForNotification.fromType === OWNER_TYPES.NATIONAL) {
+            senderUsers = await prisma.user.findMany({
+              where: { role: "NATIONAL", isActive: true },
+              select: { id: true, email: true },
+            });
+          } else if (transferDataForNotification.fromType === OWNER_TYPES.REGIONAL) {
+            senderUsers = await prisma.user.findMany({
+              where: { role: "REGIONAL", regionId: transferDataForNotification.fromId, isActive: true },
+              select: { id: true, email: true },
+            });
+          } else if (transferDataForNotification.fromType === OWNER_TYPES.DISTRICT) {
+            senderUsers = await prisma.user.findMany({
+              where: { role: "DISTRICT", districtId: transferDataForNotification.fromId, isActive: true },
+              select: { id: true, email: true },
+            });
+          }
+
+          if (senderUsers.length > 0) {
+            const emails = senderUsers.map((u) => u.email).filter(Boolean);
+            const userIds = senderUsers.map((u) => u.id).filter(Boolean);
+            if (emails.length > 0) {
+              await sendTransferRejectedEmail({
+                emails,
+                userIds,
+                vaccineName: transferDataForNotification.vaccineName,
+                quantity: transferDataForNotification.quantity,
+                fromName: fromName || "Expéditeur",
+                toName: toName || "Destinataire",
+              });
+            }
+          }
+        }
+      } catch (emailError) {
+        console.error("Erreur envoi email refus transfert:", emailError);
+        // Ne pas bloquer la réponse si l'email échoue
+      }
     });
   } catch (error) {
     if (error.status) {
@@ -3586,7 +3987,7 @@ const rejectPendingTransfer = async (req, res, next) => {
 
 // Annuler un transfert en attente (expéditeur)
 const cancelPendingTransfer = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -3613,6 +4014,7 @@ const cancelPendingTransfer = async (req, res, next) => {
       }
       fromType = OWNER_TYPES.DISTRICT;
     }
+    // Pour SUPERADMIN, fromId et fromType seront déterminés depuis le transfert lui-même
 
     // Stocker les données pour les notifications avant la transaction
     let transferDataForNotification = null;
@@ -3635,8 +4037,15 @@ const cancelPendingTransfer = async (req, res, next) => {
         throw Object.assign(new Error("Transfert introuvable"), { status: 404 });
       }
 
-      if (pendingTransfer.fromType !== fromType || pendingTransfer.fromId !== fromId) {
-        throw Object.assign(new Error("Ce transfert ne vous appartient pas"), { status: 403 });
+      // Pour SUPERADMIN, utiliser les informations du transfert
+      if (req.user.role === "SUPERADMIN") {
+        fromType = pendingTransfer.fromType;
+        fromId = pendingTransfer.fromId;
+      } else {
+        // Pour les autres rôles, vérifier que le transfert leur appartient
+        if (pendingTransfer.fromType !== fromType || pendingTransfer.fromId !== fromId) {
+          throw Object.assign(new Error("Ce transfert ne vous appartient pas"), { status: 403 });
+        }
       }
 
       if (pendingTransfer.status !== "PENDING") {
@@ -3730,7 +4139,7 @@ const cancelPendingTransfer = async (req, res, next) => {
           toName: toName,
           quantity: pendingTransfer.quantity,
           sentAt: pendingTransfer.createdAt,
-          confirmedAt: null, // Pas de confirmation pour un transfert annulé
+          confirmedAt: new Date(), // Date d'annulation
           confirmedById: req.user.id,
           confirmedByName: cancelledByName,
           lotExpiration: lotExpiration,
@@ -3745,54 +4154,87 @@ const cancelPendingTransfer = async (req, res, next) => {
       });
     });
 
-    // Envoyer notification au destinataire
-    try {
-      const { sendTransferCancelledEmail } = require("../services/emailService");
-      
-      if (transferDataForNotification) {
-        const fromName = await getOwnerName(prisma, transferDataForNotification.fromType, transferDataForNotification.fromId);
-        const toName = await getOwnerName(prisma, transferDataForNotification.toType, transferDataForNotification.toId);
-        
-        // Récupérer les utilisateurs destinataires
-        let recipientUsers = [];
-        if (transferDataForNotification.toType === OWNER_TYPES.REGIONAL) {
-          recipientUsers = await prisma.user.findMany({
-            where: { role: "REGIONAL", regionId: transferDataForNotification.toId, isActive: true },
-            select: { email: true },
-          });
-        } else if (transferDataForNotification.toType === OWNER_TYPES.DISTRICT) {
-          recipientUsers = await prisma.user.findMany({
-            where: { role: "DISTRICT", districtId: transferDataForNotification.toId, isActive: true },
-            select: { email: true },
-          });
-        } else if (transferDataForNotification.toType === OWNER_TYPES.HEALTHCENTER) {
-          recipientUsers = await prisma.user.findMany({
-            where: { role: "AGENT", agentLevel: "ADMIN", healthCenterId: transferDataForNotification.toId, isActive: true },
-            select: { email: true },
-          });
-        }
-
-        if (recipientUsers.length > 0) {
-          const emails = recipientUsers.map((u) => u.email).filter(Boolean);
-          if (emails.length > 0) {
-            await sendTransferCancelledEmail({
-              emails,
-              vaccineName: transferDataForNotification.vaccineName,
-              quantity: transferDataForNotification.quantity,
-              fromName: fromName || "Expéditeur",
-              toName: toName || "Destinataire",
-            });
-          }
-        }
-      }
-    } catch (emailError) {
-      console.error("Erreur envoi email annulation transfert:", emailError);
-      // Ne pas bloquer la réponse si l'email échoue
-    }
-
+    // Répondre immédiatement
     res.json({
       success: true,
       message: "Transfert annulé. Les quantités ont été restaurées.",
+    });
+
+    // Enregistrer l'événement
+    if (transferDataForNotification) {
+      logEventAsync({
+        type: "STOCK_TRANSFER",
+        subtype: transferDataForNotification.fromType === OWNER_TYPES.NATIONAL ? "NATIONAL" : 
+                 transferDataForNotification.fromType === OWNER_TYPES.REGIONAL ? "REGIONAL" : "DISTRICT",
+        action: "TRANSFER_REJECTED",
+        user: {
+          id: req.user.id,
+          firstName: req.user.firstName,
+          lastName: req.user.lastName,
+          email: req.user.email,
+          role: req.user.role,
+        },
+        entityType: "STOCK",
+        entityId: transferId,
+        entityName: transferDataForNotification.vaccineName,
+        details: {
+          fromType: transferDataForNotification.fromType,
+          fromId: transferDataForNotification.fromId,
+          toType: transferDataForNotification.toType,
+          toId: transferDataForNotification.toId,
+          quantity: transferDataForNotification.quantity,
+          vaccineId: transferDataForNotification.vaccineId,
+        },
+      });
+    }
+
+    // Envoyer notification au destinataire en arrière-plan (non bloquant)
+    setImmediate(async () => {
+      try {
+        const { sendTransferCancelledEmail } = require("../services/emailService");
+        
+        if (transferDataForNotification) {
+          const fromName = await getOwnerName(prisma, transferDataForNotification.fromType, transferDataForNotification.fromId);
+          const toName = await getOwnerName(prisma, transferDataForNotification.toType, transferDataForNotification.toId);
+          
+          // Récupérer les utilisateurs destinataires
+          let recipientUsers = [];
+          if (transferDataForNotification.toType === OWNER_TYPES.REGIONAL) {
+            recipientUsers = await prisma.user.findMany({
+              where: { role: "REGIONAL", regionId: transferDataForNotification.toId, isActive: true },
+              select: { id: true, email: true },
+            });
+          } else if (transferDataForNotification.toType === OWNER_TYPES.DISTRICT) {
+            recipientUsers = await prisma.user.findMany({
+              where: { role: "DISTRICT", districtId: transferDataForNotification.toId, isActive: true },
+              select: { id: true, email: true },
+            });
+          } else if (transferDataForNotification.toType === OWNER_TYPES.HEALTHCENTER) {
+            recipientUsers = await prisma.user.findMany({
+              where: { role: "AGENT", agentLevel: "ADMIN", healthCenterId: transferDataForNotification.toId, isActive: true },
+              select: { id: true, email: true },
+            });
+          }
+
+          if (recipientUsers.length > 0) {
+            const emails = recipientUsers.map((u) => u.email).filter(Boolean);
+            const userIds = recipientUsers.map((u) => u.id).filter(Boolean);
+            if (emails.length > 0) {
+              await sendTransferCancelledEmail({
+                emails,
+                userIds,
+                vaccineName: transferDataForNotification.vaccineName,
+                quantity: transferDataForNotification.quantity,
+                fromName: fromName || "Expéditeur",
+                toName: toName || "Destinataire",
+              });
+            }
+          }
+        }
+      } catch (emailError) {
+        console.error("Erreur envoi email annulation transfert:", emailError);
+        // Ne pas bloquer la réponse si l'email échoue
+      }
     });
   } catch (error) {
     if (error.status) {
@@ -3804,12 +4246,12 @@ const cancelPendingTransfer = async (req, res, next) => {
 
 // Obtenir l'historique des transferts avec filtres et pagination
 const getTransferHistory = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
-  // Pour les agents, seuls les ADMIN peuvent voir l'historique
-  if (req.user.role === "AGENT" && req.user.agentLevel !== "ADMIN") {
+  // Pour les agents, seuls les ADMIN et STAFF peuvent voir l'historique
+  if (req.user.role === "AGENT" && req.user.agentLevel !== "ADMIN" && req.user.agentLevel !== "STAFF") {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -3839,8 +4281,14 @@ const getTransferHistory = async (req, res, next) => {
 
     // Filtre par rôle utilisateur
     let roleFilter = null;
-    if (req.user.role === "REGIONAL") {
-      const regionId = await resolveRegionIdForUser(req.user);
+    
+    // Pour SUPERADMIN, accepter healthCenterId, districtId ou regionId depuis query params
+    const overrideHealthCenterId = req.user.role === "SUPERADMIN" ? req.query.healthCenterId : null;
+    const overrideDistrictId = req.user.role === "SUPERADMIN" ? req.query.districtId : null;
+    const overrideRegionId = req.user.role === "SUPERADMIN" ? req.query.regionId : null;
+    
+    if (req.user.role === "REGIONAL" || (req.user.role === "SUPERADMIN" && overrideRegionId && !overrideDistrictId && !overrideHealthCenterId)) {
+      const regionId = await resolveRegionIdForUser(req.user, overrideRegionId);
       if (regionId) {
         const roleConditions = [
           { fromType: OWNER_TYPES.REGIONAL, fromId: regionId },
@@ -3857,8 +4305,8 @@ const getTransferHistory = async (req, res, next) => {
       } else {
         return res.json({ history: [], total: 0, page: pageNum, limit: limitNum });
       }
-    } else if (req.user.role === "DISTRICT") {
-      const districtId = await resolveDistrictIdForUser(req.user);
+    } else if (req.user.role === "DISTRICT" || (req.user.role === "SUPERADMIN" && overrideDistrictId && !overrideHealthCenterId)) {
+      const districtId = await resolveDistrictIdForUser(req.user, overrideDistrictId);
       if (districtId) {
         const roleConditions = [
           { fromType: OWNER_TYPES.DISTRICT, fromId: districtId },
@@ -3874,8 +4322,8 @@ const getTransferHistory = async (req, res, next) => {
       } else {
         return res.json({ history: [], total: 0, page: pageNum, limit: limitNum });
       }
-    } else if (req.user.role === "AGENT") {
-      const healthCenterId = await resolveHealthCenterIdForUser(req.user);
+    } else if (req.user.role === "AGENT" || (req.user.role === "SUPERADMIN" && overrideHealthCenterId)) {
+      const healthCenterId = await resolveHealthCenterIdForUser(req.user, overrideHealthCenterId);
       if (healthCenterId) {
         const roleConditions = [
           { fromType: OWNER_TYPES.HEALTHCENTER, fromId: healthCenterId },
@@ -3892,15 +4340,15 @@ const getTransferHistory = async (req, res, next) => {
         return res.json({ history: [], total: 0, page: pageNum, limit: limitNum });
       }
     }
-    // NATIONAL peut voir tout
+    // NATIONAL et SUPERADMIN (sans filtre d'entité) peuvent voir tout
 
     // Ajouter le filtre de rôle si présent
     if (roleFilter) {
       andConditions.push(roleFilter);
     }
 
-    // Filtres additionnels simples (seulement pour NATIONAL)
-    if (req.user.role === "NATIONAL") {
+    // Filtres additionnels simples (pour NATIONAL et SUPERADMIN sans filtre d'entité)
+    if (req.user.role === "NATIONAL" || (req.user.role === "SUPERADMIN" && !overrideRegionId && !overrideDistrictId && !overrideHealthCenterId)) {
       if (vaccineId) {
         whereClause.vaccineId = vaccineId;
       }
@@ -4006,25 +4454,29 @@ const getTransferHistory = async (req, res, next) => {
 
 // Adapter getPendingTransfers pour inclure les expéditeurs
 const getPendingTransfersForSender = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL", "DISTRICT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
   try {
     let whereClause = { status: "PENDING" };
 
-    if (req.user.role === "NATIONAL") {
+    // Pour SUPERADMIN, accepter regionId ou districtId depuis query params pour déterminer le type d'entité
+    const overrideRegionId = req.user.role === "SUPERADMIN" ? req.query.regionId : null;
+    const overrideDistrictId = req.user.role === "SUPERADMIN" ? req.query.districtId : null;
+
+    if (req.user.role === "NATIONAL" || (req.user.role === "SUPERADMIN" && !overrideRegionId && !overrideDistrictId)) {
       whereClause.fromType = OWNER_TYPES.NATIONAL;
       whereClause.fromId = null;
-    } else if (req.user.role === "REGIONAL") {
-      const regionId = await resolveRegionIdForUser(req.user);
+    } else if (req.user.role === "REGIONAL" || (req.user.role === "SUPERADMIN" && overrideRegionId && !overrideDistrictId)) {
+      const regionId = await resolveRegionIdForUser(req.user, overrideRegionId);
       if (!regionId) {
         return res.json({ transfers: [] });
       }
       whereClause.fromType = OWNER_TYPES.REGIONAL;
       whereClause.fromId = regionId;
-    } else if (req.user.role === "DISTRICT") {
-      const districtId = await resolveDistrictIdForUser(req.user);
+    } else if (req.user.role === "DISTRICT" || (req.user.role === "SUPERADMIN" && overrideDistrictId)) {
+      const districtId = await resolveDistrictIdForUser(req.user, overrideDistrictId);
       if (!districtId) {
         return res.json({ transfers: [] });
       }

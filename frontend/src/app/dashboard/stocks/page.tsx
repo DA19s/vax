@@ -6,8 +6,11 @@ import {
   ArrowRightLeft,
   Calendar,
   CheckCircle,
+  ChevronDown,
+  ChevronUp,
   Clock,
   Filter,
+  Info,
   Loader2,
   PackageOpen,
   PenSquare,
@@ -62,6 +65,9 @@ type NationalStock = {
   vaccine: VaccineInfo;
   hasExpiredLot?: boolean;
   nearestExpiration?: string | null;
+  lotCount?: number;
+  expiredLotCount?: number;
+  expiredQuantity?: number;
 };
 
 type NationalStockResponse = {
@@ -154,6 +160,38 @@ const formatExpirationDate = (value: string) => {
   }
 };
 
+const formatEntityName = (type: string, name: string | null | undefined): string => {
+  if (!name) {
+    // Si pas de nom, on retourne juste le type
+    switch (type) {
+      case "NATIONAL":
+        return "National";
+      case "REGIONAL":
+        return "Région";
+      case "DISTRICT":
+        return "District";
+      case "HEALTHCENTER":
+        return "Centre de santé";
+      default:
+        return "Inconnu";
+    }
+  }
+  
+  // Si on a un nom, on retourne "Type: Nom"
+  switch (type) {
+    case "NATIONAL":
+      return `National: ${name}`;
+    case "REGIONAL":
+      return `Région: ${name}`;
+    case "DISTRICT":
+      return `District: ${name}`;
+    case "HEALTHCENTER":
+      return `Centre de santé: ${name}`;
+    default:
+      return name;
+  }
+};
+
 const isDateExpired = (value: string) => {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
@@ -172,9 +210,9 @@ type RegionsResponse =
     }
   | Region[];
 
-function NationalStocksPage() {
+export function NationalStocksPage() {
   const { accessToken, user } = useAuth();
-  const canAdjust = user?.role === "NATIONAL";
+  const canAdjust = user?.role === "NATIONAL" || user?.role === "SUPERADMIN";
 
   const [stocks, setStocks] = useState<NationalStock[]>([]);
   const [vaccines, setVaccines] = useState<VaccineInfo[]>([]);
@@ -255,6 +293,8 @@ function NationalStocksPage() {
     search: "",
   });
 
+  const [legendExpanded, setLegendExpanded] = useState(false);
+
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const currentQuantityValue = updateContext?.currentQuantity ?? 0;
   const parsedUpdateQuantity = Number(updateQuantity);
@@ -329,15 +369,66 @@ function NationalStocksPage() {
         }),
       ]);
 
-      if (!stockRes.ok || !vaccineRes.ok || !regionsRes.ok) {
-        throw new Error("status non valide");
+      if (!stockRes.ok) {
+        const errorText = await stockRes.text().catch(() => "Erreur inconnue");
+        console.error("Erreur API stock/national:", stockRes.status, errorText);
+        throw new Error(`Erreur chargement stocks: ${stockRes.status} - ${errorText}`);
+      }
+      if (!vaccineRes.ok) {
+        const errorText = await vaccineRes.text().catch(() => "Erreur inconnue");
+        console.error("Erreur API vaccine:", vaccineRes.status, errorText);
+        throw new Error(`Erreur chargement vaccins: ${vaccineRes.status} - ${errorText}`);
+      }
+      if (!regionsRes.ok) {
+        const errorText = await regionsRes.text().catch(() => "Erreur inconnue");
+        console.error("Erreur API region:", regionsRes.status, errorText);
+        throw new Error(`Erreur chargement régions: ${regionsRes.status} - ${errorText}`);
       }
 
       const stockData: NationalStockResponse = await stockRes.json();
       const vaccineData: VaccineResponse = await vaccineRes.json();
       const regionsData: RegionsResponse = await regionsRes.json();
 
-      setStocks(Array.isArray(stockData?.national) ? stockData.national : []);
+      const stocksList = Array.isArray(stockData?.national) ? stockData.national : [];
+      
+      // Charger les lots pour chaque stock et calculer les statistiques
+      const stocksWithLots = await Promise.all(
+        stocksList.map(async (stock) => {
+          try {
+            const lotsRes = await fetch(`${API_URL}/api/stock/national/${stock.vaccineId}/lots`, {
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${accessToken}`,
+              },
+            });
+            
+            if (lotsRes.ok) {
+              const lotsData: LotResponse = await lotsRes.json();
+              const lots = lotsData.lots || [];
+              const expiredLots = lots.filter((lot) => lot.status === "EXPIRED" || isDateExpired(lot.expiration));
+              const expiredQuantity = expiredLots.reduce((sum, lot) => sum + lot.quantity, 0);
+              
+              return {
+                ...stock,
+                lotCount: lots.length,
+                expiredLotCount: expiredLots.length,
+                expiredQuantity,
+              };
+            }
+          } catch (err) {
+            console.error(`Erreur chargement lots pour ${stock.vaccineId}:`, err);
+          }
+          
+          return {
+            ...stock,
+            lotCount: 0,
+            expiredLotCount: 0,
+            expiredQuantity: 0,
+          };
+        })
+      );
+      
+      setStocks(stocksWithLots);
       setVaccines(
         Array.isArray(vaccineData)
           ? vaccineData
@@ -1196,12 +1287,14 @@ function NationalStocksPage() {
     <DashboardShell active="/dashboard/stocks">
       <div className="space-y-8">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-2xl font-semibold text-slate-900">Stocks & lots</h2>
-            <p className="text-sm text-slate-500">
-              Suivi des stocks nationaux et distribution vers les régions.
-            </p>
-          </div>
+          {user?.role !== "SUPERADMIN" && (
+            <div>
+              <h2 className="text-2xl font-semibold text-slate-900">Stocks & lots</h2>
+              <p className="text-sm text-slate-500">
+                Suivi des stocks nationaux et distribution vers les régions.
+              </p>
+            </div>
+          )}
           
           {/* Boutons d'action et onglets */}
           <div className="flex flex-col gap-3 md:flex-row md:items-center">
@@ -1329,7 +1422,35 @@ function NationalStocksPage() {
           </div>
         )}
 
-        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="rounded-xl border border-blue-100 bg-blue-50/50 mb-4">
+          <button
+            type="button"
+            onClick={() => setLegendExpanded(!legendExpanded)}
+            className="w-full px-3 py-2 flex items-center justify-between gap-2 text-left hover:bg-blue-100/50 transition rounded-xl"
+          >
+            <div className="flex items-center gap-2 flex-1">
+              <Info className="h-4 w-4 text-blue-600 flex-shrink-0" />
+              <h4 className="text-xs font-semibold text-blue-900">Qu'est-ce qu'un lot ?</h4>
+            </div>
+            {legendExpanded ? (
+              <ChevronUp className="h-4 w-4 text-blue-600 flex-shrink-0" />
+            ) : (
+              <ChevronDown className="h-4 w-4 text-blue-600 flex-shrink-0" />
+            )}
+          </button>
+          {legendExpanded && (
+            <div className="px-3 pb-2 pt-1">
+              <p className="text-xs text-blue-800 leading-relaxed">
+                Un <strong>lot</strong> représente un ensemble de doses d'un vaccin avec une même date d'expiration. 
+                Chaque stock peut contenir plusieurs lots, chacun ayant sa propre date d'expiration. 
+                Les lots permettent de gérer efficacement la traçabilité et le suivi des vaccins, notamment pour identifier 
+                les doses expirées et optimiser la distribution selon les dates d'expiration.
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50">
               <tr>
@@ -1340,7 +1461,7 @@ function NationalStocksPage() {
                   Quantité (national)
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  Expiration
+                  Nombre de lots
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
                   Actions
@@ -1362,72 +1483,58 @@ function NationalStocksPage() {
                 </tr>
               ) : (
                 stocks.map((stock) => {
-                  const expired =
-                    stock.hasExpiredLot ||
-                    (stock.nearestExpiration
-                      ? isDateExpired(stock.nearestExpiration)
-                      : false);
+                  const lotCount = stock.lotCount ?? 0;
+                  const expiredLotCount = stock.expiredLotCount ?? 0;
+                  const expiredQuantity = stock.expiredQuantity ?? 0;
+                  const totalQuantity = stock.quantity ?? 0;
+                  const validQuantity = totalQuantity - expiredQuantity;
+                  const validLotCount = lotCount - expiredLotCount;
+                  
+                  // Vérifier si le stock peut être envoyé
+                  const canSend = lotCount > 0 && validLotCount > 0 && validQuantity > 0;
+                  const disabledReason = lotCount === 0 
+                    ? "Aucun lot disponible pour ce vaccin"
+                    : validLotCount === 0
+                    ? "Tous les lots sont expirés"
+                    : validQuantity === 0
+                    ? "Toutes les quantités sont expirées"
+                    : "";
+                  
                   return (
                     <tr
                       key={stock.id}
-                      className={
-                        expired
-                          ? "bg-red-50/70 text-red-700 hover:bg-red-50"
-                          : "hover:bg-slate-50/80"
-                      }
+                      className="hover:bg-slate-50/80"
                     >
                     <td className="px-6 py-4">
-                      <div
-                        className={`font-semibold ${
-                          expired ? "text-red-700" : "text-slate-900"
-                        }`}
-                      >
+                      <div className="font-semibold text-slate-900">
                         {stock.vaccine.name}
                       </div>
-                      <div
-                        className={`text-xs ${
-                          expired ? "text-red-600" : "text-slate-500"
-                        }`}
-                      >
+                      <div className="text-xs text-slate-500">
                         {stock.vaccine.description}
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <div
-                        className={`font-semibold ${
-                          expired ? "text-red-700" : "text-slate-800"
-                        }`}
-                      >
+                      <div className="font-semibold text-slate-800">
                         {(stock.quantity ?? 0).toLocaleString("fr-FR")}
+                        {expiredQuantity > 0 && (
+                          <span className="ml-2 text-sm font-normal text-red-600">
+                            ({expiredQuantity.toLocaleString("fr-FR")} expiré{expiredQuantity > 1 ? "s" : ""})
+                          </span>
+                        )}
                       </div>
-                      <div
-                        className={`text-xs ${
-                          expired ? "text-red-600" : "text-slate-500"
-                        }`}
-                      >
+                      <div className="text-xs text-slate-500">
                         {stock.vaccine.dosesRequired} doses requises
                       </div>
                     </td>
                     <td className="px-6 py-4 text-sm">
-                      {stock.nearestExpiration ? (
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`font-medium ${
-                              expired ? "text-red-700" : "text-slate-700"
-                            }`}
-                          >
-                            {formatExpirationDate(stock.nearestExpiration)}
+                      <div className="font-medium text-slate-700">
+                        {lotCount} lot{lotCount > 1 ? "s" : ""}
+                        {expiredLotCount > 0 && (
+                          <span className="ml-2 text-red-600">
+                            - {expiredLotCount} expiré{expiredLotCount > 1 ? "s" : ""}
                           </span>
-                          {isDateExpired(stock.nearestExpiration) && (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600">
-                              <AlertTriangle className="h-3 w-3" />
-                              Expiré
-                            </span>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-slate-400">Non définie</span>
-                      )}
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex justify-end gap-2">
@@ -1439,14 +1546,24 @@ function NationalStocksPage() {
                           <PackageOpen className="h-4 w-4" />
                           Lots
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => openTransferModal(stock)}
-                          className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-100"
-                        >
-                          <ArrowRightLeft className="h-4 w-4" />
-                          Envoyer
-                        </button>
+                        <div className="relative group">
+                          <button
+                            type="button"
+                            onClick={() => canSend && openTransferModal(stock)}
+                            disabled={!canSend}
+                            className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-50"
+                            title={!canSend ? disabledReason : undefined}
+                          >
+                            <ArrowRightLeft className="h-4 w-4" />
+                            Envoyer
+                          </button>
+                          {!canSend && (
+                            <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-10 w-48 rounded-lg bg-slate-900 px-3 py-2 text-xs text-white shadow-lg">
+                              {disabledReason}
+                              <div className="absolute top-full right-4 -mt-1 h-2 w-2 rotate-45 bg-slate-900"></div>
+                            </div>
+                          )}
+                        </div>
                         <button
                           type="button"
                           onClick={() => openUpdateModal(stock)}
@@ -1522,7 +1639,7 @@ function NationalStocksPage() {
                             </div>
                           </td>
                           <td className="px-6 py-4 text-sm text-slate-700">
-                            {transfer.toName || (transfer.toType === "REGIONAL" ? "Région" : transfer.toType === "DISTRICT" ? "District" : transfer.toType === "HEALTHCENTER" ? "Centre de santé" : "Inconnu")}
+                            {formatEntityName(transfer.toType, transfer.toName)}
                           </td>
                           <td className="px-6 py-4 text-sm text-slate-700">
                             {transfer.quantity.toLocaleString("fr-FR")} doses
@@ -1583,23 +1700,23 @@ function NationalStocksPage() {
                 </p>
               </div>
             ) : (
-              <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+              <div className="overflow-x-auto overflow-hidden rounded-2xl md:rounded-3xl border border-slate-200 bg-white shadow-sm">
                 <table className="min-w-full divide-y divide-slate-200">
                   <thead className="bg-slate-50">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-left text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Vaccin
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-left text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Expéditeur
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-left text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Quantité
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-left text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Date d'envoi
                       </th>
-                      <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-right text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Actions
                       </th>
                     </tr>
@@ -1609,18 +1726,18 @@ function NationalStocksPage() {
                       const sentDate = new Date(transfer.createdAt);
                       return (
                         <tr key={transfer.id} className="hover:bg-slate-50">
-                          <td className="px-6 py-4">
-                            <div className="text-sm font-medium text-slate-900">
+                          <td className="px-2 md:px-6 py-2 md:py-4">
+                            <div className="text-xs md:text-sm font-medium text-slate-900">
                               {transfer.vaccine?.name ?? "Vaccin inconnu"}
                             </div>
                           </td>
-                          <td className="px-6 py-4 text-sm text-slate-700">
-                            {transfer.fromName || (transfer.fromType === "NATIONAL" ? "Stock National" : transfer.fromType === "REGIONAL" ? "Région" : transfer.fromType === "DISTRICT" ? "District" : "Inconnu")}
+                          <td className="px-2 md:px-6 py-2 md:py-4 text-xs md:text-sm text-slate-700">
+                            {formatEntityName(transfer.fromType, transfer.fromName)}
                           </td>
-                          <td className="px-6 py-4 text-sm text-slate-700">
+                          <td className="px-2 md:px-6 py-2 md:py-4 text-xs md:text-sm text-slate-700">
                             {transfer.quantity.toLocaleString("fr-FR")} doses
                           </td>
-                          <td className="px-6 py-4 text-sm text-slate-600">
+                          <td className="px-2 md:px-6 py-2 md:py-4 text-xs md:text-sm text-slate-600">
                             {sentDate.toLocaleDateString("fr-FR", {
                               day: "2-digit",
                               month: "2-digit",
@@ -1629,23 +1746,24 @@ function NationalStocksPage() {
                               minute: "2-digit",
                             })}
                           </td>
-                          <td className="px-6 py-4">
-                            <div className="flex justify-end gap-2">
+                          <td className="px-2 md:px-6 py-2 md:py-4">
+                            <div className="flex justify-end gap-1 md:gap-2">
                               <button
                                 type="button"
                                 onClick={() => handleRejectTransfer(transfer.id)}
                                 disabled={rejectingTransferId === transfer.id}
-                                className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                                className="flex items-center gap-1 md:gap-2 rounded-lg md:rounded-xl border border-red-200 bg-red-50 px-2 md:px-4 py-1 md:py-2 text-[10px] md:text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
                               >
                                 {rejectingTransferId === transfer.id ? (
                                   <>
-                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
-                                    Refus...
+                                    <div className="h-3 w-3 md:h-4 md:w-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
+                                    <span className="hidden sm:inline">Refus...</span>
+                                    <span className="sm:hidden">...</span>
                                   </>
                                 ) : (
                                   <>
-                                    <X className="h-4 w-4" />
-                                    Refuser
+                                    <X className="h-3 w-3 md:h-4 md:w-4" />
+                                    <span className="hidden sm:inline">Refuser</span>
                                   </>
                                 )}
                               </button>
@@ -1653,17 +1771,18 @@ function NationalStocksPage() {
                                 type="button"
                                 onClick={() => handleConfirmTransfer(transfer.id)}
                                 disabled={confirmingTransferId === transfer.id}
-                                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                                className="flex items-center gap-1 md:gap-2 rounded-lg md:rounded-xl bg-emerald-600 px-2 md:px-4 py-1 md:py-2 text-[10px] md:text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
                               >
                                 {confirmingTransferId === transfer.id ? (
                                   <>
-                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                                    Confirmation...
+                                    <div className="h-3 w-3 md:h-4 md:w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                    <span className="hidden sm:inline">Confirmation...</span>
+                                    <span className="sm:hidden">...</span>
                                   </>
                                 ) : (
                                   <>
-                                    <CheckCircle className="h-4 w-4" />
-                                    Confirmer
+                                    <CheckCircle className="h-3 w-3 md:h-4 md:w-4" />
+                                    <span className="hidden sm:inline">Confirmer</span>
                                   </>
                                 )}
                               </button>
@@ -1708,7 +1827,7 @@ function NationalStocksPage() {
                   <label className="mb-2 block text-xs font-semibold text-blue-700">
                     Date d'envoi
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
                       <label className="mb-1 block text-xs font-medium text-slate-600">
                         Du
@@ -1734,12 +1853,12 @@ function NationalStocksPage() {
                   </div>
                 </div>
                 
-                {/* Bloc Date de confirmation */}
+                {/* Bloc Date de confirmation/annulation */}
                 <div className="w-[280px] rounded-xl border-2 border-green-200 bg-green-50/30 p-3">
                   <label className="mb-2 block text-xs font-semibold text-green-700">
-                    Date de confirmation
+                    Date de confirmation/annulation
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
                       <label className="mb-1 block text-xs font-medium text-slate-600">
                         Du
@@ -1856,7 +1975,7 @@ function NationalStocksPage() {
                           Date envoi
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
-                          Date confirmation
+                          Confirmation/annulation
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                           Expiration lot
@@ -1879,10 +1998,10 @@ function NationalStocksPage() {
                               </div>
                             </td>
                             <td className="px-6 py-4 text-sm text-slate-700">
-                              {item.fromName || "Non spécifié"}
+                              {formatEntityName(item.fromType, item.fromName)}
                             </td>
                             <td className="px-6 py-4 text-sm text-slate-700">
-                              {item.toName || "Non spécifié"}
+                              {formatEntityName(item.toType, item.toName)}
                             </td>
                             <td className="px-6 py-4 text-sm text-slate-700">
                               {item.quantity.toLocaleString("fr-FR")} doses
@@ -1970,7 +2089,7 @@ function NationalStocksPage() {
 
       {createModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl">
+          <div className="w-full max-w-[95vw] md:max-w-lg rounded-3xl bg-white shadow-2xl">
             <form onSubmit={handleCreateStock} className="space-y-4 p-6">
               <h3 className="text-lg font-semibold text-slate-900">Créer un stock national</h3>
               <p className="text-sm text-slate-500">
@@ -2023,7 +2142,7 @@ function NationalStocksPage() {
 
       {updateModalOpen && updateContext && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-2xl rounded-3xl bg-white shadow-2xl">
+          <div className="w-full max-w-[95vw] md:max-w-2xl rounded-3xl bg-white shadow-2xl">
             <div className="p-6">
               <h3 className="text-lg font-semibold text-slate-900">
                 Ajuster le stock — {updateContext.vaccineName}
@@ -2214,7 +2333,7 @@ function NationalStocksPage() {
 
       {transferModalOpen && transferContext && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl">
+          <div className="w-full max-w-[95vw] md:max-w-lg rounded-3xl bg-white shadow-2xl">
             <form onSubmit={handleTransferSubmit} className="space-y-4 p-6">
               <h3 className="text-lg font-semibold text-slate-900">
                 Envoyer du stock — {transferContext.vaccineName}
@@ -2307,7 +2426,7 @@ function NationalStocksPage() {
 
       {lotModalOpen && lotContext && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
-          <div className="w-full max-w-4xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
+          <div className="w-full max-w-[95vw] md:max-w-4xl rounded-3xl border border-slate-200 bg-white p-4 md:p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">
@@ -2372,7 +2491,10 @@ function NationalStocksPage() {
                     {lotItems.map((lot) => {
                       const expired = lot.status === "EXPIRED" || isDateExpired(lot.expiration);
                       return (
-                        <tr key={lot.id} className="hover:bg-slate-50/80">
+                        <tr
+                          key={lot.id}
+                          className={expired ? "bg-red-50/70 hover:bg-red-50" : "hover:bg-slate-50/80"}
+                        >
                           <td className="px-4 py-3">
                             <div className="font-medium text-slate-800">{lot.id}</div>
                             {lot.sourceLotId && (
@@ -2417,15 +2539,17 @@ function NationalStocksPage() {
                           </td>
                           <td className="px-4 py-3 text-right">
                             <div className="flex justify-end">
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteLot(lot.id)}
-                                disabled={lotDeletingId === lot.id}
-                                className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                                {lotDeletingId === lot.id ? "Suppression…" : "Supprimer"}
-                              </button>
+                              {(user?.role === "SUPERADMIN" || user?.role === "NATIONAL" || expired) && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteLot(lot.id)}
+                                  disabled={lotDeletingId === lot.id}
+                                  className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  {lotDeletingId === lot.id ? "Suppression…" : "Supprimer"}
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -2444,13 +2568,6 @@ function NationalStocksPage() {
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => lotContext && fetchLotsForVaccine(lotContext.vaccineId)}
-                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
-                >
-                  Rafraîchir
-                </button>
                 <button
                   type="button"
                   onClick={closeNationalLotModal}
@@ -2479,6 +2596,9 @@ type RegionalStock = {
   } | null;
   hasExpiredLot?: boolean;
   nearestExpiration?: string | null;
+  lotCount?: number;
+  expiredLotCount?: number;
+  expiredQuantity?: number;
 };
 
 type DistrictStock = {
@@ -2493,6 +2613,9 @@ type DistrictStock = {
   } | null;
   hasExpiredLot?: boolean;
   nearestExpiration?: string | null;
+  lotCount?: number;
+  expiredLotCount?: number;
+  expiredQuantity?: number;
 };
 
 type DistrictOption = {
@@ -2569,7 +2692,7 @@ type HealthCenterStock = {
   nearestExpiration?: string | null;
 };
 
-function RegionalStocksPage() {
+export function RegionalStocksPage() {
   const { accessToken } = useAuth();
 
   const [stocks, setStocks] = useState<RegionalStock[]>([]);
@@ -2602,6 +2725,25 @@ function RegionalStocksPage() {
   const [regionalDeletingId, setRegionalDeletingId] = useState<string | null>(null);
   const [lotDeletingId, setLotDeletingId] = useState<string | null>(null);
   
+  // États pour l'ajustement
+  const { user } = useAuth();
+  const canAdjust = user?.role === "SUPERADMIN";
+  const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const [updateContext, setUpdateContext] = useState<{ vaccineId: string; vaccineName: string; currentQuantity: number } | null>(null);
+  const [updateQuantity, setUpdateQuantity] = useState<string>("");
+  const [updateMode, setUpdateMode] = useState<"reduce" | "add">("add");
+  const [reduceQuantity, setReduceQuantity] = useState<string>("");
+  const [reduceRemaining, setReduceRemaining] = useState<number>(0);
+  const [reduceLots, setReduceLots] = useState<LotItem[]>([]);
+  const [reduceLoading, setReduceLoading] = useState(false);
+  const [reduceError, setReduceError] = useState<string | null>(null);
+  const [selectedLotId, setSelectedLotId] = useState<string | null>(null);
+  const [addQuantity, setAddQuantity] = useState<string>("");
+  const [addQuantityError, setAddQuantityError] = useState<string | null>(null);
+  const [addExpiration, setAddExpiration] = useState<string>("");
+  const [updateExpiration, setUpdateExpiration] = useState<string>("");
+  const [updating, setUpdating] = useState(false);
+  
   // États pour les onglets
   const [activeTab, setActiveTab] = useState<"stocks" | "pending-received" | "pending-sent" | "history">("stocks");
   
@@ -2632,6 +2774,8 @@ function RegionalStocksPage() {
     confirmedEndDate: "",
     search: "",
   });
+
+  const [legendExpanded, setLegendExpanded] = useState(false);
 
   const fetchRegionalStats = useCallback(async () => {
     if (!accessToken) {
@@ -2705,19 +2849,87 @@ function RegionalStocksPage() {
         }),
       ]);
 
-      if (!stockRes.ok || !vaccineRes.ok || !districtRes.ok) {
-        const payload =
-          (!stockRes.ok ? await stockRes.json().catch(() => null) : null) ??
-          (!vaccineRes.ok ? await vaccineRes.json().catch(() => null) : null) ??
-          (!districtRes.ok ? await districtRes.json().catch(() => null) : null);
-        throw new Error(payload?.message ?? "status non valide");
+      if (!stockRes.ok) {
+        const errorText = await stockRes.text().catch(() => "Erreur inconnue");
+        let errorMessage = "Erreur inconnue";
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.message || errorText;
+        } catch {
+          errorMessage = errorText;
+        }
+        console.error("Erreur API stock/regional:", stockRes.status, errorMessage);
+        throw new Error(`Erreur chargement stocks régionaux: ${stockRes.status} - ${errorMessage}`);
+      }
+      if (!vaccineRes.ok) {
+        const errorText = await vaccineRes.text().catch(() => "Erreur inconnue");
+        let errorMessage = "Erreur inconnue";
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.message || errorText;
+        } catch {
+          errorMessage = errorText;
+        }
+        console.error("Erreur API vaccine:", vaccineRes.status, errorMessage);
+        throw new Error(`Erreur chargement vaccins: ${vaccineRes.status} - ${errorMessage}`);
+      }
+      if (!districtRes.ok) {
+        const errorText = await districtRes.text().catch(() => "Erreur inconnue");
+        let errorMessage = "Erreur inconnue";
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.message || errorText;
+        } catch {
+          errorMessage = errorText;
+        }
+        console.error("Erreur API district:", districtRes.status, errorMessage);
+        throw new Error(`Erreur chargement districts: ${districtRes.status} - ${errorMessage}`);
       }
 
       const stockPayload = (await stockRes.json()) as { regional?: RegionalStock[] };
       const vaccinePayload: VaccineResponse = await vaccineRes.json();
       const districtPayload = await districtRes.json();
 
-      setStocks(Array.isArray(stockPayload?.regional) ? stockPayload.regional : []);
+      const stocksList = Array.isArray(stockPayload?.regional) ? stockPayload.regional : [];
+      
+      // Charger les lots pour chaque stock et calculer les statistiques
+      const stocksWithLots = await Promise.all(
+        stocksList.map(async (stock) => {
+          try {
+            const lotsRes = await fetch(`${API_URL}/api/stock/regional/${stock.vaccineId}/lots`, {
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${accessToken}`,
+              },
+            });
+            
+            if (lotsRes.ok) {
+              const lotsData: LotResponse = await lotsRes.json();
+              const lots = lotsData.lots || [];
+              const expiredLots = lots.filter((lot) => lot.status === "EXPIRED" || isDateExpired(lot.expiration));
+              const expiredQuantity = expiredLots.reduce((sum, lot) => sum + lot.quantity, 0);
+              
+              return {
+                ...stock,
+                lotCount: lots.length,
+                expiredLotCount: expiredLots.length,
+                expiredQuantity,
+              };
+            }
+          } catch (err) {
+            console.error(`Erreur chargement lots pour ${stock.vaccineId}:`, err);
+          }
+          
+          return {
+            ...stock,
+            lotCount: 0,
+            expiredLotCount: 0,
+            expiredQuantity: 0,
+          };
+        })
+      );
+      
+      setStocks(stocksWithLots);
       setVaccines(
         Array.isArray(vaccinePayload)
           ? vaccinePayload
@@ -3089,11 +3301,6 @@ function RegionalStocksPage() {
     setLotError(null);
   }, []);
 
-  const refreshRegionalLots = useCallback(() => {
-    if (lotContext) {
-      void fetchRegionalLots(lotContext.vaccineId, lotContext.ownerId ?? null);
-    }
-  }, [fetchRegionalLots, lotContext]);
 
   const handleDeleteRegionalLot = useCallback(
     async (lotId: string) => {
@@ -3323,16 +3530,212 @@ function RegionalStocksPage() {
     }
   };
 
+  // Fonctions pour l'ajustement
+  const openUpdateModal = async (stock: RegionalStock) => {
+    setUpdateContext({
+      vaccineId: stock.vaccineId,
+      vaccineName: stock.vaccine.name,
+      currentQuantity: stock.quantity ?? 0,
+    });
+    setUpdateQuantity(String(stock.quantity ?? 0));
+    setUpdateMode("add");
+    setAddQuantity("");
+    setAddExpiration("");
+    setUpdateExpiration("");
+    setAddQuantityError(null);
+    setReduceQuantity("");
+    setReduceRemaining(0);
+    setReduceLots([]);
+    setReduceError(null);
+    setSelectedLotId(null);
+    setUpdateModalOpen(true);
+  };
+
+  const resetUpdateModal = () => {
+    setUpdateModalOpen(false);
+    setUpdateContext(null);
+    setUpdateQuantity("");
+    setAddQuantity("");
+    setAddExpiration("");
+    setUpdateExpiration("");
+    setAddQuantityError(null);
+    setUpdating(false);
+    setReduceQuantity("");
+    setReduceRemaining(0);
+    setReduceLots([]);
+    setReduceError(null);
+    setSelectedLotId(null);
+  };
+
+  const loadLotsForReduce = useCallback(async () => {
+    if (!updateContext?.vaccineId || !accessToken) return;
+
+    try {
+      setReduceLoading(true);
+      setReduceError(null);
+      const response = await fetch(
+        `${API_URL}/api/stock/regional/${updateContext.vaccineId}/lots`,
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Impossible de charger les lots");
+      }
+
+      const payload: LotResponse = await response.json();
+      const validLots = payload.lots.filter((lot) => lot.remainingQuantity > 0);
+      setReduceLots(validLots);
+      setReduceRemaining(payload.totalRemaining);
+    } catch (err) {
+      console.error("Erreur chargement lots:", err);
+      setReduceError(
+        err instanceof Error ? err.message : "Impossible de charger les lots"
+      );
+    } finally {
+      setReduceLoading(false);
+    }
+  }, [updateContext?.vaccineId, accessToken]);
+
+  useEffect(() => {
+    if (updateMode === "reduce" && updateContext?.vaccineId && !reduceLots.length && !reduceLoading) {
+      loadLotsForReduce();
+    }
+  }, [updateMode, updateContext?.vaccineId, loadLotsForReduce, reduceLots.length, reduceLoading]);
+
+  const handleAddQuantitySubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!updateContext || !accessToken) return;
+
+    const quantityValue = Number(addQuantity);
+    if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
+      setAddQuantityError("Veuillez saisir une quantité valide.");
+      return;
+    }
+
+    if (!addExpiration) {
+      setAddQuantityError("Veuillez indiquer la date d'expiration du lot ajouté.");
+      return;
+    }
+
+    try {
+      setAddQuantityError(null);
+      setUpdating(true);
+      const response = await fetch(`${API_URL}/api/stock/add-regional`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          vaccineId: updateContext.vaccineId,
+          quantity: quantityValue,
+          expiration: `${addExpiration}T00:00:00.000Z`,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      resetUpdateModal();
+      await Promise.all([fetchRegionalStocks(), fetchRegionalStats()]);
+    } catch (err) {
+      console.error("Erreur ajout stock régional:", err);
+      setAddQuantityError(
+        err instanceof Error
+          ? err.message
+          : "Impossible d'ajouter au stock régional"
+      );
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleReduceLotSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!updateContext || !accessToken || !selectedLotId) return;
+
+    const quantityValue = Number(reduceQuantity);
+    if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
+      setReduceError("Veuillez saisir une quantité valide supérieure à 0.");
+      return;
+    }
+
+    const selectedLot = reduceLots.find((lot) => lot.id === selectedLotId);
+    if (!selectedLot) {
+      setReduceError("Lot sélectionné introuvable.");
+      return;
+    }
+
+    const actualQuantityToReduce = Math.min(quantityValue, selectedLot.remainingQuantity);
+    const parsedReduceQuantity = quantityValue;
+
+    try {
+      setReduceError(null);
+      setUpdating(true);
+
+      const response = await fetch(
+        `${API_URL}/api/stock/regional/lot/${selectedLotId}/reduce`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            quantity: actualQuantityToReduce,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? "Erreur lors de la diminution");
+      }
+
+      await loadLotsForReduce();
+      
+      const remainingToReduce = parsedReduceQuantity - actualQuantityToReduce;
+      if (remainingToReduce > 0) {
+        setReduceQuantity(String(remainingToReduce));
+        setSelectedLotId(null);
+        alert(
+          `Diminution partielle effectuée. Il reste ${remainingToReduce} doses à diminuer. Veuillez sélectionner un autre lot.`
+        );
+      } else {
+        resetUpdateModal();
+        await Promise.all([fetchRegionalStocks(), fetchRegionalStats()]);
+      }
+    } catch (err) {
+      console.error("Erreur diminution stock régional:", err);
+      setReduceError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de diminuer le stock régional"
+      );
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   return (
     <DashboardShell active="/dashboard/stocks">
       <div className="space-y-8">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-2xl font-semibold text-slate-900">Stocks & lots</h2>
-            <p className="text-sm text-slate-500">
-              Suivi des stocks régionaux et distribution vers les districts.
-            </p>
-          </div>
+          {user?.role !== "SUPERADMIN" && (
+            <div>
+              <h2 className="text-2xl font-semibold text-slate-900">Stocks & lots</h2>
+              <p className="text-sm text-slate-500">
+                Suivi des stocks régionaux et distribution vers les districts.
+              </p>
+            </div>
+          )}
           
           {/* Boutons d'action et onglets */}
           <div className="flex flex-col gap-3 md:flex-row md:items-center">
@@ -3475,7 +3878,35 @@ function RegionalStocksPage() {
           </div>
         )}
 
-        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="rounded-xl border border-blue-100 bg-blue-50/50 mb-4">
+          <button
+            type="button"
+            onClick={() => setLegendExpanded(!legendExpanded)}
+            className="w-full px-3 py-2 flex items-center justify-between gap-2 text-left hover:bg-blue-100/50 transition rounded-xl"
+          >
+            <div className="flex items-center gap-2 flex-1">
+              <Info className="h-4 w-4 text-blue-600 flex-shrink-0" />
+              <h4 className="text-xs font-semibold text-blue-900">Qu'est-ce qu'un lot ?</h4>
+            </div>
+            {legendExpanded ? (
+              <ChevronUp className="h-4 w-4 text-blue-600 flex-shrink-0" />
+            ) : (
+              <ChevronDown className="h-4 w-4 text-blue-600 flex-shrink-0" />
+            )}
+          </button>
+          {legendExpanded && (
+            <div className="px-3 pb-2 pt-1">
+              <p className="text-xs text-blue-800 leading-relaxed">
+                Un <strong>lot</strong> représente un ensemble de doses d'un vaccin avec une même date d'expiration. 
+                Chaque stock peut contenir plusieurs lots, chacun ayant sa propre date d'expiration. 
+                Les lots permettent de gérer efficacement la traçabilité et le suivi des vaccins, notamment pour identifier 
+                les doses expirées et optimiser la distribution selon les dates d'expiration.
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50">
               <tr>
@@ -3486,7 +3917,7 @@ function RegionalStocksPage() {
                   Quantité (région)
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  Expiration
+                  Nombre de lots
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
                   Actions
@@ -3508,72 +3939,58 @@ function RegionalStocksPage() {
                 </tr>
               ) : (
                 stocks.map((stock) => {
-                  const expired =
-                    stock.hasExpiredLot ||
-                    (stock.nearestExpiration
-                      ? isDateExpired(stock.nearestExpiration)
-                      : false);
+                  const lotCount = stock.lotCount ?? 0;
+                  const expiredLotCount = stock.expiredLotCount ?? 0;
+                  const expiredQuantity = stock.expiredQuantity ?? 0;
+                  const totalQuantity = stock.quantity ?? 0;
+                  const validQuantity = totalQuantity - expiredQuantity;
+                  const validLotCount = lotCount - expiredLotCount;
+                  
+                  // Vérifier si le stock peut être envoyé
+                  const canSend = lotCount > 0 && validLotCount > 0 && validQuantity > 0;
+                  const disabledReason = lotCount === 0 
+                    ? "Aucun lot disponible pour ce vaccin"
+                    : validLotCount === 0
+                    ? "Tous les lots sont expirés"
+                    : validQuantity === 0
+                    ? "Toutes les quantités sont expirées"
+                    : "";
+                  
                   return (
                     <tr
                       key={stock.id}
-                      className={
-                        expired
-                          ? "bg-red-50/70 text-red-700 hover:bg-red-50"
-                          : "hover:bg-slate-50/80"
-                      }
+                      className="hover:bg-slate-50/80"
                     >
                     <td className="px-6 py-4">
-                      <div
-                        className={`font-semibold ${
-                          expired ? "text-red-700" : "text-slate-900"
-                        }`}
-                      >
+                      <div className="font-semibold text-slate-900">
                         {stock.vaccine.name}
                       </div>
-                      <div
-                        className={`text-xs ${
-                          expired ? "text-red-600" : "text-slate-500"
-                        }`}
-                      >
+                      <div className="text-xs text-slate-500">
                         {stock.vaccine.description}
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <div
-                        className={`font-semibold ${
-                          expired ? "text-red-700" : "text-slate-800"
-                        }`}
-                      >
+                      <div className="font-semibold text-slate-800">
                         {(stock.quantity ?? 0).toLocaleString("fr-FR")}
+                        {expiredQuantity > 0 && (
+                          <span className="ml-2 text-sm font-normal text-red-600">
+                            ({expiredQuantity.toLocaleString("fr-FR")} expiré{expiredQuantity > 1 ? "s" : ""})
+                          </span>
+                        )}
                       </div>
-                      <div
-                        className={`text-xs ${
-                          expired ? "text-red-600" : "text-slate-500"
-                        }`}
-                      >
+                      <div className="text-xs text-slate-500">
                         {stock.region?.name ?? "Votre région"}
                       </div>
                     </td>
                     <td className="px-6 py-4 text-sm">
-                      {stock.nearestExpiration ? (
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`font-medium ${
-                              expired ? "text-red-700" : "text-slate-700"
-                            }`}
-                          >
-                            {formatExpirationDate(stock.nearestExpiration)}
+                      <div className="font-medium text-slate-700">
+                        {lotCount} lot{lotCount > 1 ? "s" : ""}
+                        {expiredLotCount > 0 && (
+                          <span className="ml-2 text-red-600">
+                            - {expiredLotCount} expiré{expiredLotCount > 1 ? "s" : ""}
                           </span>
-                          {isDateExpired(stock.nearestExpiration) && (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600">
-                              <AlertTriangle className="h-3 w-3" />
-                              Expiré
-                            </span>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-slate-400">Non définie</span>
-                      )}
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex justify-end gap-2">
@@ -3585,23 +4002,44 @@ function RegionalStocksPage() {
                           <PackageOpen className="h-4 w-4" />
                           Lots
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => openTransferModal(stock)}
-                          className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-100"
-                        >
-                          <ArrowRightLeft className="h-4 w-4" />
-                          Envoyer
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteRegionalStock(stock)}
-                          disabled={regionalDeletingId === stock.id}
-                          className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          {regionalDeletingId === stock.id ? "Suppression…" : "Supprimer"}
-                        </button>
+                        <div className="relative group">
+                          <button
+                            type="button"
+                            onClick={() => canSend && openTransferModal(stock)}
+                            disabled={!canSend}
+                            className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-50"
+                            title={!canSend ? disabledReason : undefined}
+                          >
+                            <ArrowRightLeft className="h-4 w-4" />
+                            Envoyer
+                          </button>
+                          {!canSend && (
+                            <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-10 w-48 rounded-lg bg-slate-900 px-3 py-2 text-xs text-white shadow-lg">
+                              {disabledReason}
+                              <div className="absolute top-full right-4 -mt-1 h-2 w-2 rotate-45 bg-slate-900"></div>
+                            </div>
+                          )}
+                        </div>
+                        {canAdjust && (
+                          <button
+                            type="button"
+                            onClick={() => openUpdateModal(stock)}
+                            className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100"
+                          >
+                            Ajuster
+                          </button>
+                        )}
+                        {(user?.role === "SUPERADMIN" || (stock.expiredLotCount ?? 0) > 0) && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteRegionalStock(stock)}
+                            disabled={regionalDeletingId === stock.id}
+                            className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            {regionalDeletingId === stock.id ? "Suppression…" : "Supprimer"}
+                          </button>
+                        )}
                       </div>
                     </td>
                     </tr>
@@ -3661,7 +4099,7 @@ function RegionalStocksPage() {
                             </div>
                           </td>
                           <td className="px-6 py-4 text-sm text-slate-700">
-                            {transfer.toName || (transfer.toType === "REGIONAL" ? "Région" : transfer.toType === "DISTRICT" ? "District" : transfer.toType === "HEALTHCENTER" ? "Centre de santé" : "Inconnu")}
+                            {formatEntityName(transfer.toType, transfer.toName)}
                           </td>
                           <td className="px-6 py-4 text-sm text-slate-700">
                             {transfer.quantity.toLocaleString("fr-FR")} doses
@@ -3722,23 +4160,23 @@ function RegionalStocksPage() {
                 </p>
               </div>
             ) : (
-              <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+              <div className="overflow-x-auto overflow-hidden rounded-2xl md:rounded-3xl border border-slate-200 bg-white shadow-sm">
                 <table className="min-w-full divide-y divide-slate-200">
                   <thead className="bg-slate-50">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-left text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Vaccin
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-left text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Expéditeur
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-left text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Quantité
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-left text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Date d'envoi
                       </th>
-                      <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-right text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Actions
                       </th>
                     </tr>
@@ -3748,18 +4186,18 @@ function RegionalStocksPage() {
                       const sentDate = new Date(transfer.createdAt);
                       return (
                         <tr key={transfer.id} className="hover:bg-slate-50">
-                          <td className="px-6 py-4">
-                            <div className="text-sm font-medium text-slate-900">
+                          <td className="px-2 md:px-6 py-2 md:py-4">
+                            <div className="text-xs md:text-sm font-medium text-slate-900">
                               {transfer.vaccine?.name ?? "Vaccin inconnu"}
                             </div>
                           </td>
-                          <td className="px-6 py-4 text-sm text-slate-700">
-                            {transfer.fromName || (transfer.fromType === "NATIONAL" ? "Stock National" : transfer.fromType === "REGIONAL" ? "Région" : transfer.fromType === "DISTRICT" ? "District" : "Inconnu")}
+                          <td className="px-2 md:px-6 py-2 md:py-4 text-xs md:text-sm text-slate-700">
+                            {formatEntityName(transfer.fromType, transfer.fromName)}
                           </td>
-                          <td className="px-6 py-4 text-sm text-slate-700">
+                          <td className="px-2 md:px-6 py-2 md:py-4 text-xs md:text-sm text-slate-700">
                             {transfer.quantity.toLocaleString("fr-FR")} doses
                           </td>
-                          <td className="px-6 py-4 text-sm text-slate-600">
+                          <td className="px-2 md:px-6 py-2 md:py-4 text-xs md:text-sm text-slate-600">
                             {sentDate.toLocaleDateString("fr-FR", {
                               day: "2-digit",
                               month: "2-digit",
@@ -3768,23 +4206,24 @@ function RegionalStocksPage() {
                               minute: "2-digit",
                             })}
                           </td>
-                          <td className="px-6 py-4">
-                            <div className="flex justify-end gap-2">
+                          <td className="px-2 md:px-6 py-2 md:py-4">
+                            <div className="flex justify-end gap-1 md:gap-2">
                               <button
                                 type="button"
                                 onClick={() => handleRejectTransfer(transfer.id)}
                                 disabled={rejectingTransferId === transfer.id}
-                                className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                                className="flex items-center gap-1 md:gap-2 rounded-lg md:rounded-xl border border-red-200 bg-red-50 px-2 md:px-4 py-1 md:py-2 text-[10px] md:text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
                               >
                                 {rejectingTransferId === transfer.id ? (
                                   <>
-                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
-                                    Refus...
+                                    <div className="h-3 w-3 md:h-4 md:w-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
+                                    <span className="hidden sm:inline">Refus...</span>
+                                    <span className="sm:hidden">...</span>
                                   </>
                                 ) : (
                                   <>
-                                    <X className="h-4 w-4" />
-                                    Refuser
+                                    <X className="h-3 w-3 md:h-4 md:w-4" />
+                                    <span className="hidden sm:inline">Refuser</span>
                                   </>
                                 )}
                               </button>
@@ -3792,17 +4231,18 @@ function RegionalStocksPage() {
                                 type="button"
                                 onClick={() => handleConfirmTransfer(transfer.id)}
                                 disabled={confirmingTransferId === transfer.id}
-                                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                                className="flex items-center gap-1 md:gap-2 rounded-lg md:rounded-xl bg-emerald-600 px-2 md:px-4 py-1 md:py-2 text-[10px] md:text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
                               >
                                 {confirmingTransferId === transfer.id ? (
                                   <>
-                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                                    Confirmation...
+                                    <div className="h-3 w-3 md:h-4 md:w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                    <span className="hidden sm:inline">Confirmation...</span>
+                                    <span className="sm:hidden">...</span>
                                   </>
                                 ) : (
                                   <>
-                                    <CheckCircle className="h-4 w-4" />
-                                    Confirmer
+                                    <CheckCircle className="h-3 w-3 md:h-4 md:w-4" />
+                                    <span className="hidden sm:inline">Confirmer</span>
                                   </>
                                 )}
                               </button>
@@ -3847,7 +4287,7 @@ function RegionalStocksPage() {
                   <label className="mb-2 block text-xs font-semibold text-blue-700">
                     Date d'envoi
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
                       <label className="mb-1 block text-xs font-medium text-slate-600">
                         Du
@@ -3873,12 +4313,12 @@ function RegionalStocksPage() {
                   </div>
                 </div>
                 
-                {/* Bloc Date de confirmation */}
+                {/* Bloc Date de confirmation/annulation */}
                 <div className="w-[280px] rounded-xl border-2 border-green-200 bg-green-50/30 p-3">
                   <label className="mb-2 block text-xs font-semibold text-green-700">
-                    Date de confirmation
+                    Date de confirmation/annulation
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
                       <label className="mb-1 block text-xs font-medium text-slate-600">
                         Du
@@ -3995,7 +4435,7 @@ function RegionalStocksPage() {
                           Date envoi
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
-                          Date confirmation
+                          Confirmation/annulation
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                           Expiration lot
@@ -4018,10 +4458,10 @@ function RegionalStocksPage() {
                               </div>
                             </td>
                             <td className="px-6 py-4 text-sm text-slate-700">
-                              {item.fromName || "Non spécifié"}
+                              {formatEntityName(item.fromType, item.fromName)}
                             </td>
                             <td className="px-6 py-4 text-sm text-slate-700">
-                              {item.toName || "Non spécifié"}
+                              {formatEntityName(item.toType, item.toName)}
                             </td>
                             <td className="px-6 py-4 text-sm text-slate-700">
                               {item.quantity.toLocaleString("fr-FR")} doses
@@ -4109,7 +4549,7 @@ function RegionalStocksPage() {
 
       {createModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl">
+          <div className="w-full max-w-[95vw] md:max-w-lg rounded-3xl bg-white shadow-2xl">
             <form onSubmit={handleCreateStock} className="space-y-4 p-6">
               <h3 className="text-lg font-semibold text-slate-900">
                 Créer un stock régional
@@ -4164,7 +4604,7 @@ function RegionalStocksPage() {
 
       {transferModalOpen && transferContext && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl">
+          <div className="w-full max-w-[95vw] md:max-w-lg rounded-3xl bg-white shadow-2xl">
             <form onSubmit={handleTransferSubmit} className="space-y-4 p-6">
               <h3 className="text-lg font-semibold text-slate-900">
                 Envoyer du stock — {transferContext.vaccine.name}
@@ -4259,7 +4699,7 @@ function RegionalStocksPage() {
 
       {lotModalOpen && lotContext && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
-          <div className="w-full max-w-3xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
+          <div className="w-full max-w-[95vw] md:max-w-3xl rounded-3xl border border-slate-200 bg-white p-4 md:p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">
@@ -4316,7 +4756,10 @@ function RegionalStocksPage() {
                       const expired =
                         lot.status === "EXPIRED" || isDateExpired(lot.expiration);
                       return (
-                        <tr key={lot.id} className="hover:bg-slate-50/80">
+                        <tr
+                          key={lot.id}
+                          className={expired ? "bg-red-50/70 hover:bg-red-50" : "hover:bg-slate-50/80"}
+                        >
                           <td className="px-4 py-3">
                             <div className="font-medium text-slate-800">{lot.id}</div>
                             {lot.sourceLotId && (
@@ -4342,15 +4785,17 @@ function RegionalStocksPage() {
                           </td>
                           <td className="px-4 py-3 text-right">
                             <div className="flex justify-end">
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteRegionalLot(lot.id)}
-                                disabled={lotDeletingId === lot.id}
-                                className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                                {lotDeletingId === lot.id ? "Suppression…" : "Supprimer"}
-                              </button>
+                              {(user?.role === "SUPERADMIN" || expired) && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteRegionalLot(lot.id)}
+                                  disabled={lotDeletingId === lot.id}
+                                  className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  {lotDeletingId === lot.id ? "Suppression…" : "Supprimer"}
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -4371,13 +4816,6 @@ function RegionalStocksPage() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={refreshRegionalLots}
-                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
-                >
-                  Rafraîchir
-                </button>
-                <button
-                  type="button"
                   onClick={closeRegionalLotModal}
                   className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
                 >
@@ -4388,12 +4826,203 @@ function RegionalStocksPage() {
           </div>
         </div>
       )}
+
+      {updateModalOpen && updateContext && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-[95vw] md:max-w-2xl rounded-3xl bg-white shadow-2xl">
+            <div className="p-6">
+              <h3 className="text-lg font-semibold text-slate-900">
+                Ajuster le stock — {updateContext.vaccineName}
+              </h3>
+
+              <div className="mt-6 flex flex-col gap-4 md:flex-row">
+                <button
+                  type="button"
+                  onClick={() => setUpdateMode("add")}
+                  className={`flex-1 rounded-2xl border px-4 py-3 text-center text-sm font-medium transition ${
+                    updateMode === "add"
+                      ? "border-blue-300 bg-blue-50 text-blue-700 shadow"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  Ajouter au stock
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUpdateMode("reduce")}
+                  className={`flex-1 rounded-2xl border px-4 py-3 text-center text-sm font-medium transition ${
+                    updateMode === "reduce"
+                      ? "border-orange-300 bg-orange-50 text-orange-700 shadow"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  Diminuer
+                </button>
+              </div>
+
+              {updateMode === "reduce" ? (
+                <form onSubmit={handleReduceLotSubmit} className="mt-6 space-y-4">
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium text-slate-600">
+                      Quantité à diminuer
+                    </label>
+                    <input
+                      value={reduceQuantity}
+                      onChange={(event) => setReduceQuantity(event.target.value)}
+                      type="number"
+                      min="1"
+                      className="w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-200"
+                      required
+                      disabled={updating}
+                    />
+                    <p className="text-xs text-slate-500">
+                      Quantité totale disponible : {reduceRemaining.toLocaleString("fr-FR")} doses
+                    </p>
+                  </div>
+
+                  {reduceLoading ? (
+                    <div className="text-center py-4 text-slate-500">
+                      Chargement des lots...
+                    </div>
+                  ) : reduceLots.length === 0 ? (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                      Aucun lot disponible avec une quantité restante.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-600">
+                        Choisir le lot dans lequel diminuer
+                      </label>
+                      <div className="max-h-60 overflow-y-auto space-y-2 border border-slate-200 rounded-xl p-3">
+                        {reduceLots.map((lot) => (
+                          <button
+                            key={lot.id}
+                            type="button"
+                            onClick={() => setSelectedLotId(lot.id)}
+                            className={`w-full text-left p-3 rounded-lg border transition ${
+                              selectedLotId === lot.id
+                                ? "border-orange-500 bg-orange-50"
+                                : "border-slate-200 hover:bg-slate-50"
+                            }`}
+                          >
+                            <div className="flex justify-between items-center">
+                              <div>
+                                <div className="font-medium text-slate-900">
+                                  Lot expirant le {new Date(lot.expiration).toLocaleDateString("fr-FR")}
+                                </div>
+                                <div className="text-xs text-slate-500 mt-1">
+                                  Quantité disponible : {lot.remainingQuantity.toLocaleString("fr-FR")} doses
+                                </div>
+                              </div>
+                              {selectedLotId === lot.id && (
+                                <div className="text-orange-600">✓</div>
+                              )}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {reduceError && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                      {reduceError}
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={resetUpdateModal}
+                      className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                      disabled={updating}
+                    >
+                      Annuler
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={updating || !selectedLotId || !reduceQuantity || reduceLots.length === 0}
+                      className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-orange-700 disabled:opacity-60"
+                    >
+                      {updating ? "Diminution…" : "Diminuer"}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <form onSubmit={handleAddQuantitySubmit} className="mt-6 space-y-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium text-slate-600">
+                        Quantité actuelle
+                      </label>
+                      <input
+                        value={(updateContext.currentQuantity ?? 0).toLocaleString("fr-FR")}
+                        disabled
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-500"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium text-slate-600">
+                        Quantité à ajouter
+                      </label>
+                      <input
+                        value={addQuantity}
+                        onChange={(event) => setAddQuantity(event.target.value)}
+                        type="number"
+                        min="1"
+                        className="w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium text-slate-600">
+                      Date d&apos;expiration du lot ajouté
+                    </label>
+                    <input
+                      type="date"
+                      value={addExpiration}
+                      onChange={(event) => setAddExpiration(event.target.value)}
+                      className="w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      required
+                    />
+                  </div>
+
+                  {addQuantityError && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                      {addQuantityError}
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={resetUpdateModal}
+                      className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                    >
+                      Annuler
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={updating}
+                      className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-60"
+                    >
+                      {updating ? "Ajout…" : "Ajouter"}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardShell>
   );
 }
 
-function DistrictStocksPage() {
-  const { accessToken } = useAuth();
+export function DistrictStocksPage() {
+  const { accessToken, user } = useAuth();
 
   const [stocks, setStocks] = useState<DistrictStock[]>([]);
   const [vaccines, setVaccines] = useState<VaccineInfo[]>([]);
@@ -4426,7 +5055,25 @@ function DistrictStocksPage() {
   const [lotError, setLotError] = useState<string | null>(null);
   const [districtDeletingId, setDistrictDeletingId] = useState<string | null>(null);
   const [lotDeletingId, setLotDeletingId] = useState<string | null>(null);
-
+  
+  // États pour l'ajustement
+  const canAdjust = user?.role === "SUPERADMIN";
+  const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const [updateContext, setUpdateContext] = useState<{ vaccineId: string; vaccineName: string; currentQuantity: number } | null>(null);
+  const [updateQuantity, setUpdateQuantity] = useState<string>("");
+  const [updateMode, setUpdateMode] = useState<"reduce" | "add">("add");
+  const [reduceQuantity, setReduceQuantity] = useState<string>("");
+  const [reduceRemaining, setReduceRemaining] = useState<number>(0);
+  const [reduceLots, setReduceLots] = useState<LotItem[]>([]);
+  const [reduceLoading, setReduceLoading] = useState(false);
+  const [reduceError, setReduceError] = useState<string | null>(null);
+  const [selectedLotId, setSelectedLotId] = useState<string | null>(null);
+  const [addQuantity, setAddQuantity] = useState<string>("");
+  const [addQuantityError, setAddQuantityError] = useState<string | null>(null);
+  const [addExpiration, setAddExpiration] = useState<string>("");
+  const [updateExpiration, setUpdateExpiration] = useState<string>("");
+  const [updating, setUpdating] = useState(false);
+  
   // États pour les onglets
   const [activeTab, setActiveTab] = useState<"stocks" | "pending-received" | "pending-sent" | "history">("stocks");
   
@@ -4457,6 +5104,8 @@ function DistrictStocksPage() {
     confirmedEndDate: "",
     search: "",
   });
+
+  const [legendExpanded, setLegendExpanded] = useState(false);
 
   const fetchDistrictStats = useCallback(async () => {
     if (!accessToken) {
@@ -4531,19 +5180,86 @@ function DistrictStocksPage() {
         }),
       ]);
 
-      if (!stockRes.ok || !vaccineRes.ok || !healthRes.ok) {
-        const payload =
-          (!stockRes.ok ? await stockRes.json().catch(() => null) : null) ??
-          (!vaccineRes.ok ? await vaccineRes.json().catch(() => null) : null) ??
-          (!healthRes.ok ? await healthRes.json().catch(() => null) : null);
-        throw new Error(payload?.message ?? "status non valide");
+      if (!stockRes.ok) {
+        const errorText = await stockRes.text().catch(() => "Erreur inconnue");
+        let errorMessage = "Erreur inconnue";
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.message || errorText;
+        } catch {
+          errorMessage = errorText;
+        }
+        console.error("Erreur API stock/district:", stockRes.status, errorMessage);
+        throw new Error(`Erreur chargement stocks district: ${stockRes.status} - ${errorMessage}`);
+      }
+      if (!vaccineRes.ok) {
+        const errorText = await vaccineRes.text().catch(() => "Erreur inconnue");
+        let errorMessage = "Erreur inconnue";
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.message || errorText;
+        } catch {
+          errorMessage = errorText;
+        }
+        console.error("Erreur API vaccine:", vaccineRes.status, errorMessage);
+        throw new Error(`Erreur chargement vaccins: ${vaccineRes.status} - ${errorMessage}`);
+      }
+      if (!healthRes.ok) {
+        const errorText = await healthRes.text().catch(() => "Erreur inconnue");
+        let errorMessage = "Erreur inconnue";
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.message || errorText;
+        } catch {
+          errorMessage = errorText;
+        }
+        console.error("Erreur API healthCenter:", healthRes.status, errorMessage);
+        throw new Error(`Erreur chargement centres de santé: ${healthRes.status} - ${errorMessage}`);
       }
 
       const stockPayload = await stockRes.json();
       const stockItems = Array.isArray(stockPayload?.district)
         ? stockPayload.district
         : [];
-      setStocks(stockItems);
+      
+      // Charger les lots pour chaque stock et calculer les statistiques
+      const stocksWithLots = await Promise.all(
+        stockItems.map(async (stock: DistrictStock) => {
+          try {
+            const lotsRes = await fetch(`${API_URL}/api/stock/district/${stock.vaccineId}/lots?districtId=${stock.districtId}`, {
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${accessToken}`,
+              },
+            });
+            
+            if (lotsRes.ok) {
+              const lotsData: LotResponse = await lotsRes.json();
+              const lots = lotsData.lots || [];
+              const expiredLots = lots.filter((lot) => lot.status === "EXPIRED" || isDateExpired(lot.expiration));
+              const expiredQuantity = expiredLots.reduce((sum, lot) => sum + lot.quantity, 0);
+              
+              return {
+                ...stock,
+                lotCount: lots.length,
+                expiredLotCount: expiredLots.length,
+                expiredQuantity,
+              };
+            }
+          } catch (err) {
+            console.error(`Erreur chargement lots pour ${stock.vaccineId}:`, err);
+          }
+          
+          return {
+            ...stock,
+            lotCount: 0,
+            expiredLotCount: 0,
+            expiredQuantity: 0,
+          };
+        })
+      );
+      
+      setStocks(stocksWithLots);
 
       const vaccinePayload: VaccineResponse = await vaccineRes.json();
       setVaccines(
@@ -4933,11 +5649,6 @@ function DistrictStocksPage() {
     setLotError(null);
   }, []);
 
-  const refreshDistrictLots = useCallback(() => {
-    if (lotContext) {
-      void fetchDistrictLots(lotContext.vaccineId, lotContext.ownerId ?? null);
-    }
-  }, [fetchDistrictLots, lotContext]);
 
   const handleDeleteDistrictLot = useCallback(
     async (lotId: string) => {
@@ -5191,16 +5902,213 @@ function DistrictStocksPage() {
     [accessToken, fetchDistrictStats, fetchDistrictStocks],
   );
 
+  // Fonctions pour l'ajustement
+  const openUpdateModal = async (stock: DistrictStock) => {
+    setUpdateContext({
+      vaccineId: stock.vaccineId,
+      vaccineName: stock.vaccine.name,
+      currentQuantity: stock.quantity ?? 0,
+    });
+    setUpdateQuantity(String(stock.quantity ?? 0));
+    setUpdateMode("add");
+    setAddQuantity("");
+    setAddExpiration("");
+    setUpdateExpiration("");
+    setAddQuantityError(null);
+    setReduceQuantity("");
+    setReduceRemaining(0);
+    setReduceLots([]);
+    setReduceError(null);
+    setSelectedLotId(null);
+    setUpdateModalOpen(true);
+  };
+
+  const resetUpdateModal = () => {
+    setUpdateModalOpen(false);
+    setUpdateContext(null);
+    setUpdateQuantity("");
+    setAddQuantity("");
+    setAddExpiration("");
+    setUpdateExpiration("");
+    setAddQuantityError(null);
+    setUpdating(false);
+    setReduceQuantity("");
+    setReduceRemaining(0);
+    setReduceLots([]);
+    setReduceError(null);
+    setSelectedLotId(null);
+  };
+
+  const loadLotsForReduce = useCallback(async () => {
+    if (!updateContext?.vaccineId || !accessToken || !districtId) return;
+
+    try {
+      setReduceLoading(true);
+      setReduceError(null);
+      const response = await fetch(
+        `${API_URL}/api/stock/district/${updateContext.vaccineId}/lots?districtId=${districtId}`,
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Impossible de charger les lots");
+      }
+
+      const payload: LotResponse = await response.json();
+      const validLots = payload.lots.filter((lot) => lot.remainingQuantity > 0);
+      setReduceLots(validLots);
+      setReduceRemaining(payload.totalRemaining);
+    } catch (err) {
+      console.error("Erreur chargement lots:", err);
+      setReduceError(
+        err instanceof Error ? err.message : "Impossible de charger les lots"
+      );
+    } finally {
+      setReduceLoading(false);
+    }
+  }, [updateContext?.vaccineId, accessToken, districtId]);
+
+  useEffect(() => {
+    if (updateMode === "reduce" && updateContext?.vaccineId && !reduceLots.length && !reduceLoading) {
+      loadLotsForReduce();
+    }
+  }, [updateMode, updateContext?.vaccineId, loadLotsForReduce, reduceLots.length, reduceLoading]);
+
+  const handleAddQuantitySubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!updateContext || !accessToken || !districtId) return;
+
+    const quantityValue = Number(addQuantity);
+    if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
+      setAddQuantityError("Veuillez saisir une quantité valide.");
+      return;
+    }
+
+    if (!addExpiration) {
+      setAddQuantityError("Veuillez indiquer la date d'expiration du lot ajouté.");
+      return;
+    }
+
+    try {
+      setAddQuantityError(null);
+      setUpdating(true);
+      const response = await fetch(`${API_URL}/api/stock/add-district`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          vaccineId: updateContext.vaccineId,
+          districtId: districtId,
+          quantity: quantityValue,
+          expiration: `${addExpiration}T00:00:00.000Z`,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      resetUpdateModal();
+      await Promise.all([fetchDistrictStocks(), fetchDistrictStats()]);
+    } catch (err) {
+      console.error("Erreur ajout stock district:", err);
+      setAddQuantityError(
+        err instanceof Error
+          ? err.message
+          : "Impossible d'ajouter au stock district"
+      );
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleReduceLotSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!updateContext || !accessToken || !selectedLotId) return;
+
+    const quantityValue = Number(reduceQuantity);
+    if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
+      setReduceError("Veuillez saisir une quantité valide supérieure à 0.");
+      return;
+    }
+
+    const selectedLot = reduceLots.find((lot) => lot.id === selectedLotId);
+    if (!selectedLot) {
+      setReduceError("Lot sélectionné introuvable.");
+      return;
+    }
+
+    const actualQuantityToReduce = Math.min(quantityValue, selectedLot.remainingQuantity);
+    const parsedReduceQuantity = quantityValue;
+
+    try {
+      setReduceError(null);
+      setUpdating(true);
+
+      const response = await fetch(
+        `${API_URL}/api/stock/district/lot/${selectedLotId}/reduce`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            quantity: actualQuantityToReduce,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? "Erreur lors de la diminution");
+      }
+
+      await loadLotsForReduce();
+      
+      const remainingToReduce = parsedReduceQuantity - actualQuantityToReduce;
+      if (remainingToReduce > 0) {
+        setReduceQuantity(String(remainingToReduce));
+        setSelectedLotId(null);
+        alert(
+          `Diminution partielle effectuée. Il reste ${remainingToReduce} doses à diminuer. Veuillez sélectionner un autre lot.`
+        );
+      } else {
+        resetUpdateModal();
+        await Promise.all([fetchDistrictStocks(), fetchDistrictStats()]);
+      }
+    } catch (err) {
+      console.error("Erreur diminution stock district:", err);
+      setReduceError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de diminuer le stock district"
+      );
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   return (
     <DashboardShell active="/dashboard/stocks">
       <div className="space-y-8">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-2xl font-semibold text-slate-900">Stocks & lots</h2>
-            <p className="text-sm text-slate-500">
-              Suivi des stocks districtaux et distribution vers les centres de santé.
-            </p>
-          </div>
+          {user?.role !== "SUPERADMIN" && (
+            <div>
+              <h2 className="text-2xl font-semibold text-slate-900">Stocks & lots</h2>
+              <p className="text-sm text-slate-500">
+                Suivi des stocks districtaux et distribution vers les centres de santé.
+              </p>
+            </div>
+          )}
           
           {/* Boutons d'action et onglets */}
           <div className="flex flex-col gap-3 md:flex-row md:items-center">
@@ -5345,7 +6253,35 @@ function DistrictStocksPage() {
           </div>
         )}
 
-        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="rounded-xl border border-blue-100 bg-blue-50/50 mb-4">
+          <button
+            type="button"
+            onClick={() => setLegendExpanded(!legendExpanded)}
+            className="w-full px-3 py-2 flex items-center justify-between gap-2 text-left hover:bg-blue-100/50 transition rounded-xl"
+          >
+            <div className="flex items-center gap-2 flex-1">
+              <Info className="h-4 w-4 text-blue-600 flex-shrink-0" />
+              <h4 className="text-xs font-semibold text-blue-900">Qu'est-ce qu'un lot ?</h4>
+            </div>
+            {legendExpanded ? (
+              <ChevronUp className="h-4 w-4 text-blue-600 flex-shrink-0" />
+            ) : (
+              <ChevronDown className="h-4 w-4 text-blue-600 flex-shrink-0" />
+            )}
+          </button>
+          {legendExpanded && (
+            <div className="px-3 pb-2 pt-1">
+              <p className="text-xs text-blue-800 leading-relaxed">
+                Un <strong>lot</strong> représente un ensemble de doses d'un vaccin avec une même date d'expiration. 
+                Chaque stock peut contenir plusieurs lots, chacun ayant sa propre date d'expiration. 
+                Les lots permettent de gérer efficacement la traçabilité et le suivi des vaccins, notamment pour identifier 
+                les doses expirées et optimiser la distribution selon les dates d'expiration.
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50">
               <tr>
@@ -5356,7 +6292,7 @@ function DistrictStocksPage() {
                   Quantité (district)
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  Expiration
+                  Nombre de lots
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                   District
@@ -5387,72 +6323,58 @@ function DistrictStocksPage() {
                 </tr>
               ) : (
                 stocks.map((stock) => {
-                  const expired =
-                    stock.hasExpiredLot ||
-                    (stock.nearestExpiration
-                      ? isDateExpired(stock.nearestExpiration)
-                      : false);
+                  const lotCount = stock.lotCount ?? 0;
+                  const expiredLotCount = stock.expiredLotCount ?? 0;
+                  const expiredQuantity = stock.expiredQuantity ?? 0;
+                  const totalQuantity = stock.quantity ?? 0;
+                  const validQuantity = totalQuantity - expiredQuantity;
+                  const validLotCount = lotCount - expiredLotCount;
+                  
+                  // Vérifier si le stock peut être envoyé
+                  const canSend = lotCount > 0 && validLotCount > 0 && validQuantity > 0;
+                  const disabledReason = lotCount === 0 
+                    ? "Aucun lot disponible pour ce vaccin"
+                    : validLotCount === 0
+                    ? "Tous les lots sont expirés"
+                    : validQuantity === 0
+                    ? "Toutes les quantités sont expirées"
+                    : "";
+                  
                   return (
                     <tr
                       key={stock.id}
-                      className={
-                        expired
-                          ? "bg-red-50/70 text-red-700 hover:bg-red-50"
-                          : "hover:bg-slate-50/80"
-                      }
+                      className="hover:bg-slate-50/80"
                     >
                     <td className="px-6 py-4">
-                      <div
-                        className={`font-semibold ${
-                          expired ? "text-red-700" : "text-slate-900"
-                        }`}
-                      >
+                      <div className="font-semibold text-slate-900">
                         {stock.vaccine.name}
                       </div>
-                      <div
-                        className={`text-xs ${
-                          expired ? "text-red-600" : "text-slate-500"
-                        }`}
-                      >
+                      <div className="text-xs text-slate-500">
                         {stock.vaccine.description}
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <div
-                        className={`font-semibold ${
-                          expired ? "text-red-700" : "text-slate-800"
-                        }`}
-                      >
+                      <div className="font-semibold text-slate-800">
                         {(stock.quantity ?? 0).toLocaleString("fr-FR")}
+                        {expiredQuantity > 0 && (
+                          <span className="ml-2 text-sm font-normal text-red-600">
+                            ({expiredQuantity.toLocaleString("fr-FR")} expiré{expiredQuantity > 1 ? "s" : ""})
+                          </span>
+                        )}
                       </div>
-                      <div
-                        className={`text-xs ${
-                          expired ? "text-red-600" : "text-slate-500"
-                        }`}
-                      >
+                      <div className="text-xs text-slate-500">
                         {stock.vaccine.dosesRequired} doses requises
                       </div>
                     </td>
                     <td className="px-6 py-4 text-sm">
-                      {stock.nearestExpiration ? (
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`font-medium ${
-                              expired ? "text-red-700" : "text-slate-700"
-                            }`}
-                          >
-                            {formatExpirationDate(stock.nearestExpiration)}
+                      <div className="font-medium text-slate-700">
+                        {lotCount} lot{lotCount > 1 ? "s" : ""}
+                        {expiredLotCount > 0 && (
+                          <span className="ml-2 text-red-600">
+                            - {expiredLotCount} expiré{expiredLotCount > 1 ? "s" : ""}
                           </span>
-                          {isDateExpired(stock.nearestExpiration) && (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600">
-                              <AlertTriangle className="h-3 w-3" />
-                              Expiré
-                            </span>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-slate-400">Non définie</span>
-                      )}
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-sm text-slate-500">
                       {stock.district?.name ?? "Votre district"}
@@ -5467,23 +6389,44 @@ function DistrictStocksPage() {
                           <PackageOpen className="h-4 w-4" />
                           Lots
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => openTransferModal(stock)}
-                          className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-100"
-                        >
-                          <ArrowRightLeft className="h-4 w-4" />
-                          Envoyer
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteDistrictStock(stock)}
-                          disabled={districtDeletingId === stock.id}
-                          className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          {districtDeletingId === stock.id ? "Suppression…" : "Supprimer"}
-                        </button>
+                        <div className="relative group">
+                          <button
+                            type="button"
+                            onClick={() => canSend && openTransferModal(stock)}
+                            disabled={!canSend}
+                            className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-50"
+                            title={!canSend ? disabledReason : undefined}
+                          >
+                            <ArrowRightLeft className="h-4 w-4" />
+                            Envoyer
+                          </button>
+                          {!canSend && (
+                            <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-10 w-48 rounded-lg bg-slate-900 px-3 py-2 text-xs text-white shadow-lg">
+                              {disabledReason}
+                              <div className="absolute top-full right-4 -mt-1 h-2 w-2 rotate-45 bg-slate-900"></div>
+                            </div>
+                          )}
+                        </div>
+                        {canAdjust && (
+                          <button
+                            type="button"
+                            onClick={() => openUpdateModal(stock)}
+                            className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100"
+                          >
+                            Ajuster
+                          </button>
+                        )}
+                        {(user?.role === "SUPERADMIN" || (stock.expiredLotCount ?? 0) > 0) && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteDistrictStock(stock)}
+                            disabled={districtDeletingId === stock.id}
+                            className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            {districtDeletingId === stock.id ? "Suppression…" : "Supprimer"}
+                          </button>
+                        )}
                       </div>
                     </td>
                     </tr>
@@ -5543,7 +6486,7 @@ function DistrictStocksPage() {
                             </div>
                           </td>
                           <td className="px-6 py-4 text-sm text-slate-700">
-                            {transfer.toName || (transfer.toType === "REGIONAL" ? "Région" : transfer.toType === "DISTRICT" ? "District" : transfer.toType === "HEALTHCENTER" ? "Centre de santé" : "Inconnu")}
+                            {formatEntityName(transfer.toType, transfer.toName)}
                           </td>
                           <td className="px-6 py-4 text-sm text-slate-700">
                             {transfer.quantity.toLocaleString("fr-FR")} doses
@@ -5604,23 +6547,23 @@ function DistrictStocksPage() {
                 </p>
               </div>
             ) : (
-              <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+              <div className="overflow-x-auto overflow-hidden rounded-2xl md:rounded-3xl border border-slate-200 bg-white shadow-sm">
                 <table className="min-w-full divide-y divide-slate-200">
                   <thead className="bg-slate-50">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-left text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Vaccin
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-left text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Expéditeur
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-left text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Quantité
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-left text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Date d'envoi
                       </th>
-                      <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-right text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Actions
                       </th>
                     </tr>
@@ -5630,18 +6573,18 @@ function DistrictStocksPage() {
                       const sentDate = new Date(transfer.createdAt);
                       return (
                         <tr key={transfer.id} className="hover:bg-slate-50">
-                          <td className="px-6 py-4">
-                            <div className="text-sm font-medium text-slate-900">
+                          <td className="px-2 md:px-6 py-2 md:py-4">
+                            <div className="text-xs md:text-sm font-medium text-slate-900">
                               {transfer.vaccine?.name ?? "Vaccin inconnu"}
                             </div>
                           </td>
-                          <td className="px-6 py-4 text-sm text-slate-700">
-                            {transfer.fromName || (transfer.fromType === "NATIONAL" ? "Stock National" : transfer.fromType === "REGIONAL" ? "Région" : transfer.fromType === "DISTRICT" ? "District" : "Inconnu")}
+                          <td className="px-2 md:px-6 py-2 md:py-4 text-xs md:text-sm text-slate-700">
+                            {formatEntityName(transfer.fromType, transfer.fromName)}
                           </td>
-                          <td className="px-6 py-4 text-sm text-slate-700">
+                          <td className="px-2 md:px-6 py-2 md:py-4 text-xs md:text-sm text-slate-700">
                             {transfer.quantity.toLocaleString("fr-FR")} doses
                           </td>
-                          <td className="px-6 py-4 text-sm text-slate-600">
+                          <td className="px-2 md:px-6 py-2 md:py-4 text-xs md:text-sm text-slate-600">
                             {sentDate.toLocaleDateString("fr-FR", {
                               day: "2-digit",
                               month: "2-digit",
@@ -5650,23 +6593,24 @@ function DistrictStocksPage() {
                               minute: "2-digit",
                             })}
                           </td>
-                          <td className="px-6 py-4">
-                            <div className="flex justify-end gap-2">
+                          <td className="px-2 md:px-6 py-2 md:py-4">
+                            <div className="flex justify-end gap-1 md:gap-2">
                               <button
                                 type="button"
                                 onClick={() => handleRejectTransfer(transfer.id)}
                                 disabled={rejectingTransferId === transfer.id}
-                                className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                                className="flex items-center gap-1 md:gap-2 rounded-lg md:rounded-xl border border-red-200 bg-red-50 px-2 md:px-4 py-1 md:py-2 text-[10px] md:text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
                               >
                                 {rejectingTransferId === transfer.id ? (
                                   <>
-                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
-                                    Refus...
+                                    <div className="h-3 w-3 md:h-4 md:w-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
+                                    <span className="hidden sm:inline">Refus...</span>
+                                    <span className="sm:hidden">...</span>
                                   </>
                                 ) : (
                                   <>
-                                    <X className="h-4 w-4" />
-                                    Refuser
+                                    <X className="h-3 w-3 md:h-4 md:w-4" />
+                                    <span className="hidden sm:inline">Refuser</span>
                                   </>
                                 )}
                               </button>
@@ -5674,17 +6618,18 @@ function DistrictStocksPage() {
                                 type="button"
                                 onClick={() => handleConfirmTransfer(transfer.id)}
                                 disabled={confirmingTransferId === transfer.id}
-                                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                                className="flex items-center gap-1 md:gap-2 rounded-lg md:rounded-xl bg-emerald-600 px-2 md:px-4 py-1 md:py-2 text-[10px] md:text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
                               >
                                 {confirmingTransferId === transfer.id ? (
                                   <>
-                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                                    Confirmation...
+                                    <div className="h-3 w-3 md:h-4 md:w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                    <span className="hidden sm:inline">Confirmation...</span>
+                                    <span className="sm:hidden">...</span>
                                   </>
                                 ) : (
                                   <>
-                                    <CheckCircle className="h-4 w-4" />
-                                    Confirmer
+                                    <CheckCircle className="h-3 w-3 md:h-4 md:w-4" />
+                                    <span className="hidden sm:inline">Confirmer</span>
                                   </>
                                 )}
                               </button>
@@ -5729,7 +6674,7 @@ function DistrictStocksPage() {
                   <label className="mb-2 block text-xs font-semibold text-blue-700">
                     Date d'envoi
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
                       <label className="mb-1 block text-xs font-medium text-slate-600">
                         Du
@@ -5755,12 +6700,12 @@ function DistrictStocksPage() {
                   </div>
                 </div>
                 
-                {/* Bloc Date de confirmation */}
+                {/* Bloc Date de confirmation/annulation */}
                 <div className="w-[280px] rounded-xl border-2 border-green-200 bg-green-50/30 p-3">
                   <label className="mb-2 block text-xs font-semibold text-green-700">
-                    Date de confirmation
+                    Date de confirmation/annulation
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
                       <label className="mb-1 block text-xs font-medium text-slate-600">
                         Du
@@ -5877,7 +6822,7 @@ function DistrictStocksPage() {
                           Date envoi
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
-                          Date confirmation
+                          Confirmation/annulation
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                           Expiration lot
@@ -5900,10 +6845,10 @@ function DistrictStocksPage() {
                               </div>
                             </td>
                             <td className="px-6 py-4 text-sm text-slate-700">
-                              {item.fromName || "Non spécifié"}
+                              {formatEntityName(item.fromType, item.fromName)}
                             </td>
                             <td className="px-6 py-4 text-sm text-slate-700">
-                              {item.toName || "Non spécifié"}
+                              {formatEntityName(item.toType, item.toName)}
                             </td>
                             <td className="px-6 py-4 text-sm text-slate-700">
                               {item.quantity.toLocaleString("fr-FR")} doses
@@ -5991,7 +6936,7 @@ function DistrictStocksPage() {
 
       {createModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl">
+          <div className="w-full max-w-[95vw] md:max-w-lg rounded-3xl bg-white shadow-2xl">
             <form onSubmit={handleCreateStock} className="space-y-4 p-6">
               <h3 className="text-lg font-semibold text-slate-900">
                 Créer un stock district
@@ -6050,7 +6995,7 @@ function DistrictStocksPage() {
 
       {transferModalOpen && transferContext && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl">
+          <div className="w-full max-w-[95vw] md:max-w-lg rounded-3xl bg-white shadow-2xl">
             <form onSubmit={handleTransferSubmit} className="space-y-4 p-6">
               <h3 className="text-lg font-semibold text-slate-900">
                 Envoyer du stock — {transferContext.vaccine.name}
@@ -6145,7 +7090,7 @@ function DistrictStocksPage() {
 
       {lotModalOpen && lotContext && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
-          <div className="w-full max-w-3xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
+          <div className="w-full max-w-[95vw] md:max-w-3xl rounded-3xl border border-slate-200 bg-white p-4 md:p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">
@@ -6205,7 +7150,10 @@ function DistrictStocksPage() {
                       const expired =
                         lot.status === "EXPIRED" || isDateExpired(lot.expiration);
                       return (
-                        <tr key={lot.id} className="hover:bg-slate-50/80">
+                        <tr
+                          key={lot.id}
+                          className={expired ? "bg-red-50/70 hover:bg-red-50" : "hover:bg-slate-50/80"}
+                        >
                           <td className="px-4 py-3">
                             <div className="font-medium text-slate-800">{lot.id}</div>
                             {lot.sourceLotId && (
@@ -6231,15 +7179,17 @@ function DistrictStocksPage() {
                           </td>
                           <td className="px-4 py-3 text-right">
                             <div className="flex justify-end">
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteDistrictLot(lot.id)}
-                                disabled={lotDeletingId === lot.id}
-                                className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                                {lotDeletingId === lot.id ? "Suppression…" : "Supprimer"}
-                              </button>
+                              {(user?.role === "SUPERADMIN" || expired) && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteDistrictLot(lot.id)}
+                                  disabled={lotDeletingId === lot.id}
+                                  className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  {lotDeletingId === lot.id ? "Suppression…" : "Supprimer"}
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -6260,13 +7210,6 @@ function DistrictStocksPage() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={refreshDistrictLots}
-                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
-                >
-                  Rafraîchir
-                </button>
-                <button
-                  type="button"
                   onClick={closeDistrictLotModal}
                   className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
                 >
@@ -6277,13 +7220,205 @@ function DistrictStocksPage() {
           </div>
         </div>
       )}
+
+      {updateModalOpen && updateContext && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-[95vw] md:max-w-2xl rounded-3xl bg-white shadow-2xl">
+            <div className="p-6">
+              <h3 className="text-lg font-semibold text-slate-900">
+                Ajuster le stock — {updateContext.vaccineName}
+              </h3>
+
+              <div className="mt-6 flex flex-col gap-4 md:flex-row">
+                <button
+                  type="button"
+                  onClick={() => setUpdateMode("add")}
+                  className={`flex-1 rounded-2xl border px-4 py-3 text-center text-sm font-medium transition ${
+                    updateMode === "add"
+                      ? "border-blue-300 bg-blue-50 text-blue-700 shadow"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  Ajouter au stock
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUpdateMode("reduce")}
+                  className={`flex-1 rounded-2xl border px-4 py-3 text-center text-sm font-medium transition ${
+                    updateMode === "reduce"
+                      ? "border-orange-300 bg-orange-50 text-orange-700 shadow"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  Diminuer
+                </button>
+              </div>
+
+              {updateMode === "reduce" ? (
+                <form onSubmit={handleReduceLotSubmit} className="mt-6 space-y-4">
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium text-slate-600">
+                      Quantité à diminuer
+                    </label>
+                    <input
+                      value={reduceQuantity}
+                      onChange={(event) => setReduceQuantity(event.target.value)}
+                      type="number"
+                      min="1"
+                      className="w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-200"
+                      required
+                      disabled={updating}
+                    />
+                    <p className="text-xs text-slate-500">
+                      Quantité totale disponible : {reduceRemaining.toLocaleString("fr-FR")} doses
+                    </p>
+                  </div>
+
+                  {reduceLoading ? (
+                    <div className="text-center py-4 text-slate-500">
+                      Chargement des lots...
+                    </div>
+                  ) : reduceLots.length === 0 ? (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                      Aucun lot disponible avec une quantité restante.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-600">
+                        Choisir le lot dans lequel diminuer
+                      </label>
+                      <div className="max-h-60 overflow-y-auto space-y-2 border border-slate-200 rounded-xl p-3">
+                        {reduceLots.map((lot) => (
+                          <button
+                            key={lot.id}
+                            type="button"
+                            onClick={() => setSelectedLotId(lot.id)}
+                            className={`w-full text-left p-3 rounded-lg border transition ${
+                              selectedLotId === lot.id
+                                ? "border-orange-500 bg-orange-50"
+                                : "border-slate-200 hover:bg-slate-50"
+                            }`}
+                          >
+                            <div className="flex justify-between items-center">
+                              <div>
+                                <div className="font-medium text-slate-900">
+                                  Lot expirant le {new Date(lot.expiration).toLocaleDateString("fr-FR")}
+                                </div>
+                                <div className="text-xs text-slate-500 mt-1">
+                                  Quantité disponible : {lot.remainingQuantity.toLocaleString("fr-FR")} doses
+                                </div>
+                              </div>
+                              {selectedLotId === lot.id && (
+                                <div className="text-orange-600">✓</div>
+                              )}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {reduceError && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                      {reduceError}
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={resetUpdateModal}
+                      className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                      disabled={updating}
+                    >
+                      Annuler
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={updating || !selectedLotId || !reduceQuantity || reduceLots.length === 0}
+                      className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-orange-700 disabled:opacity-60"
+                    >
+                      {updating ? "Diminution…" : "Diminuer"}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <form onSubmit={handleAddQuantitySubmit} className="mt-6 space-y-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium text-slate-600">
+                        Quantité actuelle
+                      </label>
+                      <input
+                        value={(updateContext.currentQuantity ?? 0).toLocaleString("fr-FR")}
+                        disabled
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-500"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium text-slate-600">
+                        Quantité à ajouter
+                      </label>
+                      <input
+                        value={addQuantity}
+                        onChange={(event) => setAddQuantity(event.target.value)}
+                        type="number"
+                        min="1"
+                        className="w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium text-slate-600">
+                      Date d&apos;expiration du lot ajouté
+                    </label>
+                    <input
+                      type="date"
+                      value={addExpiration}
+                      onChange={(event) => setAddExpiration(event.target.value)}
+                      className="w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      required
+                    />
+                  </div>
+
+                  {addQuantityError && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                      {addQuantityError}
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={resetUpdateModal}
+                      className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                    >
+                      Annuler
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={updating}
+                      className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-60"
+                    >
+                      {updating ? "Ajout…" : "Ajouter"}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardShell>
   );
 }
 
-function AgentAdminStocksPage() {
+export function AgentAdminStocksPage() {
   const { accessToken, user } = useAuth();
   const isAgentAdmin = user?.role === "AGENT" && user?.agentLevel === "ADMIN";
+  const isAgentStaff = user?.role === "AGENT" && user?.agentLevel === "STAFF";
 
   const [stocks, setStocks] = useState<HealthCenterStock[]>([]);
   const [vaccines, setVaccines] = useState<VaccineInfo[]>([]);
@@ -6305,6 +7440,25 @@ function AgentAdminStocksPage() {
   const [lotError, setLotError] = useState<string | null>(null);
   const [healthDeletingId, setHealthDeletingId] = useState<string | null>(null);
   const [lotDeletingId, setLotDeletingId] = useState<string | null>(null);
+  
+  // États pour l'ajustement
+  const canAdjust = user?.role === "SUPERADMIN";
+  const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const [updateContext, setUpdateContext] = useState<{ vaccineId: string; vaccineName: string; currentQuantity: number } | null>(null);
+  const [updateQuantity, setUpdateQuantity] = useState<string>("");
+  const [updateMode, setUpdateMode] = useState<"reduce" | "add">("add");
+  const [reduceQuantity, setReduceQuantity] = useState<string>("");
+  const [reduceRemaining, setReduceRemaining] = useState<number>(0);
+  const [reduceLots, setReduceLots] = useState<LotItem[]>([]);
+  const [reduceLoading, setReduceLoading] = useState(false);
+  const [reduceError, setReduceError] = useState<string | null>(null);
+  const [selectedLotId, setSelectedLotId] = useState<string | null>(null);
+  const [addQuantity, setAddQuantity] = useState<string>("");
+  const [addQuantityError, setAddQuantityError] = useState<string | null>(null);
+  const [addExpiration, setAddExpiration] = useState<string>("");
+  const [updateExpiration, setUpdateExpiration] = useState<string>("");
+  const [updating, setUpdating] = useState(false);
+  
   const [reservations, setReservations] = useState<any[]>([]);
   const [reservationsLoading, setReservationsLoading] = useState(false);
   const [reservationsError, setReservationsError] = useState<string | null>(null);
@@ -6338,6 +7492,8 @@ function AgentAdminStocksPage() {
     confirmedEndDate: "",
     search: "",
   });
+
+  const [legendExpanded, setLegendExpanded] = useState(false);
 
   const fetchHealthCenterStats = useCallback(async () => {
     if (!accessToken) {
@@ -6415,7 +7571,45 @@ function AgentAdminStocksPage() {
       const stockItems = Array.isArray(stockPayload?.healthCenter)
         ? stockPayload.healthCenter
         : [];
-      setStocks(stockItems);
+      
+      // Charger les lots pour chaque stock et calculer les statistiques
+      const stocksWithLots = await Promise.all(
+        stockItems.map(async (stock: HealthCenterStock) => {
+          try {
+            const lotsRes = await fetch(`${API_URL}/api/stock/health-center/${stock.vaccineId}/lots`, {
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${accessToken}`,
+              },
+            });
+            
+            if (lotsRes.ok) {
+              const lotsData: LotResponse = await lotsRes.json();
+              const lots = lotsData.lots || [];
+              const expiredLots = lots.filter((lot) => lot.status === "EXPIRED" || isDateExpired(lot.expiration));
+              const expiredQuantity = expiredLots.reduce((sum, lot) => sum + lot.quantity, 0);
+              
+              return {
+                ...stock,
+                lotCount: lots.length,
+                expiredLotCount: expiredLots.length,
+                expiredQuantity,
+              };
+            }
+          } catch (err) {
+            console.error(`Erreur chargement lots pour ${stock.vaccineId}:`, err);
+          }
+          
+          return {
+            ...stock,
+            lotCount: 0,
+            expiredLotCount: 0,
+            expiredQuantity: 0,
+          };
+        })
+      );
+      
+      setStocks(stocksWithLots);
 
       const vaccinePayload: VaccineResponse = await vaccineRes.json();
       setVaccines(
@@ -6658,6 +7852,12 @@ function AgentAdminStocksPage() {
     }
   }, [fetchHealthCenterStocks, fetchHealthCenterStats, fetchPendingTransfers, activeTab, fetchTransferHistory]);
 
+  // Format entity name helper (unique to AgentAdminStocksPage context)
+  const formatEntityName = (type: string, name: string | null | undefined): string => {
+    if (!name) return type;
+    return name;
+  };
+
   const availableVaccinesForCreation = useMemo(() => {
     const existing = new Set(stocks.map((stock) => stock.vaccineId));
     return vaccines.filter((vaccine) => !existing.has(vaccine.id));
@@ -6779,11 +7979,6 @@ function AgentAdminStocksPage() {
     setLotError(null);
   }, []);
 
-  const refreshHealthCenterLots = useCallback(() => {
-    if (lotContext) {
-      void fetchHealthCenterLots(lotContext.vaccineId, lotContext.ownerId ?? null);
-    }
-  }, [fetchHealthCenterLots, lotContext]);
 
   const handleDeleteHealthCenterLot = useCallback(
     async (lotId: string) => {
@@ -6848,21 +8043,217 @@ function AgentAdminStocksPage() {
     });
   }, [reservations, reservationSearch, reservationVaccineFilter, reservationStatusFilter]);
 
+  // Fonctions pour l'ajustement
+  const openUpdateModal = async (stock: HealthCenterStock) => {
+    setUpdateContext({
+      vaccineId: stock.vaccineId,
+      vaccineName: stock.vaccine.name,
+      currentQuantity: stock.quantity ?? 0,
+    });
+    setUpdateQuantity(String(stock.quantity ?? 0));
+    setUpdateMode("add");
+    setAddQuantity("");
+    setAddExpiration("");
+    setUpdateExpiration("");
+    setAddQuantityError(null);
+    setReduceQuantity("");
+    setReduceRemaining(0);
+    setReduceLots([]);
+    setReduceError(null);
+    setSelectedLotId(null);
+    setUpdateModalOpen(true);
+  };
+
+  const resetUpdateModal = () => {
+    setUpdateModalOpen(false);
+    setUpdateContext(null);
+    setUpdateQuantity("");
+    setAddQuantity("");
+    setAddExpiration("");
+    setUpdateExpiration("");
+    setAddQuantityError(null);
+    setUpdating(false);
+    setReduceQuantity("");
+    setReduceRemaining(0);
+    setReduceLots([]);
+    setReduceError(null);
+    setSelectedLotId(null);
+  };
+
+  const loadLotsForReduce = useCallback(async () => {
+    if (!updateContext?.vaccineId || !accessToken) return;
+
+    try {
+      setReduceLoading(true);
+      setReduceError(null);
+      const response = await fetch(
+        `${API_URL}/api/stock/health-center/${updateContext.vaccineId}/lots`,
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Impossible de charger les lots");
+      }
+
+      const payload: LotResponse = await response.json();
+      const validLots = payload.lots.filter((lot) => lot.remainingQuantity > 0);
+      setReduceLots(validLots);
+      setReduceRemaining(payload.totalRemaining);
+    } catch (err) {
+      console.error("Erreur chargement lots:", err);
+      setReduceError(
+        err instanceof Error ? err.message : "Impossible de charger les lots"
+      );
+    } finally {
+      setReduceLoading(false);
+    }
+  }, [updateContext?.vaccineId, accessToken]);
+
+  useEffect(() => {
+    if (updateMode === "reduce" && updateContext?.vaccineId && !reduceLots.length && !reduceLoading) {
+      loadLotsForReduce();
+    }
+  }, [updateMode, updateContext?.vaccineId, loadLotsForReduce, reduceLots.length, reduceLoading]);
+
+  const handleAddQuantitySubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!updateContext || !accessToken) return;
+
+    const quantityValue = Number(addQuantity);
+    if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
+      setAddQuantityError("Veuillez saisir une quantité valide.");
+      return;
+    }
+
+    if (!addExpiration) {
+      setAddQuantityError("Veuillez indiquer la date d'expiration du lot ajouté.");
+      return;
+    }
+
+    try {
+      setAddQuantityError(null);
+      setUpdating(true);
+      const response = await fetch(`${API_URL}/api/stock/add-health-center`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          vaccineId: updateContext.vaccineId,
+          quantity: quantityValue,
+          expiration: `${addExpiration}T00:00:00.000Z`,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? `status ${response.status}`);
+      }
+
+      resetUpdateModal();
+      await Promise.all([fetchHealthCenterStocks(), fetchHealthCenterStats()]);
+    } catch (err) {
+      console.error("Erreur ajout stock centre:", err);
+      setAddQuantityError(
+        err instanceof Error
+          ? err.message
+          : "Impossible d'ajouter au stock centre"
+      );
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleReduceLotSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!updateContext || !accessToken || !selectedLotId) return;
+
+    const quantityValue = Number(reduceQuantity);
+    if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
+      setReduceError("Veuillez saisir une quantité valide supérieure à 0.");
+      return;
+    }
+
+    const selectedLot = reduceLots.find((lot) => lot.id === selectedLotId);
+    if (!selectedLot) {
+      setReduceError("Lot sélectionné introuvable.");
+      return;
+    }
+
+    const actualQuantityToReduce = Math.min(quantityValue, selectedLot.remainingQuantity);
+    const parsedReduceQuantity = quantityValue;
+
+    try {
+      setReduceError(null);
+      setUpdating(true);
+
+      const response = await fetch(
+        `${API_URL}/api/stock/health-center/lot/${selectedLotId}/reduce`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            quantity: actualQuantityToReduce,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? "Erreur lors de la diminution");
+      }
+
+      await loadLotsForReduce();
+      
+      const remainingToReduce = parsedReduceQuantity - actualQuantityToReduce;
+      if (remainingToReduce > 0) {
+        setReduceQuantity(String(remainingToReduce));
+        setSelectedLotId(null);
+        alert(
+          `Diminution partielle effectuée. Il reste ${remainingToReduce} doses à diminuer. Veuillez sélectionner un autre lot.`
+        );
+      } else {
+        resetUpdateModal();
+        await Promise.all([fetchHealthCenterStocks(), fetchHealthCenterStats()]);
+      }
+    } catch (err) {
+      console.error("Erreur diminution stock centre:", err);
+      setReduceError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de diminuer le stock centre"
+      );
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   return (
     <DashboardShell active="/dashboard/stocks">
       <div className="space-y-8">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-2xl font-semibold text-slate-900">Stocks & lots</h2>
-            <p className="text-sm text-slate-500">
-              Suivi des stocks de votre centre de santé.
-            </p>
-          </div>
+          {user?.role !== "SUPERADMIN" && (
+            <div>
+              <h2 className="text-2xl font-semibold text-slate-900">Stocks & lots</h2>
+              <p className="text-sm text-slate-500">
+                Suivi des stocks de votre centre de santé.
+              </p>
+            </div>
+          )}
           
           {/* Boutons d'action et onglets */}
           <div className="flex flex-col gap-3 md:flex-row md:items-center">
             {/* Bouton Nouveau lot */}
-            {activeTab === "stocks" && isAgentAdmin && (
+            {activeTab === "stocks" && (isAgentAdmin || user?.role === "SUPERADMIN") && (
               <button
                 type="button"
                 onClick={() => setCreateModalOpen(true)}
@@ -7004,6 +8395,34 @@ function AgentAdminStocksPage() {
           </div>
         )}
 
+        <div className="rounded-xl border border-blue-100 bg-blue-50/50 mb-4">
+          <button
+            type="button"
+            onClick={() => setLegendExpanded(!legendExpanded)}
+            className="w-full px-3 py-2 flex items-center justify-between gap-2 text-left hover:bg-blue-100/50 transition rounded-xl"
+          >
+            <div className="flex items-center gap-2 flex-1">
+              <Info className="h-4 w-4 text-blue-600 flex-shrink-0" />
+              <h4 className="text-xs font-semibold text-blue-900">Qu'est-ce qu'un lot ?</h4>
+            </div>
+            {legendExpanded ? (
+              <ChevronUp className="h-4 w-4 text-blue-600 flex-shrink-0" />
+            ) : (
+              <ChevronDown className="h-4 w-4 text-blue-600 flex-shrink-0" />
+            )}
+          </button>
+          {legendExpanded && (
+            <div className="px-3 pb-2 pt-1">
+              <p className="text-xs text-blue-800 leading-relaxed">
+                Un <strong>lot</strong> représente un ensemble de doses d'un vaccin avec une même date d'expiration. 
+                Chaque stock peut contenir plusieurs lots, chacun ayant sa propre date d'expiration. 
+                Les lots permettent de gérer efficacement la traçabilité et le suivi des vaccins, notamment pour identifier 
+                les doses expirées et optimiser la distribution selon les dates d'expiration.
+              </p>
+            </div>
+          )}
+        </div>
+
         <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-100 px-6 py-4 text-sm text-slate-500">
             {healthCenterName}
@@ -7018,7 +8437,7 @@ function AgentAdminStocksPage() {
                   Quantité (centre)
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  Expiration
+                  Nombre de lots
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
                   Actions
@@ -7046,72 +8465,45 @@ function AgentAdminStocksPage() {
                 </tr>
               ) : (
                 stocks.map((stock) => {
-                  const expired =
-                    stock.hasExpiredLot ||
-                    (stock.nearestExpiration
-                      ? isDateExpired(stock.nearestExpiration)
-                      : false);
+                  const lotCount = stock.lotCount ?? 0;
+                  const expiredLotCount = stock.expiredLotCount ?? 0;
+                  const expiredQuantity = stock.expiredQuantity ?? 0;
+                  
                   return (
                     <tr
                       key={stock.id}
-                      className={
-                        expired
-                          ? "bg-red-50/70 text-red-700 hover:bg-red-50"
-                          : "hover:bg-slate-50/80"
-                      }
+                      className="hover:bg-slate-50/80"
                     >
                       <td className="px-6 py-4">
-                        <div
-                          className={`font-semibold ${
-                            expired ? "text-red-700" : "text-slate-900"
-                          }`}
-                        >
+                        <div className="font-semibold text-slate-900">
                           {stock.vaccine.name}
                         </div>
-                        <div
-                          className={`text-xs ${
-                            expired ? "text-red-600" : "text-slate-500"
-                          }`}
-                        >
+                        <div className="text-xs text-slate-500">
                           {stock.vaccine.description}
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        <div
-                          className={`font-semibold ${
-                            expired ? "text-red-700" : "text-slate-800"
-                          }`}
-                        >
+                        <div className="font-semibold text-slate-800">
                           {(stock.quantity ?? 0).toLocaleString("fr-FR")}
+                          {expiredQuantity > 0 && (
+                            <span className="ml-2 text-sm font-normal text-red-600">
+                              ({expiredQuantity.toLocaleString("fr-FR")} expiré{expiredQuantity > 1 ? "s" : ""})
+                            </span>
+                          )}
                         </div>
-                        <div
-                          className={`text-xs ${
-                            expired ? "text-red-600" : "text-slate-500"
-                          }`}
-                        >
+                        <div className="text-xs text-slate-500">
                           {stock.vaccine.dosesRequired} doses requises
                         </div>
                       </td>
                       <td className="px-6 py-4 text-sm">
-                        {stock.nearestExpiration ? (
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`font-medium ${
-                                expired ? "text-red-700" : "text-slate-700"
-                              }`}
-                            >
-                              {formatExpirationDate(stock.nearestExpiration)}
+                        <div className="font-medium text-slate-700">
+                          {lotCount} lot{lotCount > 1 ? "s" : ""}
+                          {expiredLotCount > 0 && (
+                            <span className="ml-2 text-red-600">
+                              - {expiredLotCount} expiré{expiredLotCount > 1 ? "s" : ""}
                             </span>
-                            {expired && (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600">
-                                <AlertTriangle className="h-3 w-3" />
-                                Expiré
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-slate-400">Non définie</span>
-                        )}
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex justify-end gap-2">
@@ -7123,7 +8515,16 @@ function AgentAdminStocksPage() {
                             <PackageOpen className="h-4 w-4" />
                             Lots
                           </button>
-                          {isAgentAdmin && (
+                          {canAdjust && (
+                            <button
+                              type="button"
+                              onClick={() => openUpdateModal(stock)}
+                              className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100"
+                            >
+                              Ajuster
+                            </button>
+                          )}
+                          {isAgentAdmin && (user?.role === "SUPERADMIN" || (stock.expiredLotCount ?? 0) > 0) && (
                             <button
                               type="button"
                               onClick={() => handleDeleteHealthCenterStock(stock)}
@@ -7161,23 +8562,23 @@ function AgentAdminStocksPage() {
                 </p>
               </div>
             ) : (
-              <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+              <div className="overflow-x-auto overflow-hidden rounded-2xl md:rounded-3xl border border-slate-200 bg-white shadow-sm">
                 <table className="min-w-full divide-y divide-slate-200">
                   <thead className="bg-slate-50">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-left text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Vaccin
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-left text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Expéditeur
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-left text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Quantité
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-left text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Date d'envoi
                       </th>
-                      <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-2 md:px-6 py-1.5 md:py-3 text-right text-[10px] md:text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Actions
                       </th>
                     </tr>
@@ -7187,18 +8588,18 @@ function AgentAdminStocksPage() {
                       const sentDate = new Date(transfer.createdAt);
                       return (
                         <tr key={transfer.id} className="hover:bg-slate-50">
-                          <td className="px-6 py-4">
-                            <div className="text-sm font-medium text-slate-900">
+                          <td className="px-2 md:px-6 py-2 md:py-4">
+                            <div className="text-xs md:text-sm font-medium text-slate-900">
                               {transfer.vaccine?.name ?? "Vaccin inconnu"}
                             </div>
                           </td>
-                          <td className="px-6 py-4 text-sm text-slate-700">
-                            {transfer.fromName || (transfer.fromType === "NATIONAL" ? "Stock National" : transfer.fromType === "REGIONAL" ? "Région" : transfer.fromType === "DISTRICT" ? "District" : "Inconnu")}
+                          <td className="px-2 md:px-6 py-2 md:py-4 text-xs md:text-sm text-slate-700">
+                            {formatEntityName(transfer.fromType, transfer.fromName)}
                           </td>
-                          <td className="px-6 py-4 text-sm text-slate-700">
+                          <td className="px-2 md:px-6 py-2 md:py-4 text-xs md:text-sm text-slate-700">
                             {transfer.quantity.toLocaleString("fr-FR")} doses
                           </td>
-                          <td className="px-6 py-4 text-sm text-slate-600">
+                          <td className="px-2 md:px-6 py-2 md:py-4 text-xs md:text-sm text-slate-600">
                             {sentDate.toLocaleDateString("fr-FR", {
                               day: "2-digit",
                               month: "2-digit",
@@ -7207,41 +8608,45 @@ function AgentAdminStocksPage() {
                               minute: "2-digit",
                             })}
                           </td>
-                          <td className="px-6 py-4">
-                            <div className="flex justify-end gap-2">
+                          <td className="px-2 md:px-6 py-2 md:py-4">
+                            <div className="flex justify-end gap-1 md:gap-2">
                               <button
                                 type="button"
                                 onClick={() => handleRejectTransfer(transfer.id)}
-                                disabled={rejectingTransferId === transfer.id}
-                                className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                                disabled={isAgentStaff || rejectingTransferId === transfer.id}
+                                className="flex items-center gap-1 md:gap-2 rounded-lg md:rounded-xl border border-red-200 bg-red-50 px-2 md:px-4 py-1 md:py-2 text-[10px] md:text-sm font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                                title={isAgentStaff ? "Réservé aux agents admin" : ""}
                               >
                                 {rejectingTransferId === transfer.id ? (
                                   <>
-                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
-                                    Refus...
+                                    <div className="h-3 w-3 md:h-4 md:w-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
+                                    <span className="hidden sm:inline">Refus...</span>
+                                    <span className="sm:hidden">...</span>
                                   </>
                                 ) : (
                                   <>
-                                    <X className="h-4 w-4" />
-                                    Refuser
+                                    <X className="h-3 w-3 md:h-4 md:w-4" />
+                                    <span className="hidden sm:inline">Refuser</span>
                                   </>
                                 )}
                               </button>
                               <button
                                 type="button"
                                 onClick={() => handleConfirmTransfer(transfer.id)}
-                                disabled={confirmingTransferId === transfer.id}
-                                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                                disabled={isAgentStaff || confirmingTransferId === transfer.id}
+                                className="flex items-center gap-1 md:gap-2 rounded-lg md:rounded-xl bg-emerald-600 px-2 md:px-4 py-1 md:py-2 text-[10px] md:text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                                title={isAgentStaff ? "Réservé aux agents admin" : ""}
                               >
                                 {confirmingTransferId === transfer.id ? (
                                   <>
-                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                                    Confirmation...
+                                    <div className="h-3 w-3 md:h-4 md:w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                    <span className="hidden sm:inline">Confirmation...</span>
+                                    <span className="sm:hidden">...</span>
                                   </>
                                 ) : (
                                   <>
-                                    <CheckCircle className="h-4 w-4" />
-                                    Confirmer
+                                    <CheckCircle className="h-3 w-3 md:h-4 md:w-4" />
+                                    <span className="hidden sm:inline">Confirmer</span>
                                   </>
                                 )}
                               </button>
@@ -7286,7 +8691,7 @@ function AgentAdminStocksPage() {
                   <label className="mb-2 block text-xs font-semibold text-blue-700">
                     Date d'envoi
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
                       <label className="mb-1 block text-xs font-medium text-slate-600">
                         Du
@@ -7312,12 +8717,12 @@ function AgentAdminStocksPage() {
                   </div>
                 </div>
                 
-                {/* Bloc Date de confirmation */}
+                {/* Bloc Date de confirmation/annulation */}
                 <div className="w-[280px] rounded-xl border-2 border-green-200 bg-green-50/30 p-3">
                   <label className="mb-2 block text-xs font-semibold text-green-700">
-                    Date de confirmation
+                    Date de confirmation/annulation
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
                       <label className="mb-1 block text-xs font-medium text-slate-600">
                         Du
@@ -7434,7 +8839,7 @@ function AgentAdminStocksPage() {
                           Date envoi
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
-                          Date confirmation
+                          Confirmation/annulation
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                           Expiration lot
@@ -7457,10 +8862,10 @@ function AgentAdminStocksPage() {
                               </div>
                             </td>
                             <td className="px-6 py-4 text-sm text-slate-700">
-                              {item.fromName || "Non spécifié"}
+                              {formatEntityName(item.fromType, item.fromName)}
                             </td>
                             <td className="px-6 py-4 text-sm text-slate-700">
-                              {item.toName || "Non spécifié"}
+                              {formatEntityName(item.toType, item.toName)}
                             </td>
                             <td className="px-6 py-4 text-sm text-slate-700">
                               {item.quantity.toLocaleString("fr-FR")} doses
@@ -7548,7 +8953,7 @@ function AgentAdminStocksPage() {
 
       {isAgentAdmin && createModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl">
+          <div className="w-full max-w-[95vw] md:max-w-lg rounded-3xl bg-white shadow-2xl">
             <form onSubmit={handleCreateStock} className="space-y-4 p-6">
               <h3 className="text-lg font-semibold text-slate-900">
                 Créer un stock centre
@@ -7603,7 +9008,7 @@ function AgentAdminStocksPage() {
 
       {lotModalOpen && lotContext && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4">
-          <div className="w-full max-w-3xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
+          <div className="w-full max-w-[95vw] md:max-w-3xl rounded-3xl border border-slate-200 bg-white p-4 md:p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">
@@ -7665,7 +9070,10 @@ function AgentAdminStocksPage() {
                       const expired =
                         lot.status === "EXPIRED" || isDateExpired(lot.expiration);
                       return (
-                        <tr key={lot.id} className="hover:bg-slate-50/80">
+                        <tr
+                          key={lot.id}
+                          className={expired ? "bg-red-50/70 hover:bg-red-50" : "hover:bg-slate-50/80"}
+                        >
                           <td className="px-4 py-3">
                             <div className="font-medium text-slate-800">{lot.id}</div>
                             {lot.sourceLotId && (
@@ -7696,7 +9104,7 @@ function AgentAdminStocksPage() {
                               )}
                             </div>
                           </td>
-                          {isAgentAdmin && (
+                          {isAgentAdmin && (user?.role === "SUPERADMIN" || expired) && (
                             <td className="px-4 py-3 text-right">
                               <div className="flex justify-end">
                                 <button
@@ -7729,13 +9137,6 @@ function AgentAdminStocksPage() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={refreshHealthCenterLots}
-                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
-                >
-                  Rafraîchir
-                </button>
-                <button
-                  type="button"
                   onClick={closeHealthLotModal}
                   className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
                 >
@@ -7749,7 +9150,7 @@ function AgentAdminStocksPage() {
 
       {reservationsModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 px-4" style={{ zIndex: 9999 }}>
-          <div className="w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl flex flex-col">
+          <div className="w-full max-w-[95vw] md:max-w-5xl max-h-[90vh] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl flex flex-col">
             <div className="flex items-center justify-between border-b border-slate-200 bg-gradient-to-r from-amber-50 to-amber-100 px-6 py-4">
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">
@@ -7958,6 +9359,197 @@ function AgentAdminStocksPage() {
                   Fermer
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {updateModalOpen && updateContext && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-[95vw] md:max-w-2xl rounded-3xl bg-white shadow-2xl">
+            <div className="p-6">
+              <h3 className="text-lg font-semibold text-slate-900">
+                Ajuster le stock — {updateContext.vaccineName}
+              </h3>
+
+              <div className="mt-6 flex flex-col gap-4 md:flex-row">
+                <button
+                  type="button"
+                  onClick={() => setUpdateMode("add")}
+                  className={`flex-1 rounded-2xl border px-4 py-3 text-center text-sm font-medium transition ${
+                    updateMode === "add"
+                      ? "border-blue-300 bg-blue-50 text-blue-700 shadow"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  Ajouter au stock
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUpdateMode("reduce")}
+                  className={`flex-1 rounded-2xl border px-4 py-3 text-center text-sm font-medium transition ${
+                    updateMode === "reduce"
+                      ? "border-orange-300 bg-orange-50 text-orange-700 shadow"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  Diminuer
+                </button>
+              </div>
+
+              {updateMode === "reduce" ? (
+                <form onSubmit={handleReduceLotSubmit} className="mt-6 space-y-4">
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium text-slate-600">
+                      Quantité à diminuer
+                    </label>
+                    <input
+                      value={reduceQuantity}
+                      onChange={(event) => setReduceQuantity(event.target.value)}
+                      type="number"
+                      min="1"
+                      className="w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-200"
+                      required
+                      disabled={updating}
+                    />
+                    <p className="text-xs text-slate-500">
+                      Quantité totale disponible : {reduceRemaining.toLocaleString("fr-FR")} doses
+                    </p>
+                  </div>
+
+                  {reduceLoading ? (
+                    <div className="text-center py-4 text-slate-500">
+                      Chargement des lots...
+                    </div>
+                  ) : reduceLots.length === 0 ? (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                      Aucun lot disponible avec une quantité restante.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-600">
+                        Choisir le lot dans lequel diminuer
+                      </label>
+                      <div className="max-h-60 overflow-y-auto space-y-2 border border-slate-200 rounded-xl p-3">
+                        {reduceLots.map((lot) => (
+                          <button
+                            key={lot.id}
+                            type="button"
+                            onClick={() => setSelectedLotId(lot.id)}
+                            className={`w-full text-left p-3 rounded-lg border transition ${
+                              selectedLotId === lot.id
+                                ? "border-orange-500 bg-orange-50"
+                                : "border-slate-200 hover:bg-slate-50"
+                            }`}
+                          >
+                            <div className="flex justify-between items-center">
+                              <div>
+                                <div className="font-medium text-slate-900">
+                                  Lot expirant le {new Date(lot.expiration).toLocaleDateString("fr-FR")}
+                                </div>
+                                <div className="text-xs text-slate-500 mt-1">
+                                  Quantité disponible : {lot.remainingQuantity.toLocaleString("fr-FR")} doses
+                                </div>
+                              </div>
+                              {selectedLotId === lot.id && (
+                                <div className="text-orange-600">✓</div>
+                              )}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {reduceError && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                      {reduceError}
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={resetUpdateModal}
+                      className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                      disabled={updating}
+                    >
+                      Annuler
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={updating || !selectedLotId || !reduceQuantity || reduceLots.length === 0}
+                      className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-orange-700 disabled:opacity-60"
+                    >
+                      {updating ? "Diminution…" : "Diminuer"}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <form onSubmit={handleAddQuantitySubmit} className="mt-6 space-y-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium text-slate-600">
+                        Quantité actuelle
+                      </label>
+                      <input
+                        value={(updateContext.currentQuantity ?? 0).toLocaleString("fr-FR")}
+                        disabled
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-500"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium text-slate-600">
+                        Quantité à ajouter
+                      </label>
+                      <input
+                        value={addQuantity}
+                        onChange={(event) => setAddQuantity(event.target.value)}
+                        type="number"
+                        min="1"
+                        className="w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium text-slate-600">
+                      Date d&apos;expiration du lot ajouté
+                    </label>
+                    <input
+                      type="date"
+                      value={addExpiration}
+                      onChange={(event) => setAddExpiration(event.target.value)}
+                      className="w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      required
+                    />
+                  </div>
+
+                  {addQuantityError && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                      {addQuantityError}
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={resetUpdateModal}
+                      className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                    >
+                      Annuler
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={updating}
+                      className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-60"
+                    >
+                      {updating ? "Ajout…" : "Ajouter"}
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           </div>
         </div>

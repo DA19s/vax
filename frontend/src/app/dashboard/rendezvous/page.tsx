@@ -789,7 +789,7 @@ export default function RendezvousPage() {
                   <p className="text-sm uppercase tracking-wide text-slate-500">
                     Rendez-vous programmé
                   </p>
-                  <h2 className="mt-1 text-lg font-semibold text-slate-900">
+                  <h2 className="mt-1 text-base md:text-lg font-semibold text-slate-900">
                     {childName}
                   </h2>
                   <p className="mt-1 text-sm text-slate-600">
@@ -893,7 +893,7 @@ export default function RendezvousPage() {
           <p className="text-sm font-medium uppercase tracking-wide text-emerald-500">
             Suivi vaccinal
           </p>
-          <h1 className="mt-1 text-2xl font-semibold text-slate-900">
+          <h1 className="mt-1 text-xl md:text-2xl font-semibold text-slate-900">
             Rendez-vous et demandes
           </h1>
           <p className="mt-1 text-sm text-slate-600">
@@ -1080,7 +1080,7 @@ export default function RendezvousPage() {
                       <p className="text-sm uppercase tracking-wide text-blue-600">
                         Demande de vaccination
                       </p>
-                      <h2 className="mt-1 text-lg font-semibold text-slate-900">{childName}</h2>
+                      <h2 className="mt-1 text-base md:text-lg font-semibold text-slate-900">{childName}</h2>
                       <p className="mt-1 text-sm text-slate-600">{vaccineName}</p>
                       <p className="mt-1 text-xs text-slate-500">{doseLabel}</p>
                       <p className="mt-1 text-sm text-slate-500">

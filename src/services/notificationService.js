@@ -1,208 +1,220 @@
 const prisma = require("../config/prismaClient");
-const {
-  sendNotification,
-  sendNotificationToChild,
-  sendNotificationToParent,
-} = require("../socket");
 
 /**
- * Créer une notification et l'envoyer via Socket.io
+ * Crée une notification pour un utilisateur
+ * @param {Object} params
+ * @param {string} params.userId - ID de l'utilisateur
+ * @param {string} params.title - Titre de la notification
+ * @param {string} params.message - Message de la notification
+ * @param {string} params.type - Type de notification (ex: "STOCK_TRANSFER", "ENTITY_CREATED", etc.)
  */
-const createAndSendNotification = async ({
-  childId,
-  title,
-  message,
-  type = "system",
-  sendSocket = true,
-}) => {
+const createNotification = async ({ userId, title, message, type }) => {
   try {
-    // Créer la notification en base
-    const notification = await prisma.notification.create({
+    const notification = await prisma.userNotification.create({
       data: {
-        childId,
+        userId,
         title,
         message,
         type,
-      },
-      include: {
-        child: {
-          select: {
-            phoneParent: true,
-          },
-        },
+        read: false,
       },
     });
-
-    // Envoyer via Socket.io si demandé
-    if (sendSocket) {
-      const notificationData = {
-        id: notification.id,
-        title: notification.title,
-        message: notification.message,
-        type: notification.type,
-        createdAt: notification.createdAt,
-        childId,
-      };
-
-      // Envoyer à l'enfant spécifique (room childId) - PRIORITAIRE
-      sendNotificationToChild(childId, notificationData);
-      console.log(`📩 Notification "${notification.title}" envoyée à la room ${childId}`);
-
-      // Envoyer aussi à la room "all" pour tous les clients connectés
-      const { sendNotificationToAll } = require("../socket");
-      sendNotificationToAll(notificationData);
-      console.log(`📩 Notification "${notification.title}" envoyée à la room "all"`);
-
-      // Envoyer au parent (via la room parent)
-      if (notification.child.phoneParent) {
-        sendNotificationToParent(notification.child.phoneParent, notificationData);
-        console.log(`📩 Notification "${notification.title}" envoyée au parent ${notification.child.phoneParent}`);
-      }
-    }
-
     return notification;
   } catch (error) {
     console.error("Erreur création notification:", error);
+    // Ne pas faire échouer l'opération si la création de notification échoue
+    return null;
+  }
+};
+
+/**
+ * Crée des notifications pour plusieurs utilisateurs
+ * @param {Array} userIds - Liste des IDs d'utilisateurs
+ * @param {string} title - Titre de la notification
+ * @param {string} message - Message de la notification
+ * @param {string} type - Type de notification
+ */
+const createNotificationsForUsers = async ({ userIds, title, message, type }) => {
+  if (!userIds || userIds.length === 0) {
+    return [];
+  }
+
+  try {
+    const notifications = await prisma.userNotification.createMany({
+      data: userIds.map((userId) => ({
+        userId,
+        title,
+        message,
+        type,
+        read: false,
+      })),
+    });
+    return notifications;
+  } catch (error) {
+    console.error("Erreur création notifications:", error);
+    // Ne pas faire échouer l'opération si la création de notifications échoue
+    return [];
+  }
+};
+
+/**
+ * Récupère les notifications d'un utilisateur
+ * @param {string} userId - ID de l'utilisateur
+ * @param {Object} options - Options de récupération
+ * @param {boolean} options.unreadOnly - Récupérer uniquement les non lues
+ * @param {number} options.limit - Nombre maximum de notifications
+ */
+const getUserNotifications = async (userId, options = {}) => {
+  const { unreadOnly = false, limit = 500 } = options;
+
+  try {
+    const where = {
+      userId,
+      ...(unreadOnly && { read: false }),
+    };
+
+    const notifications = await prisma.userNotification.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    });
+
+    return notifications;
+  } catch (error) {
+    console.error("Erreur récupération notifications:", error);
+    return [];
+  }
+};
+
+/**
+ * Compte les notifications non lues d'un utilisateur
+ * @param {string} userId - ID de l'utilisateur
+ */
+const getUnreadCount = async (userId) => {
+  try {
+    const count = await prisma.userNotification.count({
+      where: {
+        userId,
+        read: false,
+      },
+    });
+    return count;
+  } catch (error) {
+    console.error("Erreur comptage notifications non lues:", error);
+    return 0;
+  }
+};
+
+/**
+ * Marque une notification comme lue
+ * @param {string} notificationId - ID de la notification
+ * @param {string} userId - ID de l'utilisateur (pour vérification)
+ */
+const markAsRead = async (notificationId, userId) => {
+  try {
+    const notification = await prisma.userNotification.updateMany({
+      where: {
+        id: notificationId,
+        userId, // S'assurer que la notification appartient à l'utilisateur
+      },
+      data: {
+        read: true,
+      },
+    });
+    return notification;
+  } catch (error) {
+    console.error("Erreur marquage notification comme lue:", error);
     throw error;
   }
 };
 
 /**
- * Créer une notification pour un vaccin programmé
+ * Marque toutes les notifications d'un utilisateur comme lues
+ * @param {string} userId - ID de l'utilisateur
  */
-const notifyVaccineScheduled = async ({ childId, vaccineName, scheduledDate }) => {
-  return createAndSendNotification({
-    childId,
-    title: "Vaccin programmé",
-    message: `Le vaccin ${vaccineName} est programmé pour le ${new Date(scheduledDate).toLocaleDateString("fr-FR")}`,
-    type: "vaccination",
-  });
-};
-
-/**
- * Créer une notification pour un vaccin raté
- */
-const notifyVaccineMissed = async ({ childId, vaccineName, dueDate }) => {
-  return createAndSendNotification({
-    childId,
-    title: "Vaccin raté",
-    message: `Le vaccin ${vaccineName} était prévu pour le ${new Date(dueDate).toLocaleDateString("fr-FR")} et n'a pas été effectué`,
-    type: "vaccination",
-  });
-};
-
-/**
- * Créer une notification pour un vaccin en retard
- */
-const notifyVaccineLate = async ({ childId, vaccineName, dueDate }) => {
-  return createAndSendNotification({
-    childId,
-    title: "Vaccin en retard",
-    message: `Le vaccin ${vaccineName} était prévu pour le ${new Date(dueDate).toLocaleDateString("fr-FR")} et est maintenant en retard`,
-    type: "vaccination",
-  });
-};
-
-/**
- * Créer une notification pour un nouveau conseil
- */
-const notifyNewAdvice = async ({ childId, adviceTitle }) => {
-  return createAndSendNotification({
-    childId,
-    title: "Nouveau conseil disponible",
-    message: `Un nouveau conseil est disponible : ${adviceTitle}`,
-    type: "advice",
-  });
-};
-
-/**
- * Créer une notification pour une nouvelle campagne
- */
-const notifyNewCampaign = async ({ childId, campaignTitle }) => {
-  return createAndSendNotification({
-    childId,
-    title: "Nouvelle campagne de vaccination",
-    message: `Une nouvelle campagne est disponible : ${campaignTitle}`,
-    type: "campaign",
-  });
-};
-
-/**
- * Créer une notification pour un rendez-vous
- */
-const notifyAppointment = async ({ childId, vaccineName, appointmentDate }) => {
-  return createAndSendNotification({
-    childId,
-    title: "Rendez-vous de vaccination",
-    message: `Rendez-vous pour le vaccin ${vaccineName} le ${new Date(appointmentDate).toLocaleDateString("fr-FR")}`,
-    type: "appointment",
-  });
-};
-
-const notifyAppointmentUpdated = async ({ childId, updates }) => {
-  if (!childId || !Array.isArray(updates) || updates.length === 0) {
-    return null;
+const markAllAsRead = async (userId) => {
+  try {
+    const result = await prisma.userNotification.updateMany({
+      where: {
+        userId,
+        read: false,
+      },
+      data: {
+        read: true,
+      },
+    });
+    return result;
+  } catch (error) {
+    console.error("Erreur marquage toutes notifications comme lues:", error);
+    throw error;
   }
-
-  return Promise.all(
-    updates.map((update) =>
-      createAndSendNotification({
-        childId,
-        title: update.title ?? "Rendez-vous modifié",
-        message: update.message ?? "Un rendez-vous a été modifié.",
-        type: "appointment",
-      }),
-    ),
-  );
 };
 
 /**
- * Créer une notification pour un rendez-vous annulé
+ * Supprime une notification
+ * @param {string} notificationId - ID de la notification
+ * @param {string} userId - ID de l'utilisateur (pour vérification)
  */
-const notifyAppointmentCancelled = async ({ childId, vaccineName, scheduledDate }) => {
-  return createAndSendNotification({
-    childId,
-    title: "Rendez-vous annulé",
-    message: `Le rendez-vous pour le vaccin ${vaccineName} prévu le ${new Date(scheduledDate).toLocaleDateString("fr-FR")} a été annulé.`,
-    type: "appointment",
-  });
+const deleteNotification = async (notificationId, userId) => {
+  try {
+    const result = await prisma.userNotification.deleteMany({
+      where: {
+        id: notificationId,
+        userId, // S'assurer que la notification appartient à l'utilisateur
+      },
+    });
+    return result;
+  } catch (error) {
+    console.error("Erreur suppression notification:", error);
+    throw error;
+  }
 };
 
 /**
- * Créer une notification pour l'activation du compte enfant
+ * Supprime toutes les notifications d'un utilisateur
+ * @param {string} userId - ID de l'utilisateur
  */
-const notifyAccountActivated = async ({ childId, childName }) => {
-  return createAndSendNotification({
-    childId,
-    title: "Compte activé",
-    message: `Le compte de ${childName} a été activé avec succès. Vous pouvez maintenant accéder à toutes les fonctionnalités de l'application Imunia.`,
-    type: "account",
-  });
+const deleteAllNotifications = async (userId) => {
+  try {
+    const result = await prisma.userNotification.deleteMany({
+      where: {
+        userId,
+      },
+    });
+    return result;
+  } catch (error) {
+    console.error("Erreur suppression toutes notifications:", error);
+    throw error;
+  }
 };
 
 /**
- * Créer une notification pour la demande de nouvelles photos
+ * Supprime toutes les notifications lues d'un utilisateur
+ * @param {string} userId - ID de l'utilisateur
  */
-const notifyPhotoRequest = async ({ childId, childName }) => {
-  return createAndSendNotification({
-    childId,
-    title: "Nouvelles photos requises",
-    message: `Nous avons besoin de photos plus claires du carnet de vaccination de ${childName}. Veuillez vous connecter à l'application et télécharger de nouvelles photos pour continuer à utiliser l'application.`,
-    type: "verification",
-  });
+const deleteAllReadNotifications = async (userId) => {
+  try {
+    const result = await prisma.userNotification.deleteMany({
+      where: {
+        userId,
+        read: true,
+      },
+    });
+    return result;
+  } catch (error) {
+    console.error("Erreur suppression notifications lues:", error);
+    throw error;
+  }
 };
 
 module.exports = {
-  createAndSendNotification,
-  notifyVaccineScheduled,
-  notifyVaccineMissed,
-  notifyVaccineLate,
-  notifyNewAdvice,
-  notifyNewCampaign,
-  notifyAppointment,
-  notifyAppointmentUpdated,
-  notifyAppointmentCancelled,
-  notifyAccountActivated,
-  notifyPhotoRequest,
+  createNotification,
+  createNotificationsForUsers,
+  getUserNotifications,
+  getUnreadCount,
+  markAsRead,
+  markAllAsRead,
+  deleteNotification,
+  deleteAllNotifications,
+  deleteAllReadNotifications,
 };
-

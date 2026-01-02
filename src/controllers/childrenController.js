@@ -5,6 +5,7 @@ const {
   rebuildChildVaccinationBuckets,
 } = require("../services/vaccineBucketService");
 const { buildVaccineDoseMap } = require("../utils/vaccineDose");
+const { logEventAsync } = require("../services/eventLogService");
 
 const makeHttpError = (message, status = 400) => {
   const err = new Error(message);
@@ -50,6 +51,7 @@ const hasChildAccess = (user, child) => {
   const { healthCenterId, districtId, regionId } = deriveChildLocation(child);
 
   switch (user.role) {
+    case "SUPERADMIN":
     case "NATIONAL":
       return true;
     case "REGIONAL":
@@ -76,7 +78,7 @@ const hasManualVaccinationAccess = (user, child) => {
     return false;
   }
 
-  if (["NATIONAL", "REGIONAL", "DISTRICT"].includes(user.role)) {
+  if (["SUPERADMIN", "NATIONAL", "REGIONAL", "DISTRICT"].includes(user.role)) {
     return true;
   }
 
@@ -722,6 +724,29 @@ const createChildren = async (req, res, next) => {
 
     res.status(201).json(mapChildrenForResponse(fullChild));
 
+    // Enregistrer l'événement
+    logEventAsync({
+      type: "CHILD",
+      action: "CREATE",
+      user: {
+        id: req.user.id,
+        firstName: req.user.firstName,
+        lastName: req.user.lastName,
+        email: req.user.email,
+        role: req.user.role,
+      },
+      entityType: "CHILD",
+      entityId: fullChild.id,
+      entityName: `${fullChild.firstName} ${fullChild.lastName}`,
+      details: {
+        firstName: fullChild.firstName,
+        lastName: fullChild.lastName,
+        birthDate: fullChild.birthDate,
+        gender: fullChild.gender,
+        healthCenterId: fullChild.healthCenterId,
+      },
+    });
+
     try {
       await sendParentAccessCode({
         to: fullChild.phoneParent,
@@ -764,6 +789,34 @@ const updateChildren = async (req, res, next) => {
       },
     });
 
+    // Enregistrer l'événement
+    logEventAsync({
+      type: "CHILD",
+      action: "UPDATE",
+      user: {
+        id: req.user.id,
+        firstName: req.user.firstName,
+        lastName: req.user.lastName,
+        email: req.user.email,
+        role: req.user.role,
+      },
+      entityType: "CHILD",
+      entityId: childrenId,
+      entityName: `${existingChild.firstName} ${existingChild.lastName}`,
+      details: {
+        before: {
+          nextVaccineId: existingChild.nextVaccineId,
+          nextAgentId: existingChild.nextAgentId,
+          nextAppointment: existingChild.nextAppointment,
+        },
+        after: {
+          nextVaccineId: updatedChild.nextVaccineId,
+          nextAgentId: updatedChild.nextAgentId,
+          nextAppointment: updatedChild.nextAppointment,
+        },
+      },
+    });
+
     res.json(updatedChild);
   } catch (error) {
     next(error);
@@ -771,7 +824,7 @@ const updateChildren = async (req, res, next) => {
 };
 
 const getChildren = async (req, res, next) => {
-  if (!["NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
+  if (!["SUPERADMIN", "NATIONAL", "REGIONAL", "DISTRICT", "AGENT"].includes(req.user.role)) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -786,6 +839,28 @@ const getChildren = async (req, res, next) => {
       whereClause.isActive = false;
     }
     // Si "all" ou non spécifié, on ne filtre pas
+
+    // Pour SUPERADMIN, appliquer les filtres optionnels depuis les query params
+    if (req.user.role === "SUPERADMIN") {
+      const { regionId, districtId, healthCenterId } = req.query;
+      
+      if (healthCenterId) {
+        whereClause.healthCenterId = healthCenterId;
+      } else if (districtId) {
+        whereClause.healthCenter = {
+          districtId: districtId,
+        };
+      } else if (regionId) {
+        whereClause.healthCenter = {
+          district: {
+            commune: {
+              regionId: regionId,
+            },
+          },
+        };
+      }
+      // Si aucun filtre, on voit tout (comme NATIONAL)
+    }
 
     if (req.user.role === "REGIONAL") {
       const regional = await prisma.user.findUnique({
@@ -1369,6 +1444,27 @@ const deleteChild = async (req, res, next) => {
 
       // Supprimer l'enfant
       await tx.children.delete({ where: { id } });
+    });
+
+    // Enregistrer l'événement
+    logEventAsync({
+      type: "CHILD",
+      action: "DELETE",
+      user: {
+        id: req.user.id,
+        firstName: req.user.firstName,
+        lastName: req.user.lastName,
+        email: req.user.email,
+        role: req.user.role,
+      },
+      entityType: "CHILD",
+      entityId: id,
+      entityName: `${child.firstName} ${child.lastName}`,
+      details: {
+        firstName: child.firstName,
+        lastName: child.lastName,
+        healthCenterId: child.healthCenterId,
+      },
     });
 
     res.json({ message: "Enfant supprimé avec succès" });

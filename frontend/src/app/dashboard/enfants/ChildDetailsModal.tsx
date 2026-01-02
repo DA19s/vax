@@ -384,7 +384,7 @@ export default function ChildDetailsModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 px-4 py-4">
-      <div className="relative w-full max-w-3xl max-h-[90vh] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl flex flex-col">
+      <div className="relative w-full max-w-[95vw] md:max-w-3xl max-h-[90vh] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl flex flex-col">
         <div className="flex items-center justify-between bg-gradient-to-r from-blue-600 to-blue-800 px-6 py-3 text-white flex-shrink-0">
           <div>
             <p className="text-xs uppercase tracking-wide text-blue-100">Dossier médical</p>

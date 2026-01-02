@@ -650,19 +650,6 @@ export default function ChildrenTab({
                         {isAgent && (
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-2">
-                              {!child.isActive && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    // TODO: Ouvrir la page de comparaison
-                                    window.location.href = `/dashboard/enfants/verification/${child.id}`;
-                                  }}
-                                  className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-100"
-                                >
-                                  Comparer
-                                </button>
-                              )}
                               <button
                                 type="button"
                                 onClick={(e) => {

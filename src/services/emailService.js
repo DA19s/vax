@@ -11,6 +11,9 @@ const transporter = nodemailer.createTransport({
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
+  connectionTimeout: 5000, // 5 secondes pour la connexion
+  socketTimeout: 10000, // 10 secondes pour l'envoi
+  greetingTimeout: 5000, // 5 secondes pour le greeting
 });
 
 const sendInvitationEmail = async ({
@@ -103,6 +106,42 @@ const sendPasswordResetEmail = async ({ email, resetLink }) => {
     console.log("Email reset envoyé :", info.response);
   } catch (error) {
     console.error("Erreur envoi reset:", error.message);
+  }
+};
+
+const sendPasswordResetCode = async ({ email, code, firstName }) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
+      <h2 style="color:#2c7be5;">Code de réinitialisation de mot de passe</h2>
+      <p>Bonjour ${firstName || ""},</p>
+      <p>Vous avez demandé à réinitialiser votre mot de passe. Utilisez le code suivant :</p>
+      <div style="text-align:center; margin:30px 0;">
+        <div style="background:#f0f4f8; border:2px dashed #2c7be5; border-radius:8px; padding:20px; display:inline-block;">
+          <p style="font-size:32px; font-weight:bold; letter-spacing:8px; color:#2c7be5; margin:0; font-family:monospace;">
+            ${code}
+          </p>
+        </div>
+      </div>
+      <p style="font-size:14px; color:#666;">
+        Ce code est valable <b>10 minutes</b> et vous avez <b>3 tentatives</b> pour le saisir correctement.
+      </p>
+      <p style="font-size:12px; color:#888;">
+        Si vous n'êtes pas à l'origine de cette demande, ignorez ce message.
+      </p>
+    </div>
+  `;
+
+  try {
+    const info = await transporter.sendMail({
+      from: `"Imunia" <${process.env.SMTP_USER}>`,
+      to: email,
+      subject: "Code de réinitialisation de mot de passe",
+      html,
+    });
+    console.log("Email code reset envoyé :", info.response);
+  } catch (error) {
+    console.error("Erreur envoi code reset:", error.message);
+    throw error;
   }
 };
 
@@ -217,6 +256,7 @@ const sendVaccineRequestEmail = async ({
 
 const sendStockTransferNotificationEmail = async ({
   emails,
+  userIds,
   vaccineName,
   quantity,
   regionName,
@@ -260,11 +300,28 @@ const sendStockTransferNotificationEmail = async ({
     }
   }
 
+  // Créer les notifications pour les utilisateurs
+  if (userIds && userIds.length > 0) {
+    try {
+      const { createNotificationsForUsers } = require("./notificationService");
+      await createNotificationsForUsers({
+        userIds,
+        title: `Nouvel envoi de stock - ${vaccineName}`,
+        message: `Un envoi de ${quantity} doses de ${vaccineName} vous a été effectué depuis le niveau national${regionName ? ` pour la région ${regionName}` : ""}.`,
+        type: "STOCK_TRANSFER",
+      });
+    } catch (notifError) {
+      console.error("Erreur création notifications:", notifError);
+      // Ne pas faire échouer l'opération si la création de notifications échoue
+    }
+  }
+
   return results;
 };
 
 const sendTransferRejectedEmail = async ({
   emails,
+  userIds,
   vaccineName,
   quantity,
   fromName,
@@ -311,11 +368,27 @@ const sendTransferRejectedEmail = async ({
     }
   }
 
+  // Créer les notifications pour les utilisateurs
+  if (userIds && userIds.length > 0) {
+    try {
+      const { createNotificationsForUsers } = require("./notificationService");
+      await createNotificationsForUsers({
+        userIds,
+        title: `Transfert refusé - ${vaccineName}`,
+        message: `Un transfert de ${quantity} doses de ${vaccineName} que vous avez envoyé à ${toName || "le destinataire"} a été refusé. Les quantités ont été restaurées dans votre stock.`,
+        type: "STOCK_TRANSFER_REJECTED",
+      });
+    } catch (notifError) {
+      console.error("Erreur création notifications:", notifError);
+    }
+  }
+
   return results;
 };
 
 const sendTransferCancelledEmail = async ({
   emails,
+  userIds,
   vaccineName,
   quantity,
   fromName,
@@ -359,6 +432,21 @@ const sendTransferCancelledEmail = async ({
     } catch (error) {
       console.error(`Erreur envoi email à ${email}:`, error.message);
       results.push({ email, success: false, error: error.message });
+    }
+  }
+
+  // Créer les notifications pour les utilisateurs
+  if (userIds && userIds.length > 0) {
+    try {
+      const { createNotificationsForUsers } = require("./notificationService");
+      await createNotificationsForUsers({
+        userIds,
+        title: `Transfert annulé - ${vaccineName}`,
+        message: `Un transfert de ${quantity} doses de ${vaccineName} qui vous était destiné depuis ${fromName || "l'expéditeur"} a été annulé.`,
+        type: "STOCK_TRANSFER_CANCELLED",
+      });
+    } catch (notifError) {
+      console.error("Erreur création notifications:", notifError);
     }
   }
 
@@ -647,7 +735,275 @@ const sendAppointmentReminderEmail = async ({
   }
 };
 
+// ==================== NOTIFICATIONS SUPERADMIN ====================
+
+// Notifier les utilisateurs d'une entité lors d'une action du superadmin
+const sendSuperAdminEntityNotification = async ({
+  emails,
+  userIds,
+  action,
+  entityType,
+  entityName,
+  details,
+}) => {
+  const actionText = {
+    created: "créée",
+    updated: "modifiée",
+    deleted: "supprimée",
+  }[action] || "modifiée";
+
+  const entityTypeText = {
+    region: "Région",
+    district: "District",
+    healthcenter: "Centre de santé",
+  }[entityType] || "Entité";
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
+      <h2 style="color:#2c7be5;">Notification Imunia</h2>
+      <p>Bonjour,</p>
+      <p>Une ${entityTypeText.toLowerCase()} a été ${actionText} par un administrateur système :</p>
+      <div style="background:#f5f5f5; padding:15px; border-radius:5px; margin:20px 0;">
+        <p><strong>${entityTypeText} :</strong> ${entityName}</p>
+        ${details ? `<p><strong>Détails :</strong> ${details}</p>` : ""}
+      </div>
+      <p>Cette modification peut affecter votre accès ou vos données. Veuillez vous connecter à la plateforme pour vérifier.</p>
+      <p style="text-align:center; margin:20px 0;">
+        <a href="${process.env.FRONTEND_URL}/dashboard" style="background:#2c7be5; color:#fff; padding:12px 24px; text-decoration:none; border-radius:5px; font-size:16px;">
+          Accéder au tableau de bord
+        </a>
+      </p>
+      <p style="font-size:12px; color:#888;">
+        Ceci est un email automatique, merci de ne pas y répondre.
+      </p>
+    </div>
+  `;
+
+  const results = [];
+  for (const email of emails) {
+    try {
+      const info = await transporter.sendMail({
+        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        to: email,
+        subject: `${entityTypeText} ${actionText} - Notification Imunia`,
+        html,
+      });
+      results.push({ email, success: true, messageId: info.messageId });
+    } catch (error) {
+      console.error(`Erreur envoi notification entité à ${email}:`, error.message);
+      results.push({ email, success: false, error: error.message });
+    }
+  }
+
+  // Créer les notifications pour les utilisateurs
+  if (userIds && userIds.length > 0) {
+    try {
+      const { createNotificationsForUsers } = require("./notificationService");
+      await createNotificationsForUsers({
+        userIds,
+        title: `${entityTypeText} ${actionText} - ${entityName}`,
+        message: `Une ${entityTypeText.toLowerCase()} a été ${actionText} par un administrateur système${details ? ` : ${details}` : ""}.`,
+        type: `ENTITY_${action.toUpperCase()}`,
+      });
+    } catch (notifError) {
+      console.error("Erreur création notifications:", notifError);
+    }
+  }
+
+  return results;
+};
+
+// Notifier les utilisateurs lors d'une action sur un utilisateur
+const sendSuperAdminUserNotification = async ({
+  emails,
+  userIds,
+  action,
+  userEmail,
+  userName,
+  role,
+  details,
+}) => {
+  const actionText = {
+    created: "créé",
+    updated: "modifié",
+    deleted: "supprimé",
+  }[action] || "modifié";
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
+      <h2 style="color:#2c7be5;">Notification Imunia</h2>
+      <p>Bonjour,</p>
+      <p>Un utilisateur a été ${actionText} par un administrateur système :</p>
+      <div style="background:#f5f5f5; padding:15px; border-radius:5px; margin:20px 0;">
+        <p><strong>Utilisateur :</strong> ${userName || userEmail}</p>
+        <p><strong>Email :</strong> ${userEmail}</p>
+        <p><strong>Rôle :</strong> ${role}</p>
+        ${details ? `<p><strong>Détails :</strong> ${details}</p>` : ""}
+      </div>
+      ${action === "created" ? `<p>Si cet utilisateur vous concerne, vous recevrez un email d'invitation séparé.</p>` : ""}
+      <p style="text-align:center; margin:20px 0;">
+        <a href="${process.env.FRONTEND_URL}/dashboard" style="background:#2c7be5; color:#fff; padding:12px 24px; text-decoration:none; border-radius:5px; font-size:16px;">
+          Accéder au tableau de bord
+        </a>
+      </p>
+      <p style="font-size:12px; color:#888;">
+        Ceci est un email automatique, merci de ne pas y répondre.
+      </p>
+    </div>
+  `;
+
+  const results = [];
+  for (const email of emails) {
+    try {
+      const info = await transporter.sendMail({
+        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        to: email,
+        subject: `Utilisateur ${actionText} - Notification Imunia`,
+        html,
+      });
+      results.push({ email, success: true, messageId: info.messageId });
+    } catch (error) {
+      console.error(`Erreur envoi notification utilisateur à ${email}:`, error.message);
+      results.push({ email, success: false, error: error.message });
+    }
+  }
+
+  // Créer les notifications pour les utilisateurs
+  if (userIds && userIds.length > 0) {
+    try {
+      const { createNotificationsForUsers } = require("./notificationService");
+      await createNotificationsForUsers({
+        userIds,
+        title: `Utilisateur ${actionText} - ${userName || userEmail}`,
+        message: `Un utilisateur a été ${actionText} par un administrateur système${details ? ` : ${details}` : ""}.`,
+        type: `USER_${action.toUpperCase()}`,
+      });
+    } catch (notifError) {
+      console.error("Erreur création notifications:", notifError);
+    }
+  }
+
+  return results;
+};
+
+// Notifier les utilisateurs lors d'un ajustement de stock
+const sendSuperAdminStockAdjustmentNotification = async ({
+  emails,
+  userIds,
+  entityType,
+  entityName,
+  vaccineName,
+  quantity,
+  adjustmentType,
+}) => {
+  const adjustmentText = adjustmentType === "add" ? "ajouté" : "retiré";
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
+      <h2 style="color:#2c7be5;">Ajustement de stock</h2>
+      <p>Bonjour,</p>
+      <p>Un ajustement de stock a été effectué par un administrateur système :</p>
+      <div style="background:#f5f5f5; padding:15px; border-radius:5px; margin:20px 0;">
+        <p><strong>${entityType} :</strong> ${entityName}</p>
+        <p><strong>Vaccin :</strong> ${vaccineName}</p>
+        <p><strong>Quantité ${adjustmentText} :</strong> ${Math.abs(quantity)}</p>
+      </div>
+      <p>Veuillez vous connecter à la plateforme pour vérifier les stocks.</p>
+      <p style="text-align:center; margin:20px 0;">
+        <a href="${process.env.FRONTEND_URL}/dashboard/stocks" style="background:#2c7be5; color:#fff; padding:12px 24px; text-decoration:none; border-radius:5px; font-size:16px;">
+          Voir les stocks
+        </a>
+      </p>
+      <p style="font-size:12px; color:#888;">
+        Ceci est un email automatique, merci de ne pas y répondre.
+      </p>
+    </div>
+  `;
+
+  const results = [];
+  for (const email of emails) {
+    try {
+      const info = await transporter.sendMail({
+        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        to: email,
+        subject: "Ajustement de stock - Notification Imunia",
+        html,
+      });
+      results.push({ email, success: true, messageId: info.messageId });
+    } catch (error) {
+      console.error(`Erreur envoi notification ajustement stock à ${email}:`, error.message);
+      results.push({ email, success: false, error: error.message });
+    }
+  }
+
+  // Créer les notifications pour les utilisateurs
+  if (userIds && userIds.length > 0) {
+    try {
+      const { createNotificationsForUsers } = require("./notificationService");
+      await createNotificationsForUsers({
+        userIds,
+        title: `Ajustement de stock - ${vaccineName}`,
+        message: `Un ajustement de stock a été effectué par un administrateur système : ${Math.abs(quantity)} doses ${adjustmentText} pour ${entityName}.`,
+        type: "STOCK_ADJUSTMENT",
+      });
+    } catch (notifError) {
+      console.error("Erreur création notifications:", notifError);
+    }
+  }
+
+  return results;
+};
+
+// Notifier les utilisateurs lors d'un changement de paramètres système
+const sendSuperAdminSettingsNotification = async ({
+  emails,
+  userIds,
+  settingType,
+  details,
+}) => {
+  const settingText = {
+    logo: "logo de l'application",
+    name: "nom de l'application",
+  }[settingType] || "paramètre système";
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333;">
+      <h2 style="color:#2c7be5;">Modification des paramètres système</h2>
+      <p>Bonjour,</p>
+      <p>Le ${settingText} a été modifié par un administrateur système.</p>
+      ${details ? `<div style="background:#f5f5f5; padding:15px; border-radius:5px; margin:20px 0;">${details}</div>` : ""}
+      <p>Ces modifications sont maintenant actives sur la plateforme.</p>
+      <p style="text-align:center; margin:20px 0;">
+        <a href="${process.env.FRONTEND_URL}/dashboard" style="background:#2c7be5; color:#fff; padding:12px 24px; text-decoration:none; border-radius:5px; font-size:16px;">
+          Accéder au tableau de bord
+        </a>
+      </p>
+      <p style="font-size:12px; color:#888;">
+        Ceci est un email automatique, merci de ne pas y répondre.
+      </p>
+    </div>
+  `;
+
+  const results = [];
+  for (const email of emails) {
+    try {
+      const info = await transporter.sendMail({
+        from: `"Imunia" <${process.env.SMTP_USER}>`,
+        to: email,
+        subject: "Modification des paramètres système - Notification Imunia",
+        html,
+      });
+      results.push({ email, success: true, messageId: info.messageId });
+    } catch (error) {
+      console.error(`Erreur envoi notification paramètres à ${email}:`, error.message);
+      results.push({ email, success: false, error: error.message });
+    }
+  }
+  return results;
+};
+
 module.exports = {
+  sendPasswordResetCode,
   sendInvitationEmail,
   sendPasswordResetEmail,
   sendVaccineRequestEmail,
@@ -657,6 +1013,10 @@ module.exports = {
   sendTransferCancelledEmail,
   sendChildAccountActivatedEmail,
   sendChildAccountPendingEmail,
+  sendSuperAdminEntityNotification,
+  sendSuperAdminUserNotification,
+  sendSuperAdminStockAdjustmentNotification,
+  sendSuperAdminSettingsNotification,
   sendNewPhotosUploadedEmail,
   sendStockExpirationAlert,
   sendAppointmentReminderEmail,

@@ -230,8 +230,7 @@ const formatRegionDeletionSummary = (data) => ({
 
 
 const createRegion = async (req, res, next) => {
-
-    if (!req.user || req.user.role !== "NATIONAL") {
+  if (!req.user || (req.user.role !== "NATIONAL" && req.user.role !== "SUPERADMIN")) {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -255,6 +254,27 @@ const createRegion = async (req, res, next) => {
       },
     });
 
+    // Enregistrer l'événement
+    const { logEventAsync } = require("../services/eventLogService");
+    logEventAsync({
+      type: "ENTITY",
+      subtype: "REGION",
+      action: "CREATE",
+      user: {
+        id: req.user.id,
+        firstName: req.user.firstName,
+        lastName: req.user.lastName,
+        email: req.user.email,
+        role: req.user.role,
+      },
+      entityType: "REGION",
+      entityId: newRegion.id,
+      entityName: newRegion.name,
+      details: {
+        name: newRegion.name,
+      },
+    });
+
     res.status(201).json(newRegion);
   } catch (error) {
     next(error);
@@ -263,8 +283,7 @@ const createRegion = async (req, res, next) => {
 };
 
 const getRegions = async (req, res, next) => {
-  
-  if (req.user.role !== "NATIONAL") {
+  if (req.user.role !== "NATIONAL" && req.user.role !== "SUPERADMIN") {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -283,8 +302,7 @@ const getRegions = async (req, res, next) => {
 };
 
 const updateRegion = async (req, res, next) => {
-
-  if (req.user.role !== "NATIONAL") {
+  if (req.user.role !== "NATIONAL" && req.user.role !== "SUPERADMIN") {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
@@ -298,9 +316,32 @@ const updateRegion = async (req, res, next) => {
       return res.status(404).json({ message: "Région non trouvée" });
     }
 
+    const oldName = region.name;
     const updatedRegion = await prisma.region.update({
       where: { id: regionId },
       data: { name: req.body.name },
+    });
+
+    // Enregistrer l'événement
+    const { logEventAsync } = require("../services/eventLogService");
+    logEventAsync({
+      type: "ENTITY",
+      subtype: "REGION",
+      action: "UPDATE",
+      user: {
+        id: req.user.id,
+        firstName: req.user.firstName,
+        lastName: req.user.lastName,
+        email: req.user.email,
+        role: req.user.role,
+      },
+      entityType: "REGION",
+      entityId: updatedRegion.id,
+      entityName: updatedRegion.name,
+      details: {
+        before: { name: oldName },
+        after: { name: updatedRegion.name },
+      },
     });
 
     res.json(updatedRegion);
@@ -312,12 +353,40 @@ const updateRegion = async (req, res, next) => {
 };
 
 const deleteRegion = async (req, res, next) => {
-  if (req.user.role !== "NATIONAL") {
+  if (req.user.role !== "NATIONAL" && req.user.role !== "SUPERADMIN") {
     return res.status(403).json({ message: "Accès refusé" });
   }
 
   try {
     const regionId = req.params.id;
+
+    // Récupérer les informations de la région avant suppression
+    const region = await prisma.region.findUnique({
+      where: { id: regionId },
+      select: { id: true, name: true },
+    });
+
+    if (!region) {
+      return res.status(404).json({ message: "Région non trouvée" });
+    }
+
+    // Récupérer les données de cascade AVANT la suppression pour le logging
+    let cascadeDataForLogging;
+    try {
+      cascadeDataForLogging = await prisma.$transaction((tx) =>
+        collectRegionCascadeData(tx, regionId)
+      );
+    } catch (err) {
+      console.error("Erreur récupération données cascade:", err);
+      cascadeDataForLogging = {
+        communeIds: [],
+        districtIds: [],
+        healthCenterIds: [],
+        childIds: [],
+        lotIds: [],
+        pendingTransferIds: [],
+      };
+    }
 
     await prisma.$transaction(async (tx) => {
       const cascadeData = await collectRegionCascadeData(tx, regionId);
@@ -452,6 +521,34 @@ const deleteRegion = async (req, res, next) => {
       });
     });
 
+    // Enregistrer l'événement avec le résumé de cascade (utiliser les données récupérées avant suppression)
+    const { logEventAsync } = require("../services/eventLogService");
+    logEventAsync({
+      type: "ENTITY",
+      subtype: "REGION",
+      action: "DELETE",
+      user: {
+        id: req.user.id,
+        firstName: req.user.firstName,
+        lastName: req.user.lastName,
+        email: req.user.email,
+        role: req.user.role,
+      },
+      entityType: "REGION",
+      entityId: region.id,
+      entityName: region.name,
+      metadata: {
+        cascadeSummary: {
+          communes: cascadeDataForLogging.communeIds.length,
+          districts: cascadeDataForLogging.districtIds.length,
+          healthCenters: cascadeDataForLogging.healthCenterIds.length,
+          children: cascadeDataForLogging.childIds.length,
+          lots: cascadeDataForLogging.lotIds.length,
+          pendingTransfers: cascadeDataForLogging.pendingTransferIds.length,
+        },
+      },
+    });
+
     res.status(204).end();
   } catch (error) {
     next(error);
@@ -459,7 +556,7 @@ const deleteRegion = async (req, res, next) => {
 };
 
 const getRegionDeletionSummary = async (req, res, next) => {
-  if (req.user.role !== "NATIONAL") {
+  if (req.user.role !== "NATIONAL" && req.user.role !== "SUPERADMIN") {
     return res.status(403).json({ message: "Accès refusé" });
   }
 

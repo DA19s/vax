@@ -140,7 +140,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isPublicPath = (path: string | null) => {
     if (!path) return false;
-    return path.startsWith("/activate") || path.startsWith("/reset-password");
+    return (
+      path.startsWith("/activate") ||
+      path.startsWith("/reset-password") ||
+      path.startsWith("/forgot-password") ||
+      path.startsWith("/verify-reset-code") ||
+      path === "/login"
+    );
   };
 
   const persistUser = useCallback((value: AuthUser) => {
