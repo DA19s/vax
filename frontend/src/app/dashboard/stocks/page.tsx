@@ -2620,6 +2620,7 @@ type DistrictStock = {
 type DistrictOption = {
   id: string;
   name: string;
+  regionId?: string | null;
 };
 
 type HealthCenterOption = {
@@ -2695,7 +2696,7 @@ type HealthCenterStock = {
 };
 
 export function RegionalStocksPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
 
   const [stocks, setStocks] = useState<RegionalStock[]>([]);
   const [vaccines, setVaccines] = useState<VaccineInfo[]>([]);
@@ -2728,10 +2729,9 @@ export function RegionalStocksPage() {
   const [lotDeletingId, setLotDeletingId] = useState<string | null>(null);
   
   // États pour l'ajustement
-  const { user } = useAuth();
   const canAdjust = user?.role === "SUPERADMIN";
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
-  const [updateContext, setUpdateContext] = useState<{ vaccineId: string; vaccineName: string; currentQuantity: number } | null>(null);
+  const [updateContext, setUpdateContext] = useState<{ vaccineId: string; vaccineName: string; currentQuantity: number; regionId?: string } | null>(null);
   const [updateQuantity, setUpdateQuantity] = useState<string>("");
   const [updateMode, setUpdateMode] = useState<"reduce" | "add">("add");
   const [reduceQuantity, setReduceQuantity] = useState<string>("");
@@ -2950,6 +2950,7 @@ export function RegionalStocksPage() {
         districtItems.map((district: any) => ({
           id: district.id,
           name: district.name,
+          regionId: district.commune?.region?.id ?? district.commune?.regionId ?? null,
         }))
       );
     } catch (err) {
@@ -3538,6 +3539,7 @@ export function RegionalStocksPage() {
       vaccineId: stock.vaccineId,
       vaccineName: stock.vaccine.name,
       currentQuantity: stock.quantity ?? 0,
+      regionId: stock.regionId,
     });
     setUpdateQuantity(String(stock.quantity ?? 0));
     setUpdateMode("add");
@@ -3627,22 +3629,55 @@ export function RegionalStocksPage() {
     try {
       setAddQuantityError(null);
       setUpdating(true);
-      const response = await fetch(`${API_URL}/api/stock/add-regional`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          vaccineId: updateContext.vaccineId,
-          quantity: quantityValue,
-          expiration: `${addExpiration}T00:00:00.000Z`,
-        }),
-      });
 
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.message ?? `status ${response.status}`);
+      // Pour SUPERADMIN, utiliser updateStock qui crée directement un lot sans prélever du niveau supérieur
+      // Pour les autres rôles, utiliser addStock qui prélève du niveau supérieur
+      const isSuperAdmin = user?.role === "SUPERADMIN";
+      
+      if (isSuperAdmin && updateContext.regionId) {
+        // Utiliser updateStockREGIONAL pour créer directement un lot
+        const currentQuantity = updateContext.currentQuantity ?? 0;
+        const newTotalQuantity = currentQuantity + quantityValue;
+        
+        const response = await fetch(`${API_URL}/api/stock/regional`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            vaccineId: updateContext.vaccineId,
+            regionId: updateContext.regionId,
+            quantity: newTotalQuantity,
+            expiration: `${addExpiration}T00:00:00.000Z`,
+          }),
+        });
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+      } else {
+        // Utiliser addStockREGIONAL qui prélève du stock national
+        // Note: Cette branche ne devrait jamais s'exécuter car canAdjust est true uniquement pour SUPERADMIN
+        const response = await fetch(`${API_URL}/api/stock/add-regional`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            vaccineId: updateContext.vaccineId,
+            regionId: updateContext.regionId,
+            quantity: quantityValue,
+            expiration: `${addExpiration}T00:00:00.000Z`,
+          }),
+        });
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
       }
 
       resetUpdateModal();
@@ -4626,11 +4661,20 @@ export function RegionalStocksPage() {
                   required
                 >
                   <option value="">— Sélectionner un district —</option>
-                  {districts.map((district) => (
-                    <option key={district.id} value={district.id}>
-                      {district.name}
-                    </option>
-                  ))}
+                  {districts
+                    .filter((district) => {
+                      // Pour SUPERADMIN, filtrer par la région du stock qu'on transfère
+                      if (user?.role === "SUPERADMIN" && transferContext?.regionId) {
+                        return district.regionId === transferContext.regionId;
+                      }
+                      // Pour les autres rôles, tous les districts sont déjà filtrés par l'API
+                      return true;
+                    })
+                    .map((district) => (
+                      <option key={district.id} value={district.id}>
+                        {district.name}
+                      </option>
+                    ))}
                 </select>
               </div>
 
@@ -5060,7 +5104,7 @@ export function DistrictStocksPage() {
   // États pour l'ajustement
   const canAdjust = user?.role === "SUPERADMIN";
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
-  const [updateContext, setUpdateContext] = useState<{ vaccineId: string; vaccineName: string; currentQuantity: number } | null>(null);
+  const [updateContext, setUpdateContext] = useState<{ vaccineId: string; vaccineName: string; currentQuantity: number; districtId?: string } | null>(null);
   const [updateQuantity, setUpdateQuantity] = useState<string>("");
   const [updateMode, setUpdateMode] = useState<"reduce" | "add">("add");
   const [reduceQuantity, setReduceQuantity] = useState<string>("");
@@ -5909,6 +5953,7 @@ export function DistrictStocksPage() {
       vaccineId: stock.vaccineId,
       vaccineName: stock.vaccine.name,
       currentQuantity: stock.quantity ?? 0,
+      districtId: stock.districtId,
     });
     setUpdateQuantity(String(stock.quantity ?? 0));
     setUpdateMode("add");
@@ -5998,23 +6043,54 @@ export function DistrictStocksPage() {
     try {
       setAddQuantityError(null);
       setUpdating(true);
-      const response = await fetch(`${API_URL}/api/stock/add-district`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          vaccineId: updateContext.vaccineId,
-          districtId: districtId,
-          quantity: quantityValue,
-          expiration: `${addExpiration}T00:00:00.000Z`,
-        }),
-      });
 
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.message ?? `status ${response.status}`);
+      // Pour SUPERADMIN, utiliser updateStock qui crée directement un lot sans prélever du niveau supérieur
+      // Pour les autres rôles, utiliser addStock qui prélève du niveau supérieur
+      const isSuperAdmin = user?.role === "SUPERADMIN";
+      
+      if (isSuperAdmin && updateContext.districtId) {
+        // Utiliser updateStockDISTRICT pour créer directement un lot
+        const currentQuantity = updateContext.currentQuantity ?? 0;
+        const newTotalQuantity = currentQuantity + quantityValue;
+        
+        const response = await fetch(`${API_URL}/api/stock/district`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            vaccineId: updateContext.vaccineId,
+            districtId: updateContext.districtId,
+            quantity: newTotalQuantity,
+            expiration: `${addExpiration}T00:00:00.000Z`,
+          }),
+        });
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+      } else {
+        // Utiliser addStockDISTRICT qui prélève du stock régional
+        const response = await fetch(`${API_URL}/api/stock/add-district`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            vaccineId: updateContext.vaccineId,
+            districtId: districtId,
+            quantity: quantityValue,
+            expiration: `${addExpiration}T00:00:00.000Z`,
+          }),
+        });
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
       }
 
       resetUpdateModal();
@@ -7016,11 +7092,20 @@ export function DistrictStocksPage() {
                   required
                 >
                   <option value="">— Sélectionner un centre —</option>
-                  {healthCenters.map((center) => (
-                    <option key={center.id} value={center.id}>
-                      {center.name}
-                    </option>
-                  ))}
+                  {healthCenters
+                    .filter((center) => {
+                      // Pour SUPERADMIN, filtrer par le district du stock qu'on transfère
+                      if (user?.role === "SUPERADMIN" && transferContext?.districtId) {
+                        return center.districtId === transferContext.districtId;
+                      }
+                      // Pour les autres rôles, tous les centres sont déjà filtrés par l'API
+                      return true;
+                    })
+                    .map((center) => (
+                      <option key={center.id} value={center.id}>
+                        {center.name}
+                      </option>
+                    ))}
                 </select>
               </div>
 
@@ -8230,23 +8315,54 @@ export function AgentAdminStocksPage() {
     try {
       setAddQuantityError(null);
       setUpdating(true);
-      const response = await fetch(`${API_URL}/api/stock/add-health-center`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          vaccineId: updateContext.vaccineId,
-          healthCenterId: currentHealthCenterId,
-          quantity: quantityValue,
-          expiration: `${addExpiration}T00:00:00.000Z`,
-        }),
-      });
 
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.message ?? `status ${response.status}`);
+      // Pour SUPERADMIN, utiliser updateStock qui crée directement un lot sans prélever du niveau supérieur
+      // Pour les autres rôles, utiliser addStock qui prélève du niveau supérieur
+      const isSuperAdmin = user?.role === "SUPERADMIN";
+      
+      if (isSuperAdmin) {
+        // Utiliser updateStockHEALTHCENTER pour créer directement un lot
+        const currentQuantity = updateContext.currentQuantity ?? 0;
+        const newTotalQuantity = currentQuantity + quantityValue;
+        
+        const response = await fetch(`${API_URL}/api/stock/health-center`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            vaccineId: updateContext.vaccineId,
+            healthCenterId: currentHealthCenterId,
+            quantity: newTotalQuantity,
+            expiration: `${addExpiration}T00:00:00.000Z`,
+          }),
+        });
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
+      } else {
+        // Utiliser addStockHEALTHCENTER qui prélève du stock district
+        const response = await fetch(`${API_URL}/api/stock/add-health-center`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            vaccineId: updateContext.vaccineId,
+            healthCenterId: currentHealthCenterId,
+            quantity: quantityValue,
+            expiration: `${addExpiration}T00:00:00.000Z`,
+          }),
+        });
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message ?? `status ${response.status}`);
+        }
       }
 
       resetUpdateModal();

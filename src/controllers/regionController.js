@@ -405,6 +405,11 @@ const deleteRegion = async (req, res, next) => {
           where: { schedule: { childId: { in: childIds } } },
         });
 
+        // Supprimer les VaccineRequest avant les enfants
+        await tx.vaccineRequest.deleteMany({
+          where: { childId: { in: childIds } },
+        });
+
         await tx.childVaccineScheduled.deleteMany({
           where: { childId: { in: childIds } },
         });

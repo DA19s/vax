@@ -58,6 +58,46 @@ const getEntityUserEmails = async (entityType, entityId) => {
   }
 };
 
+// Fonction utilitaire pour récupérer les emails et IDs des utilisateurs d'une entité
+const getEntityUserIdsAndEmails = async (entityType, entityId) => {
+  try {
+    let where = {};
+    
+    switch (entityType) {
+      case "region":
+        where.regionId = entityId;
+        break;
+      case "district":
+        where.districtId = entityId;
+        break;
+      case "healthcenter":
+        where.healthCenterId = entityId;
+        break;
+      default:
+        return { emails: [], userIds: [] };
+    }
+
+    const users = await prisma.user.findMany({
+      where: {
+        ...where,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        email: true,
+      },
+    });
+
+    const emails = users.map(u => u.email).filter(email => email != null);
+    const userIds = users.map(u => u.id).filter(Boolean);
+
+    return { emails, userIds };
+  } catch (error) {
+    console.error("Erreur récupération emails et IDs utilisateurs:", error);
+    return { emails: [], userIds: [] };
+  }
+};
+
 // ==================== GESTION DES ENTITÉS ====================
 
 // Obtenir toutes les entités avec filtres

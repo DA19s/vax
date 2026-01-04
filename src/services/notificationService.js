@@ -104,8 +104,24 @@ const createNotificationsForUsers = async ({ userIds, title, message, type }) =>
   }
 
   try {
+    // Vérifier que tous les userIds existent dans la base de données
+    const existingUsers = await prisma.user.findMany({
+      where: {
+        id: { in: userIds },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    const validUserIds = existingUsers.map((user) => user.id);
+
+    if (validUserIds.length === 0) {
+      return [];
+    }
+
     const notifications = await prisma.userNotification.createMany({
-      data: userIds.map((userId) => ({
+      data: validUserIds.map((userId) => ({
         userId,
         title,
         message,

@@ -1701,6 +1701,7 @@ export default function SuperAdminUsersPage() {
                     setShowDeleteModal(false);
                     setDeletingUser(null);
                     setDeleteSummary(null);
+                    setError(null);
                   }}
                   className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100"
                 >
@@ -1708,6 +1709,11 @@ export default function SuperAdminUsersPage() {
                 </button>
               </div>
               <div className="px-6 py-4">
+                {error && (
+                  <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                    {error}
+                  </div>
+                )}
                 <p className="mb-4 text-sm text-slate-600">
                   Êtes-vous sûr de vouloir supprimer l'utilisateur{" "}
                   <span className="font-semibold text-slate-900">
@@ -1750,6 +1756,7 @@ export default function SuperAdminUsersPage() {
                     setShowDeleteModal(false);
                     setDeletingUser(null);
                     setDeleteSummary(null);
+                    setError(null);
                   }}
                   className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
                 >
