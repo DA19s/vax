@@ -184,7 +184,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [refreshToken, user]);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    // Appeler l'API logout pour enregistrer l'événement dans le journal
+    const currentAccessToken = accessToken || Cookies.get(ACCESS_TOKEN_KEY);
+    if (currentAccessToken) {
+      try {
+        await fetch(`${API_URL}/api/auth/logout`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${currentAccessToken}`,
+          },
+        });
+        // Ne pas bloquer si l'appel échoue, continuer avec le nettoyage local
+      } catch (error) {
+        console.error("Erreur lors de l'appel logout API:", error);
+        // Continuer quand même avec le nettoyage local
+      }
+    }
+    
+    // Nettoyage local
     setAccessToken(null);
     setRefreshToken(null);
     setUser(null);
@@ -193,7 +211,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     Cookies.remove(REFRESH_TOKEN_KEY);
     Cookies.remove(USER_KEY);
     router.push("/login");
-  }, [router]);
+  }, [router, accessToken]);
 
   const isPublicPath = (path: string | null) => {
     if (!path) return false;

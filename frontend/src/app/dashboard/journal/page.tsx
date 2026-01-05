@@ -76,6 +76,7 @@ const EVENT_TYPES: EventType[] = [
   { value: "CAMPAIGN", label: "Campagnes" },
   { value: "ADVICE", label: "Conseils" },
   { value: "STOCK_TRANSFER", label: "Transfert de stock" },
+  { value: "AUTH", label: "Authentification" },
 ];
 
 const ACTION_LABELS: Record<string, string> = {
@@ -88,7 +89,24 @@ const ACTION_LABELS: Record<string, string> = {
   TRANSFER_REJECTED: "Refus",
   TRANSFER_CANCELLED: "Annulation",
   COMPLETED: "Effectué",
+  LOGIN: "Connexion",
+  LOGOUT: "Déconnexion",
 };
+
+// Liste de toutes les actions possibles dans le système
+const ALL_ACTIONS = [
+  "CREATE",
+  "UPDATE",
+  "DELETE",
+  "ACTIVATE",
+  "TRANSFER_SENT",
+  "TRANSFER_CONFIRMED",
+  "TRANSFER_REJECTED",
+  "TRANSFER_CANCELLED",
+  "COMPLETED",
+  "LOGIN",
+  "LOGOUT",
+];
 
 // Fonction pour obtenir la couleur du badge selon l'action
 const getActionBadgeColor = (action: string): string => {
@@ -97,6 +115,7 @@ const getActionBadgeColor = (action: string): string => {
     case "ACTIVATE":
     case "TRANSFER_CONFIRMED":
     case "COMPLETED":
+    case "LOGIN":
       return "bg-emerald-100 text-emerald-700";
     case "UPDATE":
       return "bg-blue-100 text-blue-700";
@@ -104,6 +123,7 @@ const getActionBadgeColor = (action: string): string => {
     case "TRANSFER_REJECTED":
       return "bg-red-100 text-red-700";
     case "TRANSFER_CANCELLED":
+    case "LOGOUT":
       return "bg-orange-100 text-orange-700";
     case "TRANSFER_SENT":
       return "bg-purple-100 text-purple-700";
@@ -705,13 +725,8 @@ export default function JournalPage() {
   };
 
   const getAvailableActions = () => {
-    const actions = new Set<string>();
-    events.forEach((event) => {
-      if (!typeFilter || event.type === typeFilter) {
-        actions.add(event.action);
-      }
-    });
-    return Array.from(actions).sort();
+    // Retourner toutes les actions possibles, pas seulement celles présentes dans les événements chargés
+    return ALL_ACTIONS;
   };
 
   // Vérifier l'accès
