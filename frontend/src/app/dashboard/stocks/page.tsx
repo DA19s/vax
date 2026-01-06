@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import DashboardShell from "@/app/dashboard/components/DashboardShell";
 import StatCard from "@/app/dashboard/components/StatCard";
+import { AppointmentCancellationModal } from "@/app/dashboard/components/AppointmentCancellationModal";
 import { useAuth } from "@/context/AuthContext";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5050";
@@ -237,6 +238,7 @@ export function NationalStocksPage() {
   const [reduceLoading, setReduceLoading] = useState(false);
   const [reduceError, setReduceError] = useState<string | null>(null);
   const [selectedLotId, setSelectedLotId] = useState<string | null>(null);
+  const [reduceLotsLoaded, setReduceLotsLoaded] = useState(false);
   const [addQuantity, setAddQuantity] = useState<string>("");
   const [addQuantityError, setAddQuantityError] = useState<string | null>(null);
   const [addExpiration, setAddExpiration] = useState<string>("");
@@ -474,6 +476,7 @@ export function NationalStocksPage() {
     setReduceLots([]);
     setReduceError(null);
     setSelectedLotId(null);
+    setReduceLotsLoaded(false);
   };
 
   const handleCreateStock = async (event: FormEvent) => {
@@ -667,6 +670,7 @@ export function NationalStocksPage() {
     setReduceLots([]);
     setReduceError(null);
     setSelectedLotId(null);
+    setReduceLotsLoaded(false);
     setUpdateModalOpen(true);
   };
 
@@ -757,26 +761,49 @@ export function NationalStocksPage() {
       const validLots = payload.lots.filter((lot) => lot.remainingQuantity > 0);
       setReduceLots(validLots);
       setReduceRemaining(payload.totalRemaining);
+      setReduceLotsLoaded(true); // Marquer comme chargé pour éviter les rechargements en boucle
+      
+      // Réinitialiser selectedLotId si le lot sélectionné n'existe plus dans les lots valides
+      setSelectedLotId((currentSelectedId) => {
+        if (currentSelectedId && !validLots.find((lot) => lot.id === currentSelectedId)) {
+          return null;
+        }
+        return currentSelectedId;
+      });
     } catch (err) {
       console.error("Erreur chargement lots:", err);
       setReduceError(
         err instanceof Error ? err.message : "Impossible de charger les lots"
       );
+      setReduceLotsLoaded(true); // Marquer comme chargé même en cas d'erreur pour éviter les boucles
     } finally {
       setReduceLoading(false);
     }
   }, [updateContext?.vaccineId, accessToken]);
 
-  // Quand on passe en mode reduce, charger les lots
+  // Réinitialiser le flag quand on change de mode ou de contexte
   useEffect(() => {
-    if (updateMode === "reduce" && updateContext?.vaccineId && !reduceLots.length && !reduceLoading) {
+    if (updateMode === "add" || !updateContext?.vaccineId) {
+      setReduceLotsLoaded(false);
+    }
+  }, [updateMode, updateContext?.vaccineId]);
+
+  // Quand on passe en mode reduce, charger les lots une seule fois
+  useEffect(() => {
+    if (updateMode === "reduce" && updateContext?.vaccineId && !reduceLotsLoaded && !reduceLoading) {
       loadLotsForReduce();
     }
-  }, [updateMode, updateContext?.vaccineId, loadLotsForReduce, reduceLots.length, reduceLoading]);
+  }, [updateMode, updateContext?.vaccineId, loadLotsForReduce, reduceLotsLoaded, reduceLoading]);
 
   const handleReduceLotSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (!updateContext || !accessToken || !selectedLotId) return;
+
+    // Vérifier qu'il y a des lots disponibles
+    if (reduceLots.length === 0) {
+      setReduceError("Aucun lot disponible avec une quantité restante.");
+      return;
+    }
 
     const quantityValue = Number(reduceQuantity);
     if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
@@ -786,7 +813,8 @@ export function NationalStocksPage() {
 
     const selectedLot = reduceLots.find((lot) => lot.id === selectedLotId);
     if (!selectedLot) {
-      setReduceError("Lot sélectionné introuvable.");
+      setReduceError("Lot sélectionné introuvable. Veuillez sélectionner un lot disponible.");
+      setSelectedLotId(null);
       return;
     }
 
@@ -2740,6 +2768,7 @@ export function RegionalStocksPage() {
   const [reduceLoading, setReduceLoading] = useState(false);
   const [reduceError, setReduceError] = useState<string | null>(null);
   const [selectedLotId, setSelectedLotId] = useState<string | null>(null);
+  const [reduceLotsLoaded, setReduceLotsLoaded] = useState(false);
   const [addQuantity, setAddQuantity] = useState<string>("");
   const [addQuantityError, setAddQuantityError] = useState<string | null>(null);
   const [addExpiration, setAddExpiration] = useState<string>("");
@@ -3552,6 +3581,7 @@ export function RegionalStocksPage() {
     setReduceLots([]);
     setReduceError(null);
     setSelectedLotId(null);
+    setReduceLotsLoaded(false);
     setUpdateModalOpen(true);
   };
 
@@ -3569,6 +3599,7 @@ export function RegionalStocksPage() {
     setReduceLots([]);
     setReduceError(null);
     setSelectedLotId(null);
+    setReduceLotsLoaded(false);
   };
 
   const loadLotsForReduce = useCallback(async () => {
@@ -3595,21 +3626,39 @@ export function RegionalStocksPage() {
       const validLots = payload.lots.filter((lot) => lot.remainingQuantity > 0);
       setReduceLots(validLots);
       setReduceRemaining(payload.totalRemaining);
+      setReduceLotsLoaded(true); // Marquer comme chargé pour éviter les rechargements en boucle
+      
+      // Réinitialiser selectedLotId si le lot sélectionné n'existe plus dans les lots valides
+      setSelectedLotId((currentSelectedId) => {
+        if (currentSelectedId && !validLots.find((lot) => lot.id === currentSelectedId)) {
+          return null;
+        }
+        return currentSelectedId;
+      });
     } catch (err) {
       console.error("Erreur chargement lots:", err);
       setReduceError(
         err instanceof Error ? err.message : "Impossible de charger les lots"
       );
+      setReduceLotsLoaded(true); // Marquer comme chargé même en cas d'erreur pour éviter les boucles
     } finally {
       setReduceLoading(false);
     }
   }, [updateContext?.vaccineId, accessToken]);
 
+  // Réinitialiser le flag quand on change de mode ou de contexte
   useEffect(() => {
-    if (updateMode === "reduce" && updateContext?.vaccineId && !reduceLots.length && !reduceLoading) {
+    if (updateMode === "add" || !updateContext?.vaccineId) {
+      setReduceLotsLoaded(false);
+    }
+  }, [updateMode, updateContext?.vaccineId]);
+
+  // Quand on passe en mode reduce, charger les lots une seule fois
+  useEffect(() => {
+    if (updateMode === "reduce" && updateContext?.vaccineId && !reduceLotsLoaded && !reduceLoading) {
       loadLotsForReduce();
     }
-  }, [updateMode, updateContext?.vaccineId, loadLotsForReduce, reduceLots.length, reduceLoading]);
+  }, [updateMode, updateContext?.vaccineId, loadLotsForReduce, reduceLotsLoaded, reduceLoading]);
 
   const handleAddQuantitySubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -3698,6 +3747,12 @@ export function RegionalStocksPage() {
     event.preventDefault();
     if (!updateContext || !accessToken || !selectedLotId) return;
 
+    // Vérifier qu'il y a des lots disponibles
+    if (reduceLots.length === 0) {
+      setReduceError("Aucun lot disponible avec une quantité restante.");
+      return;
+    }
+
     const quantityValue = Number(reduceQuantity);
     if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
       setReduceError("Veuillez saisir une quantité valide supérieure à 0.");
@@ -3706,7 +3761,8 @@ export function RegionalStocksPage() {
 
     const selectedLot = reduceLots.find((lot) => lot.id === selectedLotId);
     if (!selectedLot) {
-      setReduceError("Lot sélectionné introuvable.");
+      setReduceError("Lot sélectionné introuvable. Veuillez sélectionner un lot disponible.");
+      setSelectedLotId(null);
       return;
     }
 
@@ -5113,6 +5169,7 @@ export function DistrictStocksPage() {
   const [reduceLoading, setReduceLoading] = useState(false);
   const [reduceError, setReduceError] = useState<string | null>(null);
   const [selectedLotId, setSelectedLotId] = useState<string | null>(null);
+  const [reduceLotsLoaded, setReduceLotsLoaded] = useState(false);
   const [addQuantity, setAddQuantity] = useState<string>("");
   const [addQuantityError, setAddQuantityError] = useState<string | null>(null);
   const [addExpiration, setAddExpiration] = useState<string>("");
@@ -5966,6 +6023,7 @@ export function DistrictStocksPage() {
     setReduceLots([]);
     setReduceError(null);
     setSelectedLotId(null);
+    setReduceLotsLoaded(false);
     setUpdateModalOpen(true);
   };
 
@@ -5983,6 +6041,7 @@ export function DistrictStocksPage() {
     setReduceLots([]);
     setReduceError(null);
     setSelectedLotId(null);
+    setReduceLotsLoaded(false);
   };
 
   const loadLotsForReduce = useCallback(async () => {
@@ -6009,21 +6068,39 @@ export function DistrictStocksPage() {
       const validLots = payload.lots.filter((lot) => lot.remainingQuantity > 0);
       setReduceLots(validLots);
       setReduceRemaining(payload.totalRemaining);
+      setReduceLotsLoaded(true); // Marquer comme chargé pour éviter les rechargements en boucle
+      
+      // Réinitialiser selectedLotId si le lot sélectionné n'existe plus dans les lots valides
+      setSelectedLotId((currentSelectedId) => {
+        if (currentSelectedId && !validLots.find((lot) => lot.id === currentSelectedId)) {
+          return null;
+        }
+        return currentSelectedId;
+      });
     } catch (err) {
       console.error("Erreur chargement lots:", err);
       setReduceError(
         err instanceof Error ? err.message : "Impossible de charger les lots"
       );
+      setReduceLotsLoaded(true); // Marquer comme chargé même en cas d'erreur pour éviter les boucles
     } finally {
       setReduceLoading(false);
     }
   }, [updateContext?.vaccineId, accessToken, districtId]);
 
+  // Réinitialiser le flag quand on change de mode ou de contexte
   useEffect(() => {
-    if (updateMode === "reduce" && updateContext?.vaccineId && !reduceLots.length && !reduceLoading) {
+    if (updateMode === "add" || !updateContext?.vaccineId) {
+      setReduceLotsLoaded(false);
+    }
+  }, [updateMode, updateContext?.vaccineId]);
+
+  // Quand on passe en mode reduce, charger les lots une seule fois
+  useEffect(() => {
+    if (updateMode === "reduce" && updateContext?.vaccineId && !reduceLotsLoaded && !reduceLoading) {
       loadLotsForReduce();
     }
-  }, [updateMode, updateContext?.vaccineId, loadLotsForReduce, reduceLots.length, reduceLoading]);
+  }, [updateMode, updateContext?.vaccineId, loadLotsForReduce, reduceLotsLoaded, reduceLoading]);
 
   const handleAddQuantitySubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -6111,6 +6188,12 @@ export function DistrictStocksPage() {
     event.preventDefault();
     if (!updateContext || !accessToken || !selectedLotId) return;
 
+    // Vérifier qu'il y a des lots disponibles
+    if (reduceLots.length === 0) {
+      setReduceError("Aucun lot disponible avec une quantité restante.");
+      return;
+    }
+
     const quantityValue = Number(reduceQuantity);
     if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
       setReduceError("Veuillez saisir une quantité valide supérieure à 0.");
@@ -6119,7 +6202,8 @@ export function DistrictStocksPage() {
 
     const selectedLot = reduceLots.find((lot) => lot.id === selectedLotId);
     if (!selectedLot) {
-      setReduceError("Lot sélectionné introuvable.");
+      setReduceError("Lot sélectionné introuvable. Veuillez sélectionner un lot disponible.");
+      setSelectedLotId(null);
       return;
     }
 
@@ -7527,6 +7611,15 @@ export function AgentAdminStocksPage() {
   const [healthDeletingId, setHealthDeletingId] = useState<string | null>(null);
   const [lotDeletingId, setLotDeletingId] = useState<string | null>(null);
   
+  // États pour la modal d'annulation de rendez-vous
+  const [cancellationModalOpen, setCancellationModalOpen] = useState(false);
+  const [cancellationModalData, setCancellationModalData] = useState<{
+    actionType: "deleteStock" | "deleteLot" | "reduce";
+    affectedAppointments: number;
+    entityName?: string;
+    onConfirm: () => void;
+  } | null>(null);
+  
   // États pour l'ajustement
   const canAdjust = user?.role === "SUPERADMIN";
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
@@ -7539,6 +7632,7 @@ export function AgentAdminStocksPage() {
   const [reduceLoading, setReduceLoading] = useState(false);
   const [reduceError, setReduceError] = useState<string | null>(null);
   const [selectedLotId, setSelectedLotId] = useState<string | null>(null);
+  const [reduceLotsLoaded, setReduceLotsLoaded] = useState(false);
   const [addQuantity, setAddQuantity] = useState<string>("");
   const [addQuantityError, setAddQuantityError] = useState<string | null>(null);
   const [addExpiration, setAddExpiration] = useState<string>("");
@@ -8009,7 +8103,7 @@ export function AgentAdminStocksPage() {
     if (!createVaccineId || !accessToken) return;
 
     // Récupérer le healthCenterId depuis l'état ou depuis les stocks existants
-    let currentHealthCenterId = healthCenterId;
+   /* let currentHealthCenterId = healthCenterId || user?.healthCenterId;
     
     if (!currentHealthCenterId && stocks.length > 0 && stocks[0].healthCenterId) {
       currentHealthCenterId = stocks[0].healthCenterId;
@@ -8019,7 +8113,7 @@ export function AgentAdminStocksPage() {
     if (!currentHealthCenterId) {
       setError("Impossible de déterminer le centre de santé. Veuillez rafraîchir la page.");
       return;
-    }
+    }*/
 
     try {
       setCreating(true);
@@ -8031,7 +8125,7 @@ export function AgentAdminStocksPage() {
         },
         body: JSON.stringify({ 
           vaccineId: createVaccineId,
-          healthCenterId: currentHealthCenterId,
+          //healthCenterId: currentHealthCenterId,
         }),
       });
 
@@ -8092,12 +8186,63 @@ export function AgentAdminStocksPage() {
     async (stock: HealthCenterStock) => {
       if (!accessToken) return;
 
+      // Pour SUPERADMIN uniquement : vérifier l'impact avant suppression
+      if (user?.role === "SUPERADMIN") {
+        try {
+          const payload: Record<string, string> = { vaccineId: stock.vaccineId };
+          if (stock.healthCenterId) {
+            payload.healthCenterId = stock.healthCenterId;
+          }
+
+          const impactResponse = await fetch(
+            `${API_URL}/api/stock/health-center/impact?${new URLSearchParams(payload).toString()}`,
+            {
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${accessToken}`,
+              },
+            }
+          );
+
+          if (impactResponse.ok) {
+            const impactData = await impactResponse.json();
+            if (impactData.willCancelAppointments && impactData.affectedAppointments > 0) {
+              // Afficher la modal de confirmation
+              setCancellationModalData({
+                actionType: "deleteStock",
+                affectedAppointments: impactData.affectedAppointments,
+                entityName: stock.vaccine.name,
+                onConfirm: async () => {
+                  setCancellationModalOpen(false);
+                  await performDeleteHealthCenterStock(stock);
+                },
+              });
+              setCancellationModalOpen(true);
+              return;
+            }
+          }
+        } catch (err) {
+          console.error("Erreur vérification impact:", err);
+          // En cas d'erreur, continuer avec la suppression normale
+        }
+      }
+
+      // Pour les autres rôles ou si pas d'impact, utiliser la confirmation classique
       const confirmed = window.confirm(
         `Supprimer le stock pour le vaccin ${stock.vaccine.name} ?`,
       );
       if (!confirmed) {
         return;
       }
+
+      await performDeleteHealthCenterStock(stock);
+    },
+    [accessToken, fetchHealthCenterStocks, fetchHealthCenterStats, user?.role],
+  );
+
+  const performDeleteHealthCenterStock = useCallback(
+    async (stock: HealthCenterStock) => {
+      if (!accessToken) return;
 
       try {
         setHealthDeletingId(stock.id);
@@ -8138,6 +8283,58 @@ export function AgentAdminStocksPage() {
   );
 
   const handleDeleteHealthCenterLot = useCallback(
+    async (lotId: string) => {
+      if (!accessToken || !lotContext) return;
+
+      // Pour SUPERADMIN uniquement : vérifier l'impact avant suppression
+      if (user?.role === "SUPERADMIN") {
+        try {
+          const impactResponse = await fetch(
+            `${API_URL}/api/stock/lots/${lotId}/impact`,
+            {
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${accessToken}`,
+              },
+            }
+          );
+
+          if (impactResponse.ok) {
+            const impactData = await impactResponse.json();
+            if (impactData.willCancelAppointments && impactData.affectedAppointments > 0) {
+              // Afficher la modal de confirmation
+              setCancellationModalData({
+                actionType: "deleteLot",
+                affectedAppointments: impactData.affectedAppointments,
+                entityName: lotContext.vaccineName,
+                onConfirm: async () => {
+                  setCancellationModalOpen(false);
+                  await performDeleteHealthCenterLot(lotId);
+                },
+              });
+              setCancellationModalOpen(true);
+              return;
+            }
+          }
+        } catch (err) {
+          console.error("Erreur vérification impact:", err);
+          // En cas d'erreur, continuer avec la suppression normale
+        }
+      }
+
+      await performDeleteHealthCenterLot(lotId);
+    },
+    [
+      accessToken,
+      fetchHealthCenterLots,
+      fetchHealthCenterStats,
+      fetchHealthCenterStocks,
+      lotContext,
+      user?.role,
+    ],
+  );
+
+  const performDeleteHealthCenterLot = useCallback(
     async (lotId: string) => {
       if (!accessToken || !lotContext) return;
       try {
@@ -8219,6 +8416,7 @@ export function AgentAdminStocksPage() {
     setReduceLots([]);
     setReduceError(null);
     setSelectedLotId(null);
+    setReduceLotsLoaded(false);
     setUpdateModalOpen(true);
   };
 
@@ -8236,6 +8434,7 @@ export function AgentAdminStocksPage() {
     setReduceLots([]);
     setReduceError(null);
     setSelectedLotId(null);
+    setReduceLotsLoaded(false);
   };
 
   const loadLotsForReduce = useCallback(async () => {
@@ -8262,21 +8461,39 @@ export function AgentAdminStocksPage() {
       const validLots = payload.lots.filter((lot) => lot.remainingQuantity > 0);
       setReduceLots(validLots);
       setReduceRemaining(payload.totalRemaining);
+      setReduceLotsLoaded(true); // Marquer comme chargé pour éviter les rechargements en boucle
+      
+      // Réinitialiser selectedLotId si le lot sélectionné n'existe plus dans les lots valides
+      setSelectedLotId((currentSelectedId) => {
+        if (currentSelectedId && !validLots.find((lot) => lot.id === currentSelectedId)) {
+          return null;
+        }
+        return currentSelectedId;
+      });
     } catch (err) {
       console.error("Erreur chargement lots:", err);
       setReduceError(
         err instanceof Error ? err.message : "Impossible de charger les lots"
       );
+      setReduceLotsLoaded(true); // Marquer comme chargé même en cas d'erreur pour éviter les boucles
     } finally {
       setReduceLoading(false);
     }
   }, [updateContext?.vaccineId, accessToken]);
 
+  // Réinitialiser le flag quand on change de mode ou de contexte
   useEffect(() => {
-    if (updateMode === "reduce" && updateContext?.vaccineId && !reduceLots.length && !reduceLoading) {
+    if (updateMode === "add" || !updateContext?.vaccineId) {
+      setReduceLotsLoaded(false);
+    }
+  }, [updateMode, updateContext?.vaccineId]);
+
+  // Quand on passe en mode reduce, charger les lots une seule fois
+  useEffect(() => {
+    if (updateMode === "reduce" && updateContext?.vaccineId && !reduceLotsLoaded && !reduceLoading) {
       loadLotsForReduce();
     }
-  }, [updateMode, updateContext?.vaccineId, loadLotsForReduce, reduceLots.length, reduceLoading]);
+  }, [updateMode, updateContext?.vaccineId, loadLotsForReduce, reduceLotsLoaded, reduceLoading]);
 
   const handleAddQuantitySubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -8303,9 +8520,9 @@ export function AgentAdminStocksPage() {
       }
     }
 
-    if (!currentHealthCenterId && healthCenterId) {
-      currentHealthCenterId = healthCenterId;
-    }
+    // Ligne ~8306, remplacer par :
+    if (!currentHealthCenterId) {
+      currentHealthCenterId = healthCenterId ?? user?.healthCenterId ?? undefined;    }
 
     if (!currentHealthCenterId) {
       setAddQuantityError("Impossible de déterminer le centre de santé. Veuillez rafraîchir la page.");
@@ -8383,6 +8600,12 @@ export function AgentAdminStocksPage() {
     event.preventDefault();
     if (!updateContext || !accessToken || !selectedLotId) return;
 
+    // Vérifier qu'il y a des lots disponibles
+    if (reduceLots.length === 0) {
+      setReduceError("Aucun lot disponible avec une quantité restante.");
+      return;
+    }
+
     const quantityValue = Number(reduceQuantity);
     if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
       setReduceError("Veuillez saisir une quantité valide supérieure à 0.");
@@ -8391,7 +8614,8 @@ export function AgentAdminStocksPage() {
 
     const selectedLot = reduceLots.find((lot) => lot.id === selectedLotId);
     if (!selectedLot) {
-      setReduceError("Lot sélectionné introuvable.");
+      setReduceError("Lot sélectionné introuvable. Veuillez sélectionner un lot disponible.");
+      setSelectedLotId(null);
       return;
     }
 
@@ -8405,12 +8629,54 @@ export function AgentAdminStocksPage() {
 
     const actualQuantityToReduce = quantityValue;
 
+    // Pour SUPERADMIN uniquement : vérifier l'impact avant réduction
+    if (user?.role === "SUPERADMIN") {
+      try {
+        const impactResponse = await fetch(
+          `${API_URL}/api/stock/lots/${selectedLotId}/reduce-impact?quantity=${actualQuantityToReduce}`,
+          {
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+          }
+        );
+
+        if (impactResponse.ok) {
+          const impactData = await impactResponse.json();
+          if (impactData.willCancelAppointments && impactData.affectedAppointments > 0) {
+            // Afficher la modal de confirmation
+            setCancellationModalData({
+              actionType: "reduce",
+              affectedAppointments: impactData.affectedAppointments,
+              entityName: updateContext.vaccineName,
+              onConfirm: async () => {
+                setCancellationModalOpen(false);
+                await performReduceLot(selectedLotId, actualQuantityToReduce);
+              },
+            });
+            setCancellationModalOpen(true);
+            return;
+          }
+        }
+      } catch (err) {
+        console.error("Erreur vérification impact:", err);
+        // En cas d'erreur, continuer avec la réduction normale
+      }
+    }
+
+    await performReduceLot(selectedLotId, actualQuantityToReduce);
+  };
+
+  const performReduceLot = async (lotId: string, quantity: number) => {
+    if (!updateContext || !accessToken) return;
+
     try {
       setReduceError(null);
       setUpdating(true);
 
       const response = await fetch(
-        `${API_URL}/api/stock/health-center/lot/${selectedLotId}/reduce`,
+        `${API_URL}/api/stock/health-center/lot/${lotId}/reduce`,
         {
           method: "POST",
           headers: {
@@ -8418,7 +8684,7 @@ export function AgentAdminStocksPage() {
             Authorization: `Bearer ${accessToken}`,
           },
           body: JSON.stringify({
-            quantity: actualQuantityToReduce,
+            quantity,
           }),
         }
       );
@@ -9761,6 +10027,22 @@ export function AgentAdminStocksPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal d'annulation de rendez-vous */}
+      {cancellationModalData && (
+        <AppointmentCancellationModal
+          isOpen={cancellationModalOpen}
+          onClose={() => {
+            setCancellationModalOpen(false);
+            setCancellationModalData(null);
+          }}
+          onConfirm={cancellationModalData.onConfirm}
+          affectedAppointments={cancellationModalData.affectedAppointments}
+          actionType={cancellationModalData.actionType}
+          entityName={cancellationModalData.entityName}
+          isLoading={healthDeletingId !== null || lotDeletingId !== null || updating}
+        />
       )}
     </DashboardShell>
   );

@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">80% </span>
+                <span class="strong">50% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>8/10</span>
+                <span class='fraction'>5/10</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">57.14% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>12/21</span>
+                <span class='fraction'>0/21</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">75% </span>
+                <span class="strong">25% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>3/4</span>
+                <span class='fraction'>1/4</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">80% </span>
+                <span class="strong">50% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>8/10</span>
+                <span class='fraction'>5/10</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line high'></div>
+    <div class='status-line medium'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -154,8 +154,8 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">20x</span>
-<span class="cline-any cline-yes">20x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -182,8 +182,8 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">20x</span>
-<span class="cline-any cline-yes">20x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -208,33 +208,33 @@
  * @param {Object} [params.details] - Détails de l'événement (données avant/après, etc.)
  * @param {Object} [params.metadata] - Métadonnées supplémentaires (résumé de cascade, etc.)
  */
-const logEvent = async ({
+const logEvent = <span class="fstat-no" title="function not covered" >as</span>ync ({
   type,
-  subtype = null,
+  subtype = <span class="branch-0 cbranch-no" title="branch not covered" >null,</span>
   action,
   user = <span class="branch-0 cbranch-no" title="branch not covered" >null,</span>
-  entityType = null,
-  entityId = null,
-  entityName = null,
+  entityType = <span class="branch-0 cbranch-no" title="branch not covered" >null,</span>
+  entityId = <span class="branch-0 cbranch-no" title="branch not covered" >null,</span>
+  entityName = <span class="branch-0 cbranch-no" title="branch not covered" >null,</span>
   details = <span class="branch-0 cbranch-no" title="branch not covered" >null,</span>
-  metadata = null,
+  metadata = <span class="branch-0 cbranch-no" title="branch not covered" >null,</span>
 }) =&gt; {
-  try {
-    await prisma.eventLog.create({
+<span class="cstat-no" title="statement not covered" >  try {</span>
+<span class="cstat-no" title="statement not covered" >    await prisma.eventLog.create({</span>
       data: {
         type,
         subtype,
         action,
-        userId: user?.id || <span class="branch-1 cbranch-no" title="branch not covered" >null,</span>
-        userFirstName: user?.firstName || <span class="branch-1 cbranch-no" title="branch not covered" >null,</span>
-        userLastName: user?.lastName || <span class="branch-1 cbranch-no" title="branch not covered" >null,</span>
-        userEmail: user?.email || <span class="branch-1 cbranch-no" title="branch not covered" >null,</span>
-        userRole: user?.role || <span class="branch-1 cbranch-no" title="branch not covered" >null,</span>
+        userId: user?.id || null,
+        userFirstName: user?.firstName || null,
+        userLastName: user?.lastName || null,
+        userEmail: user?.email || null,
+        userRole: user?.role || null,
         entityType,
         entityId,
         entityName,
-        details: details ? JSON.parse(JSON.stringify(details)) : <span class="branch-1 cbranch-no" title="branch not covered" >null,</span>
-        metadata: metadata ? <span class="branch-0 cbranch-no" title="branch not covered" >JSON.parse(JSON.stringify(metadata)) </span>: null,
+        details: details ? JSON.parse(JSON.stringify(details)) : null,
+        metadata: metadata ? JSON.parse(JSON.stringify(metadata)) : null,
       },
     });
   } catch (error) {
@@ -247,8 +247,8 @@ const logEvent = async ({
  * Enregistre un événement en arrière-plan (non bloquant)
  */
 const logEventAsync = (params) =&gt; {
-  setImmediate(() =&gt; {
-    logEvent(params).catch(<span class="fstat-no" title="function not covered" >(e</span>rror) =&gt; {
+  setImmediate(<span class="fstat-no" title="function not covered" >()</span> =&gt; {
+<span class="cstat-no" title="statement not covered" >    logEvent(params).catch(<span class="fstat-no" title="function not covered" >(e</span>rror) =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >      console.error("Erreur enregistrement événement asynchrone:", error);</span>
     });
   });
@@ -265,7 +265,7 @@ module.exports = {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-01-05T19:55:27.350Z
+                at 2026-01-06T11:03:14.555Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

@@ -23,9 +23,9 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>12/12</span>
+                <span class='fraction'>0/12</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>12/12</span>
+                <span class='fraction'>0/12</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line high'></div>
+    <div class='status-line low'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -79,37 +79,37 @@
 <a name='L14'></a><a href='#L14'>14</a>
 <a name='L15'></a><a href='#L15'>15</a>
 <a name='L16'></a><a href='#L16'>16</a>
-<a name='L17'></a><a href='#L17'>17</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
+<a name='L17'></a><a href='#L17'>17</a></td><td class="line-coverage quiet"><span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">const { Router } = require("express");
-const notificationController = require("../controllers/notificationController");
-const { requireAuth } = require("../middleware/auth");
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">const { Router } = <span class="cstat-no" title="statement not covered" >require("express");</span>
+const notificationController = <span class="cstat-no" title="statement not covered" >require("../controllers/notificationController");</span>
+const { requireAuth } = <span class="cstat-no" title="statement not covered" >require("../middleware/auth");</span>
 &nbsp;
-const router = Router();
+const router = <span class="cstat-no" title="statement not covered" >Router();</span>
 &nbsp;
-router.get("/", requireAuth, notificationController.getNotifications);
-router.get("/unread-count", requireAuth, notificationController.getUnreadNotificationsCount);
-router.patch("/:id/read", requireAuth, notificationController.markNotificationAsRead);
-router.patch("/read-all", requireAuth, notificationController.markAllNotificationsAsRead);
-router.delete("/:id", requireAuth, notificationController.deleteNotificationById);
-router.delete("/all", requireAuth, notificationController.deleteAll);
-router.delete("/read/all", requireAuth, notificationController.deleteAllRead);
+<span class="cstat-no" title="statement not covered" >router.get("/", requireAuth, notificationController.getNotifications);</span>
+<span class="cstat-no" title="statement not covered" >router.get("/unread-count", requireAuth, notificationController.getUnreadNotificationsCount);</span>
+<span class="cstat-no" title="statement not covered" >router.patch("/:id/read", requireAuth, notificationController.markNotificationAsRead);</span>
+<span class="cstat-no" title="statement not covered" >router.patch("/read-all", requireAuth, notificationController.markAllNotificationsAsRead);</span>
+<span class="cstat-no" title="statement not covered" >router.delete("/:id", requireAuth, notificationController.deleteNotificationById);</span>
+<span class="cstat-no" title="statement not covered" >router.delete("/all", requireAuth, notificationController.deleteAll);</span>
+<span class="cstat-no" title="statement not covered" >router.delete("/read/all", requireAuth, notificationController.deleteAllRead);</span>
 &nbsp;
-module.exports = router;
+<span class="cstat-no" title="statement not covered" >module.exports = router;</span>
 &nbsp;
 &nbsp;</pre></td></tr></table></pre>
 
@@ -118,7 +118,7 @@ module.exports = router;
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-01-05T19:55:27.350Z
+                at 2026-01-06T11:03:14.555Z
             </div>
         <script src="../../prettify.js"></script>
         <script>
