@@ -187,7 +187,7 @@ class _SplashScreenState extends State<SplashScreen>
 
                   // Titre
                   Text(
-                    _settings?.appName ?? "VaxCare",
+                    _settings?.appName ?? "Imunia",
                     style: GoogleFonts.poppins(
                       color: Colors.white,
                       fontSize: 42,

@@ -2681,6 +2681,7 @@ const deleteLot = async (req, res, next) => {
 
   try {
     let deletedId = null;
+    let appointmentsToNotify = [];
 
     await prisma.$transaction(async (tx) => {
       const existing = await tx.stockLot.findUnique({ where: { id } });
@@ -2764,7 +2765,6 @@ const deleteLot = async (req, res, next) => {
       }
 
       // Pour SUPERADMIN uniquement et lot HEALTHCENTER : annuler les rendez-vous avant suppression
-      let appointmentsToNotify = [];
       if (req.user.role === "SUPERADMIN" && existing.ownerType === OWNER_TYPES.HEALTHCENTER) {
         // Récupérer toutes les réservations liées à ce lot
         const reservations = await tx.stockReservation.findMany({

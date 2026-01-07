@@ -28,7 +28,7 @@ interface SystemSettingsContextType {
 }
 
 const defaultSettings: SystemSettings = {
-  appName: "VaxCare",
+  appName: "Imunia",
   appSubtitle: "Santé de votre enfant simplifiée",
   logoUrl: "/logo.png",
   mobileBackgroundColor: "#0A1A33",

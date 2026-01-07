@@ -241,7 +241,7 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
               const SizedBox(height: 24),
               
               Text(
-                "VaxCare",
+                "Imunia",
                 style: GoogleFonts.poppins(
                   fontSize: 28,
                   fontWeight: FontWeight.w600,

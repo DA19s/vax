@@ -346,7 +346,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
         title: const Text('Politique de confidentialité'),
         content: const SingleChildScrollView(
           child: Text(
-            'Politique de confidentialité VaxCare\n\n'
+            'Politique de confidentialité Imunia\n\n'
             '1. Collecte des données\n'
             'Nous collectons uniquement les données nécessaires au fonctionnement de l\'application.\n\n'
             '2. Utilisation des données\n'
@@ -376,9 +376,9 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
         title: const Text('Conditions d\'utilisation'),
         content: const SingleChildScrollView(
           child: Text(
-            'Conditions d\'utilisation VaxCare\n\n'
+            'Conditions d\'utilisation Imunia\n\n'
             '1. Acceptation\n'
-            'En utilisant VaxCare, vous acceptez ces conditions.\n\n'
+            'En utilisant Imunia, vous acceptez ces conditions.\n\n'
             '2. Utilisation\n'
             'L\'application est réservée au suivi vaccinal des enfants au Sénégal.\n\n'
             '3. Responsabilité\n'

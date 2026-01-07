@@ -49,7 +49,7 @@ class SettingsService {
     
     // Retourner les settings par défaut
     return SystemSettings(
-      appName: 'VaxCare',
+      appName: 'Imunia',
       appSubtitle: 'Santé de votre enfant simplifiée',
       mobileBackgroundColor: '#0A1A33',
       mobileButtonColor: '#3B760F',

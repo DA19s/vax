@@ -94,7 +94,7 @@ class _AuthOptionScreenState extends State<AuthOptionScreen>
 
                           // Titre
                           Text(
-                            "Bienvenue sur VaxCare",
+                            "Bienvenue sur Imunia",
                             style: GoogleFonts.poppins(
                               fontSize: 28,
                               fontWeight: FontWeight.bold,

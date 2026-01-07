@@ -24,7 +24,7 @@ class ContactSupportScreen extends StatelessWidget {
   }
 
   Future<void> _launchEmail(BuildContext context, String email) async {
-    final uri = Uri.parse('mailto:$email?subject=Support VaxCare');
+    final uri = Uri.parse('mailto:$email?subject=Support Imunia');
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri);
     } else {
@@ -242,19 +242,19 @@ class ContactSupportScreen extends StatelessWidget {
                     icon: Icons.email_rounded,
                     iconColor: AppColors.error,
                     title: 'Email',
-                    subtitle: 'support@vaxcare.sn',
+                    subtitle: 'support@Imunia.sn',
                     actions: [
                       _ContactAction(
                         icon: Icons.mail_outline_rounded,
                         label: 'Envoyer',
                         color: AppColors.error,
-                        onTap: () => _launchEmail(context, 'support@vaxcare.sn'),
+                        onTap: () => _launchEmail(context, 'support@Imunia.sn'),
                       ),
                       _ContactAction(
                         icon: Icons.content_copy_rounded,
                         label: 'Copier',
                         color: AppColors.secondary,
-                        onTap: () => _copyToClipboard(context, 'support@vaxcare.sn', 'Email'),
+                        onTap: () => _copyToClipboard(context, 'support@Imunia.sn', 'Email'),
                       ),
                     ],
                   ),

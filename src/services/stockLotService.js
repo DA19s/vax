@@ -745,7 +745,7 @@ const restoreOrRecreateLotForRejectedTransfer = async (
     // Augmenter le stock - vérifier d'abord si le stock existe, puis créer ou mettre à jour
     // même si le stock a été supprimé
     let stockUpdated = null;
-    switch (ownerType) {
+  switch (ownerType) {
       case OWNER_TYPES.NATIONAL: {
         const existingStock = await db.stockNATIONAL.findUnique({
           where: { vaccineId },
@@ -754,11 +754,11 @@ const restoreOrRecreateLotForRejectedTransfer = async (
         if (existingStock) {
           // Le stock existe : incrémenter la quantité
           const result = await db.stockNATIONAL.update({
-            where: { vaccineId },
+        where: { vaccineId },
             data: {
               quantity: (existingStock.quantity ?? 0) + quantity,
             },
-          });
+      });
           stockUpdated = result.quantity;
         } else {
           // Le stock n'existe pas : le créer avec la quantité
@@ -767,24 +767,24 @@ const restoreOrRecreateLotForRejectedTransfer = async (
               vaccineId,
               quantity: quantity,
             },
-          });
+        });
           stockUpdated = result.quantity;
-        }
-        break;
       }
-      case OWNER_TYPES.REGIONAL: {
+      break;
+      }
+    case OWNER_TYPES.REGIONAL: {
         if (!normalizedOwnerId) {
           throw new Error("regionId est requis pour un stock régional");
         }
         
         const existingStock = await db.stockREGIONAL.findUnique({
-          where: {
-            vaccineId_regionId: {
-              vaccineId,
-              regionId: normalizedOwnerId,
-            },
+        where: {
+          vaccineId_regionId: {
+            vaccineId,
+            regionId: normalizedOwnerId,
           },
-        });
+        },
+      });
         
         if (existingStock) {
           // Le stock existe : incrémenter la quantité
@@ -803,29 +803,29 @@ const restoreOrRecreateLotForRejectedTransfer = async (
         } else {
           // Le stock n'existe pas : le créer avec la quantité
           const result = await db.stockREGIONAL.create({
-            data: {
-              vaccineId,
-              regionId: normalizedOwnerId,
+          data: {
+            vaccineId,
+            regionId: normalizedOwnerId,
               quantity: quantity,
-            },
-          });
+          },
+        });
           stockUpdated = result.quantity;
-        }
-        break;
       }
-      case OWNER_TYPES.DISTRICT: {
+      break;
+    }
+    case OWNER_TYPES.DISTRICT: {
         if (!normalizedOwnerId) {
           throw new Error("districtId est requis pour un stock district");
         }
         
         const existingStock = await db.stockDISTRICT.findUnique({
-          where: {
-            vaccineId_districtId: {
-              vaccineId,
-              districtId: normalizedOwnerId,
-            },
+        where: {
+          vaccineId_districtId: {
+            vaccineId,
+            districtId: normalizedOwnerId,
           },
-        });
+        },
+      });
         
         if (existingStock) {
           // Le stock existe : incrémenter la quantité
@@ -844,29 +844,29 @@ const restoreOrRecreateLotForRejectedTransfer = async (
         } else {
           // Le stock n'existe pas : le créer avec la quantité
           const result = await db.stockDISTRICT.create({
-            data: {
-              vaccineId,
-              districtId: normalizedOwnerId,
+          data: {
+            vaccineId,
+            districtId: normalizedOwnerId,
               quantity: quantity,
-            },
-          });
+          },
+        });
           stockUpdated = result.quantity;
-        }
-        break;
       }
-      case OWNER_TYPES.HEALTHCENTER: {
+      break;
+    }
+    case OWNER_TYPES.HEALTHCENTER: {
         if (!normalizedOwnerId) {
           throw new Error("healthCenterId est requis pour un stock centre de santé");
         }
         
         const existingStock = await db.stockHEALTHCENTER.findUnique({
-          where: {
-            vaccineId_healthCenterId: {
-              vaccineId,
-              healthCenterId: normalizedOwnerId,
-            },
+        where: {
+          vaccineId_healthCenterId: {
+            vaccineId,
+            healthCenterId: normalizedOwnerId,
           },
-        });
+        },
+      });
         
         if (existingStock) {
           // Le stock existe : incrémenter la quantité
@@ -885,17 +885,17 @@ const restoreOrRecreateLotForRejectedTransfer = async (
         } else {
           // Le stock n'existe pas : le créer avec la quantité
           const result = await db.stockHEALTHCENTER.create({
-            data: {
-              vaccineId,
-              healthCenterId: normalizedOwnerId,
+          data: {
+            vaccineId,
+            healthCenterId: normalizedOwnerId,
               quantity: quantity,
-            },
-          });
+          },
+        });
           stockUpdated = result.quantity;
-        }
-        break;
       }
+      break;
     }
+  }
 
     await updateNearestExpiration(db, { vaccineId, ownerType, ownerId });
 
@@ -936,7 +936,7 @@ const restoreOrRecreateLotForRejectedTransfer = async (
         // Le stock n'existe pas : le créer avec la quantité
         const result = await db.stockNATIONAL.create({
           data: {
-            vaccineId,
+    vaccineId,
             quantity: quantity,
           },
         });

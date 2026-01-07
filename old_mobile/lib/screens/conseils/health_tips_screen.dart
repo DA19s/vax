@@ -122,7 +122,7 @@ class _HealthTipsScreenState extends State<HealthTipsScreen> {
                 padding: const EdgeInsets.all(AppSpacing.md),
                 child: Row(
                   children: [
-                    // Logo VaxCare
+                    // Logo Imunia
                     Container(
                       width: 44,
                       height: 44,
@@ -138,7 +138,7 @@ class _HealthTipsScreenState extends State<HealthTipsScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'VaxCare • ${_getCategoryLabel(category)}',
+                            'Imunia • ${_getCategoryLabel(category)}',
                             style: AppTextStyles.caption.copyWith(
                               color: color,
                               fontWeight: FontWeight.w700,
@@ -611,7 +611,7 @@ class _HealthTipsScreenState extends State<HealthTipsScreen> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       const SizedBox(height: 40),
-                      // Logo VaxCare
+                      // Logo Imunia
                       Container(
                         padding: const EdgeInsets.all(AppSpacing.md),
                         decoration: BoxDecoration(

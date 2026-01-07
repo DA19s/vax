@@ -1168,17 +1168,17 @@ export function NationalStocksPage() {
           <>
             <StatsCards stats={stats} loading={statsLoading} />
 
-            {statsError && (
-              <div className="rounded-3xl border border-amber-200 bg-amber-50/80 p-4 text-sm text-amber-700">
-                {statsError}
-              </div>
-            )}
+        {statsError && (
+          <div className="rounded-3xl border border-amber-200 bg-amber-50/80 p-4 text-sm text-amber-700">
+            {statsError}
+          </div>
+        )}
 
-            {error && (
-              <div className="rounded-3xl border border-red-200 bg-red-50/80 p-4 text-sm text-red-700">
-                {error}
-              </div>
-            )}
+        {error && (
+          <div className="rounded-3xl border border-red-200 bg-red-50/80 p-4 text-sm text-red-700">
+            {error}
+          </div>
+        )}
 
             <PendingTransfersAlert
               transfers={pendingTransfers}

@@ -79,7 +79,7 @@ class _HelpFaqScreenState extends State<HelpFaqScreen> {
       questions: [
         FaqQuestion(
           question: 'Je ne reçois pas de notifications',
-          answer: 'Vérifiez que les notifications sont activées dans Profil > Notifications et dans les paramètres de votre téléphone pour l\'application VaxCare.',
+          answer: 'Vérifiez que les notifications sont activées dans Profil > Notifications et dans les paramètres de votre téléphone pour l\'application Imunia.',
         ),
         FaqQuestion(
           question: 'Puis-je désactiver certaines notifications ?',

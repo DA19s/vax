@@ -65,7 +65,7 @@ class SystemSettings {
 
   factory SystemSettings.fromJson(Map<String, dynamic> json) {
     return SystemSettings(
-      appName: json['appName'] ?? 'VaxCare',
+      appName: json['appName'] ?? 'Imunia',
       appSubtitle: json['appSubtitle'] ?? 'Santé de votre enfant simplifiée',
       logoUrl: json['logoUrl'],
       primaryColor: json['primaryColor'],

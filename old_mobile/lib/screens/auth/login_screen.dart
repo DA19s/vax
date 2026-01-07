@@ -250,9 +250,9 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
 
                   const SizedBox(height: 20),
 
-                  // Titre VAXCARE corrigé
+                  // Titre Imunia corrigé
                   Text(
-                    "VaxCare",
+                    "Imunia",
                     style: GoogleFonts.poppins(
                       fontSize: 36,
                       fontWeight: FontWeight.bold,

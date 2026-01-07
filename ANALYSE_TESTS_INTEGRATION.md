@@ -1,4 +1,4 @@
-# Analyse des Tests d'Intégration - VaxCare
+# Analyse des Tests d'Intégration - Imunia
 
 ## 📊 Vue d'ensemble
 

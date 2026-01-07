@@ -19,7 +19,7 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
   Color _accentColor = AppColors.primary;
   
   final List<Color> _accentColors = [
-    const Color(0xFF3B760F), // Vert VaxCare (défaut)
+    const Color(0xFF3B760F), // Vert Imunia (défaut)
     const Color(0xFF2196F3), // Bleu
     const Color(0xFFE91E63), // Rose
     const Color(0xFF9C27B0), // Violet

@@ -2,7 +2,7 @@
 
 ## Vue d'ensemble
 
-Ce rapport analyse la qualité du code du projet VaxCare (backend Node.js, frontend Next.js, mobile Flutter) et propose des recommandations de refactoring pour améliorer la maintenabilité, la testabilité et la qualité globale.
+Ce rapport analyse la qualité du code du projet Imunia (backend Node.js, frontend Next.js, mobile Flutter) et propose des recommandations de refactoring pour améliorer la maintenabilité, la testabilité et la qualité globale.
 
 ---
 
