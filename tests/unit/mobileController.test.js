@@ -2,6 +2,7 @@
 
 const {
   requestVerificationCode,
+  resendVerificationCode,
   parentRegister,
   verifyAccessCode,
   parentLogin,
@@ -21,6 +22,11 @@ const {
   getCalendar,
   requestChangePinCode,
   changeParentPin,
+  requestForgotPinCode,
+  verifyForgotPinCode,
+  resetForgotPin,
+  requestChangePhoneCode,
+  changeParentPhone,
 } = require('../../src/controllers/mobileController');
 
 const prisma = require('../../src/config/prismaClient');
@@ -42,6 +48,19 @@ jest.mock('../../src/config/prismaClient', () => ({
     delete: jest.fn(),
     deleteMany: jest.fn(),
   },
+  $transaction: jest.fn((callback) => {
+    const mockPrisma = require('../../src/config/prismaClient');
+    const mockTx = {
+      children: mockPrisma.children,
+      childVaccineDue: mockPrisma.childVaccineDue,
+      childVaccineLate: mockPrisma.childVaccineLate,
+      childVaccineOverdue: mockPrisma.childVaccineOverdue,
+      childVaccineCompleted: mockPrisma.childVaccineCompleted,
+      childVaccineScheduled: mockPrisma.childVaccineScheduled,
+      vaccine: mockPrisma.vaccine,
+    };
+    return callback(mockTx);
+  }),
   healthCenter: {
     findUnique: jest.fn(),
     findFirst: jest.fn(),
@@ -93,27 +112,19 @@ jest.mock('../../src/config/prismaClient', () => ({
   vaccine: {
     findUnique: jest.fn(),
   },
+  vaccineRequest: {
+    findMany: jest.fn(),
+  },
   user: {
     findMany: jest.fn(),
   },
-  $transaction: jest.fn((callback) => {
-    const mockPrisma = require('../../src/config/prismaClient');
-    const mockTx = {
-      children: mockPrisma.children,
-      childVaccineDue: mockPrisma.childVaccineDue,
-      childVaccineLate: mockPrisma.childVaccineLate,
-      childVaccineOverdue: mockPrisma.childVaccineOverdue,
-      childVaccineCompleted: mockPrisma.childVaccineCompleted,
-      childVaccineScheduled: mockPrisma.childVaccineScheduled,
-      vaccine: mockPrisma.vaccine,
-    };
-    return callback(mockTx);
-  }),
 }));
 
 jest.mock('../../src/services/notification', () => ({
   sendParentAccessCode: jest.fn(),
   sendVerificationCode: jest.fn(),
+  sendPhoneChangeVerificationCode: jest.fn(),
+  sendPinResetVerificationCode: jest.fn(),
 }));
 
 jest.mock('../../src/utils/accessCode', () => ({
@@ -1532,6 +1543,7 @@ describe('mobileController', () => {
       };
 
       prisma.children.findUnique.mockResolvedValue(mockChild);
+      prisma.vaccineRequest.findMany.mockResolvedValue([]);
       prisma.notification.count.mockResolvedValue(5);
 
       await getChildDashboard(req, res, next);
@@ -1604,6 +1616,7 @@ describe('mobileController', () => {
       };
 
       prisma.children.findUnique.mockResolvedValue(mockChild);
+      prisma.vaccineRequest.findMany.mockResolvedValue([]);
       prisma.notification.count.mockResolvedValue(0);
 
       await getChildDashboard(req, res, next);
@@ -1744,6 +1757,11 @@ describe('mobileController', () => {
       await getCampaigns(req, res, next);
 
       expect(prisma.campaign.findMany).toHaveBeenCalledWith({
+        where: expect.objectContaining({
+          endDate: expect.objectContaining({
+            gte: expect.any(Date),
+          }),
+        }),
         include: expect.objectContaining({
           region: expect.objectContaining({
             select: expect.objectContaining({
@@ -2552,6 +2570,713 @@ describe('mobileController', () => {
       prisma.children.findUnique.mockRejectedValue(new Error('DB Error'));
 
       await changeParentPin(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.any(Error));
+    });
+  });
+
+  describe('requestVerificationCode - cas erreur WhatsApp', () => {
+    it('devrait gérer l\'erreur WhatsApp sans bloquer la réponse', async () => {
+      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      
+      req.body = {
+        parentPhone: '+261341234567',
+        childFirstName: 'Jean',
+        childLastName: 'Dupont',
+        childBirthDate: '2020-01-01',
+        childGender: 'M',
+        birthPlace: 'Antananarivo',
+        fatherName: 'Pierre',
+        motherName: 'Marie',
+        address: '123 Rue Test',
+        healthCenterId: 'hc-1',
+      };
+
+      const mockHealthCenter = { id: 'hc-1' };
+      const mockChild = { id: 'child-1' };
+
+      prisma.healthCenter.findUnique.mockResolvedValue(mockHealthCenter);
+      prisma.children.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.children.create.mockResolvedValue(mockChild);
+      accessCodeUtils.generateAccessCode.mockReturnValue('123456');
+      notificationService.sendVerificationCode.mockRejectedValue(new Error('WhatsApp Error'));
+
+      await requestVerificationCode(req, res, next);
+
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        message: 'Code de vérification envoyé par WhatsApp',
+        registrationId: 'child-1',
+      });
+      expect(consoleErrorSpy).toHaveBeenCalled();
+      
+      consoleErrorSpy.mockRestore();
+    });
+  });
+
+  describe('resendVerificationCode', () => {
+    it('devrait retourner 400 si registrationId manquant', async () => {
+      req.body = {};
+
+      await resendVerificationCode(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'registrationId requis',
+      });
+    });
+
+    it('devrait retourner 404 si inscription introuvable', async () => {
+      req.body = { registrationId: 'child-1' };
+      prisma.children.findUnique.mockResolvedValue(null);
+
+      await resendVerificationCode(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'Inscription introuvable ou expirée',
+      });
+    });
+
+    it('devrait retourner 404 si code ne commence pas par VERIFY_', async () => {
+      req.body = { registrationId: 'child-1' };
+      prisma.children.findUnique.mockResolvedValue({
+        id: 'child-1',
+        code: 'ACCESS123',
+        phoneParent: '+261341234567',
+        fatherName: 'Pierre',
+        motherName: 'Marie',
+      });
+
+      await resendVerificationCode(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('devrait renvoyer le code avec succès', async () => {
+      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      
+      req.body = { registrationId: 'child-1' };
+      const expiresAt = Date.now() + 5 * 60 * 1000;
+      const mockChild = {
+        id: 'child-1',
+        code: `VERIFY_123456_${expiresAt}`,
+        phoneParent: '+261341234567',
+        fatherName: 'Pierre',
+        motherName: 'Marie',
+      };
+
+      prisma.children.findUnique.mockResolvedValue(mockChild);
+      accessCodeUtils.generateAccessCode.mockReturnValue('654321');
+      prisma.children.update.mockResolvedValue(mockChild);
+      notificationService.sendVerificationCode.mockResolvedValue({ success: true });
+
+      await resendVerificationCode(req, res, next);
+
+      expect(prisma.children.update).toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        message: 'Nouveau code de vérification envoyé par WhatsApp',
+      });
+      
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('devrait gérer les erreurs', async () => {
+      req.body = { registrationId: 'child-1' };
+      prisma.children.findUnique.mockRejectedValue(new Error('DB Error'));
+
+      await resendVerificationCode(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.any(Error));
+    });
+  });
+
+  describe('requestForgotPinCode', () => {
+    it('devrait retourner 400 si phone manquant', async () => {
+      req.body = {};
+
+      await requestForgotPinCode(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'Numéro de téléphone requis',
+      });
+    });
+
+    it('devrait retourner 404 si aucun compte trouvé', async () => {
+      req.body = { phone: '+261341234567' };
+      prisma.children.findFirst.mockResolvedValue(null);
+
+      await requestForgotPinCode(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'Aucun compte trouvé avec ce numéro de téléphone',
+      });
+    });
+
+    it('devrait retourner 400 si PIN non configuré', async () => {
+      req.body = { phone: '+261341234567' };
+      prisma.children.findFirst.mockResolvedValue({
+        id: 'child-1',
+        passwordParent: '0000',
+      });
+
+      await requestForgotPinCode(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'Aucun PIN configuré pour ce compte',
+      });
+    });
+
+    it('devrait envoyer le code avec succès', async () => {
+      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      
+      req.body = { phone: '+261341234567' };
+      const mockChild = {
+        id: 'child-1',
+        passwordParent: 'hashed-pin',
+        fatherName: 'Pierre',
+        motherName: 'Marie',
+      };
+
+      prisma.children.findFirst.mockResolvedValue(mockChild);
+      accessCodeUtils.generateAccessCode.mockReturnValue('654321');
+      prisma.children.update.mockResolvedValue(mockChild);
+      notificationService.sendPinResetVerificationCode.mockResolvedValue({ success: true });
+
+      await requestForgotPinCode(req, res, next);
+
+      expect(prisma.children.update).toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        message: 'Code de réinitialisation envoyé par WhatsApp',
+      });
+      
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('devrait gérer les erreurs', async () => {
+      req.body = { phone: '+261341234567' };
+      prisma.children.findFirst.mockRejectedValue(new Error('DB Error'));
+
+      await requestForgotPinCode(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.any(Error));
+    });
+  });
+
+  describe('verifyForgotPinCode', () => {
+    it('devrait retourner 400 si champs manquants', async () => {
+      req.body = {};
+
+      await verifyForgotPinCode(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'phone et verificationCode requis',
+      });
+    });
+
+    it('devrait retourner 404 si aucun compte trouvé', async () => {
+      req.body = { phone: '+261341234567', verificationCode: '123456' };
+      prisma.children.findMany.mockResolvedValue([]);
+
+      await verifyForgotPinCode(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('devrait retourner 401 si code incorrect ou expiré', async () => {
+      req.body = { phone: '+261341234567', verificationCode: 'wrong-code' };
+      const expiredTime = Date.now() - 11 * 60 * 1000;
+      prisma.children.findMany.mockResolvedValue([
+        {
+          id: 'child-1',
+          code: `FORGOT_PIN_123456_${expiredTime}`,
+        },
+      ]);
+      prisma.children.update.mockResolvedValue({});
+
+      await verifyForgotPinCode(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'Code de vérification incorrect ou expiré',
+      });
+    });
+
+    it('devrait valider le code avec succès', async () => {
+      req.body = { phone: '+261341234567', verificationCode: '123456' };
+      const expiresAt = Date.now() + 5 * 60 * 1000;
+      prisma.children.findMany.mockResolvedValue([
+        {
+          id: 'child-1',
+          code: `FORGOT_PIN_123456_${expiresAt}`,
+        },
+      ]);
+
+      await verifyForgotPinCode(req, res, next);
+
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        message: 'Code de vérification valide',
+      });
+    });
+
+    it('devrait gérer les erreurs', async () => {
+      req.body = { phone: '+261341234567', verificationCode: '123456' };
+      prisma.children.findMany.mockRejectedValue(new Error('DB Error'));
+
+      await verifyForgotPinCode(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.any(Error));
+    });
+  });
+
+  describe('resetForgotPin', () => {
+    it('devrait retourner 400 si champs manquants ou PIN invalide', async () => {
+      req.body = {};
+
+      await resetForgotPin(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'phone, verificationCode et newPin (4 chiffres) requis',
+      });
+    });
+
+    it('devrait retourner 400 si PIN n\'a pas 4 chiffres', async () => {
+      req.body = {
+        phone: '+261341234567',
+        verificationCode: '123456',
+        newPin: '123',
+      };
+
+      await resetForgotPin(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 404 si aucun compte trouvé', async () => {
+      req.body = {
+        phone: '+261341234567',
+        verificationCode: '123456',
+        newPin: '5678',
+      };
+      prisma.children.findMany.mockResolvedValue([]);
+
+      await resetForgotPin(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('devrait retourner 401 si code incorrect ou expiré', async () => {
+      req.body = {
+        phone: '+261341234567',
+        verificationCode: 'wrong-code',
+        newPin: '5678',
+      };
+      const expiredTime = Date.now() - 11 * 60 * 1000;
+      prisma.children.findMany.mockResolvedValue([
+        {
+          id: 'child-1',
+          code: `FORGOT_PIN_123456_${expiredTime}`,
+        },
+      ]);
+
+      await resetForgotPin(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+    });
+
+    it('devrait réinitialiser le PIN avec succès', async () => {
+      req.body = {
+        phone: '+261341234567',
+        verificationCode: '123456',
+        newPin: '5678',
+      };
+      const expiresAt = Date.now() + 5 * 60 * 1000;
+      const mockChildren = [
+        {
+          id: 'child-1',
+          code: `FORGOT_PIN_123456_${expiresAt}`,
+        },
+        {
+          id: 'child-2',
+          code: null,
+        },
+      ];
+
+      prisma.children.findMany.mockResolvedValue(mockChildren);
+      bcrypt.hash.mockResolvedValue('hashed-new-pin');
+      prisma.$transaction.mockImplementation(async (updates) => {
+        return Promise.all(updates);
+      });
+      prisma.children.update.mockResolvedValue({});
+
+      await resetForgotPin(req, res, next);
+
+      expect(bcrypt.hash).toHaveBeenCalledWith('5678', 10);
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        message: 'PIN réinitialisé avec succès. Vous pouvez maintenant vous connecter.',
+      });
+    });
+
+    it('devrait gérer les erreurs', async () => {
+      req.body = {
+        phone: '+261341234567',
+        verificationCode: '123456',
+        newPin: '5678',
+      };
+      prisma.children.findMany.mockRejectedValue(new Error('DB Error'));
+
+      await resetForgotPin(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.any(Error));
+    });
+  });
+
+  describe('requestChangePhoneCode', () => {
+    it('devrait retourner 400 si champs manquants', async () => {
+      req.body = {};
+
+      await requestChangePhoneCode(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'childId, parentPhone, pin et newPhone requis',
+      });
+    });
+
+    it('devrait retourner 400 si format de numéro invalide', async () => {
+      req.body = {
+        childId: 'child-1',
+        parentPhone: '+261341234567',
+        pin: '1234',
+        newPhone: 'invalid',
+      };
+
+      await requestChangePhoneCode(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'Format de numéro de téléphone invalide',
+      });
+    });
+
+    it('devrait retourner 404 si enfant non trouvé', async () => {
+      req.body = {
+        childId: 'child-1',
+        parentPhone: '+261341234567',
+        pin: '1234',
+        newPhone: '+261349876543',
+      };
+      prisma.children.findUnique.mockResolvedValue(null);
+
+      await requestChangePhoneCode(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('devrait retourner 404 si numéro de téléphone ne correspond pas', async () => {
+      req.body = {
+        childId: 'child-1',
+        parentPhone: '+261341234567',
+        pin: '1234',
+        newPhone: '+261349876543',
+      };
+      prisma.children.findUnique.mockResolvedValue({
+        id: 'child-1',
+        phoneParent: '+261340000000',
+      });
+
+      await requestChangePhoneCode(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('devrait retourner 401 si PIN non configuré', async () => {
+      req.body = {
+        childId: 'child-1',
+        parentPhone: '+261341234567',
+        pin: '1234',
+        newPhone: '+261349876543',
+      };
+      prisma.children.findUnique.mockResolvedValue({
+        id: 'child-1',
+        phoneParent: '+261341234567',
+        passwordParent: '0000',
+      });
+
+      await requestChangePhoneCode(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+    });
+
+    it('devrait retourner 401 si PIN incorrect', async () => {
+      req.body = {
+        childId: 'child-1',
+        parentPhone: '+261341234567',
+        pin: 'wrong-pin',
+        newPhone: '+261349876543',
+      };
+      prisma.children.findUnique.mockResolvedValue({
+        id: 'child-1',
+        phoneParent: '+261341234567',
+        passwordParent: 'hashed-pin',
+        fatherName: 'Pierre',
+        motherName: 'Marie',
+      });
+      bcrypt.compare.mockResolvedValue(false);
+
+      await requestChangePhoneCode(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+    });
+
+    it('devrait retourner 400 si nouveau numéro identique', async () => {
+      req.body = {
+        childId: 'child-1',
+        parentPhone: '+261341234567',
+        pin: '1234',
+        newPhone: '+261341234567',
+      };
+      prisma.children.findUnique.mockResolvedValue({
+        id: 'child-1',
+        phoneParent: '+261341234567',
+        passwordParent: 'hashed-pin',
+        fatherName: 'Pierre',
+        motherName: 'Marie',
+      });
+      bcrypt.compare.mockResolvedValue(true);
+
+      await requestChangePhoneCode(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'Le nouveau numéro doit être différent de l\'actuel',
+      });
+    });
+
+    it('devrait envoyer le code avec succès', async () => {
+      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      
+      req.body = {
+        childId: 'child-1',
+        parentPhone: '+261341234567',
+        pin: '1234',
+        newPhone: '+261349876543',
+      };
+      const mockChild = {
+        id: 'child-1',
+        phoneParent: '+261341234567',
+        passwordParent: 'hashed-pin',
+        fatherName: 'Pierre',
+        motherName: 'Marie',
+      };
+
+      prisma.children.findUnique.mockResolvedValue(mockChild);
+      bcrypt.compare.mockResolvedValue(true);
+      accessCodeUtils.generateAccessCode.mockReturnValue('654321');
+      prisma.children.update.mockResolvedValue(mockChild);
+      notificationService.sendPhoneChangeVerificationCode.mockResolvedValue({ success: true });
+
+      await requestChangePhoneCode(req, res, next);
+
+      expect(prisma.children.update).toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        message: 'Code de vérification envoyé par WhatsApp',
+      });
+      
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('devrait gérer les erreurs', async () => {
+      req.body = {
+        childId: 'child-1',
+        parentPhone: '+261341234567',
+        pin: '1234',
+        newPhone: '+261349876543',
+      };
+      prisma.children.findUnique.mockRejectedValue(new Error('DB Error'));
+
+      await requestChangePhoneCode(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.any(Error));
+    });
+  });
+
+  describe('changeParentPhone', () => {
+    it('devrait retourner 400 si champs manquants', async () => {
+      req.body = {};
+
+      await changeParentPhone(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'childId, parentPhone et verificationCode requis',
+      });
+    });
+
+    it('devrait retourner 404 si enfant non trouvé', async () => {
+      req.body = {
+        childId: 'child-1',
+        parentPhone: '+261341234567',
+        verificationCode: '123456',
+      };
+      prisma.children.findUnique.mockResolvedValue(null);
+
+      await changeParentPhone(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('devrait retourner 400 si aucune demande en cours', async () => {
+      req.body = {
+        childId: 'child-1',
+        parentPhone: '+261341234567',
+        verificationCode: '123456',
+      };
+      prisma.children.findUnique.mockResolvedValue({
+        id: 'child-1',
+        phoneParent: '+261341234567',
+        code: null,
+      });
+
+      await changeParentPhone(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'Aucune demande de changement de numéro en cours',
+      });
+    });
+
+    it('devrait retourner 400 si format de code invalide', async () => {
+      req.body = {
+        childId: 'child-1',
+        parentPhone: '+261341234567',
+        verificationCode: '123456',
+      };
+      prisma.children.findUnique.mockResolvedValue({
+        id: 'child-1',
+        phoneParent: '+261341234567',
+        code: 'CHANGE_PHONE_INVALID',
+      });
+
+      await changeParentPhone(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'Format de code invalide',
+      });
+    });
+
+    it('devrait retourner 401 si code incorrect', async () => {
+      req.body = {
+        childId: 'child-1',
+        parentPhone: '+261341234567',
+        verificationCode: 'wrong-code',
+      };
+      const expiresAt = Date.now() + 5 * 60 * 1000;
+      prisma.children.findUnique.mockResolvedValue({
+        id: 'child-1',
+        phoneParent: '+261341234567',
+        code: `CHANGE_PHONE_123456_+261349876543_${expiresAt}`,
+      });
+
+      await changeParentPhone(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+    });
+
+    it('devrait retourner 400 si code expiré', async () => {
+      req.body = {
+        childId: 'child-1',
+        parentPhone: '+261341234567',
+        verificationCode: '123456',
+      };
+      const expiredTime = Date.now() - 11 * 60 * 1000;
+      prisma.children.findUnique.mockResolvedValue({
+        id: 'child-1',
+        phoneParent: '+261341234567',
+        code: `CHANGE_PHONE_123456_+261349876543_${expiredTime}`,
+      });
+      prisma.children.update.mockResolvedValue({});
+
+      await changeParentPhone(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'Code de vérification expiré',
+      });
+    });
+
+    it('devrait changer le numéro avec succès', async () => {
+      req.body = {
+        childId: 'child-1',
+        parentPhone: '+261341234567',
+        verificationCode: '123456',
+      };
+      const expiresAt = Date.now() + 5 * 60 * 1000;
+      const mockChildren = [
+        {
+          id: 'child-1',
+          phoneParent: '+261341234567',
+          code: `CHANGE_PHONE_123456_+261349876543_${expiresAt}`,
+        },
+        {
+          id: 'child-2',
+          phoneParent: '+261341234567',
+          code: null,
+        },
+      ];
+
+      prisma.children.findUnique.mockResolvedValue(mockChildren[0]);
+      prisma.children.findMany.mockResolvedValue(mockChildren);
+      prisma.$transaction.mockImplementation(async (updates) => {
+        return Promise.all(updates);
+      });
+      prisma.children.update.mockResolvedValue({});
+
+      await changeParentPhone(req, res, next);
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        message: 'Numéro de téléphone modifié avec succès',
+        newPhone: '+261349876543',
+      });
+    });
+
+    it('devrait gérer les erreurs', async () => {
+      req.body = {
+        childId: 'child-1',
+        parentPhone: '+261341234567',
+        verificationCode: '123456',
+      };
+      prisma.children.findUnique.mockRejectedValue(new Error('DB Error'));
+
+      await changeParentPhone(req, res, next);
 
       expect(next).toHaveBeenCalledWith(expect.any(Error));
     });

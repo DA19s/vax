@@ -167,6 +167,95 @@ describe("appointmentNotificationJob", () => {
       });
     });
 
+    it("devrait utiliser result.error si présent dans le message d'erreur", async () => {
+      const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+      const mockAppointments = [
+        {
+          id: "appt-1",
+          child: {
+            firstName: "John",
+            lastName: "Doe",
+          },
+          appointmentDate: new Date("2024-12-20"),
+          notificationType: "REMINDER",
+        },
+      ];
+
+      appointmentNotificationService.findAllValidAppointments.mockResolvedValue(mockAppointments);
+      appointmentNotificationService.findAppointmentsToNotify.mockResolvedValue(mockAppointments);
+      appointmentNotificationService.sendAppointmentNotification.mockResolvedValue({
+        success: false,
+        error: "Erreur spécifique",
+      });
+
+      await checkAppointmentNotifications();
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Erreur notification pour John Doe:"),
+        "Erreur spécifique"
+      );
+      consoleErrorSpy.mockRestore();
+    });
+
+    it("devrait utiliser result.reason si error n'est pas présent", async () => {
+      const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+      const mockAppointments = [
+        {
+          id: "appt-1",
+          child: {
+            firstName: "Jane",
+            lastName: "Smith",
+          },
+          appointmentDate: new Date("2024-12-20"),
+          notificationType: "REMINDER",
+        },
+      ];
+
+      appointmentNotificationService.findAllValidAppointments.mockResolvedValue(mockAppointments);
+      appointmentNotificationService.findAppointmentsToNotify.mockResolvedValue(mockAppointments);
+      appointmentNotificationService.sendAppointmentNotification.mockResolvedValue({
+        success: false,
+        reason: "Raison spécifique",
+      });
+
+      await checkAppointmentNotifications();
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Erreur notification pour Jane Smith:"),
+        "Raison spécifique"
+      );
+      consoleErrorSpy.mockRestore();
+    });
+
+    it("devrait utiliser 'Erreur inconnue' si ni error ni reason ne sont présents", async () => {
+      const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+      const mockAppointments = [
+        {
+          id: "appt-1",
+          child: {
+            firstName: "Bob",
+            lastName: "Johnson",
+          },
+          appointmentDate: new Date("2024-12-20"),
+          notificationType: "REMINDER",
+        },
+      ];
+
+      appointmentNotificationService.findAllValidAppointments.mockResolvedValue(mockAppointments);
+      appointmentNotificationService.findAppointmentsToNotify.mockResolvedValue(mockAppointments);
+      appointmentNotificationService.sendAppointmentNotification.mockResolvedValue({
+        success: false,
+      });
+
+      await checkAppointmentNotifications();
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Erreur notification pour Bob Johnson:"),
+        "Erreur inconnue"
+      );
+      consoleErrorSpy.mockRestore();
+    });
+
     it("devrait gérer les exceptions lors de l'envoi de notifications", async () => {
       const mockAppointments = [
         {

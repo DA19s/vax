@@ -462,6 +462,42 @@ describe('vaccineController', () => {
 
       expect(res.status).toHaveBeenCalledWith(404);
     });
+
+    it('devrait gérer l\'erreur Prisma P2025', async () => {
+      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      
+      req.params.id = 'vaccine-1';
+      prisma.vaccine.findUnique.mockResolvedValue({ id: 'vaccine-1', name: 'BCG' });
+      prisma.$transaction.mockRejectedValue({ code: 'P2025' });
+
+      await deleteVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith({ message: 'Vaccin non trouvé' });
+      
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('devrait gérer l\'erreur Prisma P2003 (contrainte de clé étrangère)', async () => {
+      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      
+      req.params.id = 'vaccine-1';
+      prisma.vaccine.findUnique.mockResolvedValue({ id: 'vaccine-1', name: 'BCG' });
+      prisma.$transaction.mockRejectedValue({
+        code: 'P2003',
+        meta: { field_name: 'vaccineId' },
+      });
+
+      await deleteVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        message: 'Impossible de supprimer ce vaccin car il est encore utilisé dans le système',
+        details: 'vaccineId',
+      });
+      
+      consoleErrorSpy.mockRestore();
+    });
   });
 
   describe('createVaccineCalendar', () => {
@@ -2003,12 +2039,115 @@ describe('vaccineController', () => {
       expect(res.status).toHaveBeenCalledWith(400);
     });
 
+    it('devrait retourner 400 si description est vide ou seulement des espaces', async () => {
+      req.user.role = 'NATIONAL';
+      req.params.id = 'calendar-1';
+      req.body = { description: '   ', ageUnit: 'MONTHS' };
+      await updateVaccineCalendar(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
     it('devrait retourner 400 si ageUnit invalide', async () => {
       req.user.role = 'NATIONAL';
       req.params.id = 'calendar-1';
       req.body = { description: 'Test', ageUnit: 'INVALID' };
       await updateVaccineCalendar(req, res, next);
       expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si vaccine n\'est pas un tableau', async () => {
+      req.user.role = 'NATIONAL';
+      req.params.id = 'calendar-1';
+      req.body = { description: 'Test', ageUnit: 'MONTHS', vaccine: 'not-an-array' };
+      await updateVaccineCalendar(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        message: 'La liste des vaccins doit être un tableau.',
+      });
+    });
+
+    it('devrait retourner 400 si specificAge est NaN', async () => {
+      req.user.role = 'NATIONAL';
+      req.params.id = 'calendar-1';
+      req.body = {
+        description: 'Test',
+        ageUnit: 'MONTHS',
+        specificAge: 'not-a-number',
+        vaccine: [],
+      };
+      await updateVaccineCalendar(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        message: 'L\'âge ciblé doit être un nombre valide.',
+      });
+    });
+
+    it('devrait retourner 400 si minAge est NaN', async () => {
+      req.user.role = 'NATIONAL';
+      req.params.id = 'calendar-1';
+      req.body = {
+        description: 'Test',
+        ageUnit: 'MONTHS',
+        minAge: 'not-a-number',
+        vaccine: [],
+      };
+      await updateVaccineCalendar(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        message: 'Les âges minimum et maximum doivent être des nombres valides.',
+      });
+    });
+
+    it('devrait retourner 400 si maxAge est NaN', async () => {
+      req.user.role = 'NATIONAL';
+      req.params.id = 'calendar-1';
+      req.body = {
+        description: 'Test',
+        ageUnit: 'MONTHS',
+        maxAge: 'not-a-number',
+        vaccine: [],
+      };
+      await updateVaccineCalendar(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        message: 'Les âges minimum et maximum doivent être des nombres valides.',
+      });
+    });
+
+    it('devrait retourner 400 si minAge > maxAge', async () => {
+      req.user.role = 'NATIONAL';
+      req.params.id = 'calendar-1';
+      req.body = {
+        description: 'Test',
+        ageUnit: 'MONTHS',
+        minAge: 12,
+        maxAge: 6,
+        vaccine: [],
+      };
+      await updateVaccineCalendar(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        message: 'L\'âge minimum doit être inférieur ou égal à l\'âge maximum.',
+      });
+    });
+
+    it('devrait gérer l\'erreur Prisma P2025 (calendrier introuvable)', async () => {
+      req.user.role = 'NATIONAL';
+      req.params.id = 'calendar-1';
+      req.body = {
+        description: 'Test',
+        ageUnit: 'MONTHS',
+        vaccine: [{ vaccineId: 'vaccine-1', count: 1 }],
+      };
+
+      prisma.$transaction.mockRejectedValue({ code: 'P2025' });
+
+      await updateVaccineCalendar(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith({
+        message: 'Calendrier vaccinal introuvable.',
+      });
     });
 
     it('devrait mettre à jour un calendrier avec succès', async () => {
@@ -2389,6 +2528,161 @@ describe('vaccineController', () => {
       await updateScheduledVaccine(req, res, next);
 
       expect(res.json).toHaveBeenCalled();
+    });
+
+    it('devrait gérer l\'erreur Prisma P2002 (contrainte unique)', async () => {
+      req.user.role = 'AGENT';
+      req.user.healthCenterId = 'healthcenter-1';
+      req.params.id = 'scheduled-1';
+      req.body = {
+        scheduledFor: '2025-12-31T10:00:00Z',
+        vaccineId: 'vaccine-1',
+      };
+
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          childVaccineScheduled: {
+            findUnique: jest.fn().mockResolvedValue({
+              id: 'scheduled-1',
+              childId: 'child-1',
+              scheduledFor: new Date('2025-12-30'),
+              vaccineId: 'vaccine-1',
+              vaccineCalendarId: null,
+              dose: 1,
+              administeredById: null,
+              child: { healthCenterId: 'healthcenter-1' },
+              vaccine: { id: 'vaccine-1', name: 'BCG' },
+            }),
+            update: jest.fn().mockRejectedValue({ code: 'P2002' }),
+          },
+        };
+        try {
+          return await callback(mockTx);
+        } catch (error) {
+          throw error;
+        }
+      });
+
+      await updateScheduledVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(409);
+      expect(res.json).toHaveBeenCalledWith({
+        message: 'Un rendez-vous existe déjà pour cet enfant avec ce vaccin et cette dose. Veuillez modifier la date ou choisir un autre vaccin.',
+      });
+    });
+
+    it('devrait gérer l\'erreur NOT_FOUND', async () => {
+      req.user.role = 'AGENT';
+      req.user.healthCenterId = 'healthcenter-1';
+      req.params.id = 'scheduled-1';
+      req.body = {
+        scheduledFor: '2025-12-31T10:00:00Z',
+        vaccineId: 'vaccine-1',
+      };
+
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          childVaccineScheduled: {
+            findUnique: jest.fn().mockResolvedValue(null),
+          },
+        };
+        try {
+          return await callback(mockTx);
+        } catch (error) {
+          throw error;
+        }
+      });
+
+      await updateScheduledVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith({
+        message: 'Rendez-vous introuvable',
+      });
+    });
+
+    it('devrait gérer l\'erreur DOSE_LIMIT', async () => {
+      req.user.role = 'AGENT';
+      req.user.healthCenterId = 'healthcenter-1';
+      req.params.id = 'scheduled-1';
+      req.body = {
+        scheduledFor: '2025-12-31T10:00:00Z',
+        vaccineId: 'vaccine-1',
+      };
+
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          childVaccineScheduled: {
+            findUnique: jest.fn().mockResolvedValue({
+              id: 'scheduled-1',
+              childId: 'child-1',
+              scheduledFor: new Date('2025-12-30'),
+              vaccineId: 'vaccine-1',
+              vaccineCalendarId: null,
+              dose: 1,
+              administeredById: null,
+              child: { healthCenterId: 'healthcenter-1' },
+              vaccine: { id: 'vaccine-1', name: 'BCG' },
+            }),
+            update: jest.fn().mockRejectedValue({
+              code: 'DOSE_LIMIT',
+              message: 'Toutes les doses ont été administrées',
+            }),
+          },
+        };
+        try {
+          return await callback(mockTx);
+        } catch (error) {
+          throw error;
+        }
+      });
+
+      await updateScheduledVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        message: 'Toutes les doses ont été administrées',
+      });
+    });
+
+    it('devrait gérer l\'erreur FORBIDDEN', async () => {
+      req.user.role = 'AGENT';
+      req.user.healthCenterId = 'healthcenter-1';
+      req.params.id = 'scheduled-1';
+      req.body = {
+        scheduledFor: '2025-12-31T10:00:00Z',
+        vaccineId: 'vaccine-1',
+      };
+
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          childVaccineScheduled: {
+            findUnique: jest.fn().mockResolvedValue({
+              id: 'scheduled-1',
+              childId: 'child-1',
+              scheduledFor: new Date('2025-12-30'),
+              vaccineId: 'vaccine-1',
+              vaccineCalendarId: null,
+              dose: 1,
+              administeredById: null,
+              child: { healthCenterId: 'healthcenter-2' }, // Autre centre
+              vaccine: { id: 'vaccine-1', name: 'BCG' },
+            }),
+          },
+        };
+        try {
+          return await callback(mockTx);
+        } catch (error) {
+          throw error;
+        }
+      });
+
+      await updateScheduledVaccine(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({
+        message: 'Accès refusé',
+      });
     });
   });
 

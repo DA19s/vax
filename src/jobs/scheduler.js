@@ -15,8 +15,8 @@ const APPOINTMENT_CHECK_CRON =
 
 console.log("🕐 Initialisation du planificateur de tâches...");
 
-// Tâche pour vérifier les stocks expirés
-cron.schedule(STOCK_CHECK_CRON, async () => {
+// Fonction callback pour vérifier les stocks expirés (extrait pour être testable)
+const stockExpirationCallback = async () => {
   console.log(`\n⏰ [${new Date().toISOString()}] Exécution de la vérification des stocks expirés...`);
   console.log(`📧 SMTP_USER: ${process.env.SMTP_USER || 'NON DÉFINI'}`);
   console.log(`📧 SMTP_PASS: ${process.env.SMTP_PASS ? 'DÉFINI' : 'NON DÉFINI'}`);
@@ -27,16 +27,22 @@ cron.schedule(STOCK_CHECK_CRON, async () => {
     console.error(`❌ Erreur dans le cron:`, error);
     console.error(error.stack);
   }
-});
+};
+
+// Tâche pour vérifier les stocks expirés
+cron.schedule(STOCK_CHECK_CRON, stockExpirationCallback);
 
 console.log(`  ✅ Tâche stocks expirés planifiée : ${STOCK_CHECK_CRON}`);
 console.log(`  📅 Heure actuelle : ${new Date().toLocaleString('fr-FR', { timeZone: 'Africa/Dakar' })}`);
 
-// Tâche pour vérifier les rendez-vous
-cron.schedule(APPOINTMENT_CHECK_CRON, async () => {
+// Fonction callback pour vérifier les rendez-vous (extrait pour être testable)
+const appointmentNotificationCallback = async () => {
   console.log(`\n⏰ [${new Date().toISOString()}] Exécution de la vérification des rendez-vous...`);
   await checkAppointmentNotifications();
-});
+};
+
+// Tâche pour vérifier les rendez-vous
+cron.schedule(APPOINTMENT_CHECK_CRON, appointmentNotificationCallback);
 
 console.log(`  ✅ Tâche rendez-vous planifiée : ${APPOINTMENT_CHECK_CRON}`);
 console.log("✅ Planificateur de tâches démarré\n");
@@ -54,5 +60,8 @@ const checkAppointmentNotificationsWrapper = async () => {
 module.exports = {
   checkStockExpirations: checkStockExpirationsWrapper,
   checkAppointmentNotifications: checkAppointmentNotificationsWrapper,
+  // Exporter les callbacks pour les tests
+  stockExpirationCallback,
+  appointmentNotificationCallback,
 };
 

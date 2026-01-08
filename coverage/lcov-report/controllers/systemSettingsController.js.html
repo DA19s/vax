@@ -23,16 +23,16 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">63.63% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>7/11</span>
+                <span class='fraction'>11/11</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">12.5% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>1/8</span>
+                <span class='fraction'>8/8</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">63.63% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>7/11</span>
+                <span class='fraction'>11/11</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line medium'></div>
+    <div class='status-line high'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -102,12 +102,12 @@
 <a name='L37'></a><a href='#L37'>37</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">9x</span>
 <span class="cline-any cline-yes">3x</span>
-<span class="cline-any cline-yes">3x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">3x</span>
-<span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -115,19 +115,19 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -142,7 +142,7 @@ const getSystemSettings = async (_req, res) =&gt; {
     let settings = await prisma.appSettings.findFirst();
 &nbsp;
     // Si aucun paramètre n'existe, utiliser les valeurs par défaut
-    <span class="missing-if-branch" title="else path not taken" >E</span>if (!settings) {
+    if (!settings) {
       return res.json({
         appName: "Imunia",
         appSubtitle: "Plateforme de gestion de vaccination",
@@ -151,19 +151,19 @@ const getSystemSettings = async (_req, res) =&gt; {
     }
 &nbsp;
     // Si appName est null ou une chaîne vide, utiliser "Imunia"
-    const appName = <span class="cstat-no" title="statement not covered" >settings.appName &amp;&amp; settings.appName.trim() !== "" </span>
+    const appName = settings.appName &amp;&amp; settings.appName.trim() !== "" 
       ? settings.appName.trim() 
       : "Imunia";
     
-<span class="cstat-no" title="statement not covered" >    res.json({</span>
+    res.json({
       appName: appName,
       appSubtitle: "Plateforme de gestion de vaccination",
       logoUrl: settings.logoPath || "/logo.png",
     });
   } catch (error) {
     // En cas d'erreur, retourner les valeurs par défaut
-<span class="cstat-no" title="statement not covered" >    console.error("Erreur récupération paramètres:", error);</span>
-<span class="cstat-no" title="statement not covered" >    res.json({</span>
+    console.error("Erreur récupération paramètres:", error);
+    res.json({
       appName: "Imunia",
       appSubtitle: "Plateforme de gestion de vaccination",
       logoUrl: "/logo.png",
@@ -178,7 +178,7 @@ module.exports = { getSystemSettings };</pre></td></tr></table></pre>
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-01-07T15:20:20.325Z
+                at 2026-01-08T16:10:22.109Z
             </div>
         <script src="../prettify.js"></script>
         <script>

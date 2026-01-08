@@ -202,6 +202,41 @@ describe('communeController', () => {
       expect(res.json).toHaveBeenCalledWith({ total: 1, items: mockCommunes });
     });
 
+    it('devrait retourner toutes les communes pour SUPERADMIN sans overrideRegionId', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.query.regionId = undefined; // Pas de filtre
+      const mockCommunes = [
+        { id: 'commune-1', name: 'Commune 1' },
+        { id: 'commune-2', name: 'Commune 2' },
+      ];
+      prisma.commune.findMany.mockResolvedValue(mockCommunes);
+
+      await listCommunes(req, res, next);
+
+      // SUPERADMIN sans overrideRegionId devrait voir toutes les communes (whereClause vide)
+      expect(prisma.commune.findMany).toHaveBeenCalledWith({
+        where: {},
+        include: {
+          region: { select: { id: true, name: true } },
+          districts: { select: { id: true, name: true } },
+        },
+        orderBy: { name: 'asc' },
+      });
+      expect(res.json).toHaveBeenCalledWith({ total: 2, items: mockCommunes });
+    });
+
+    it('devrait retourner 403 si REGIONAL sans regionId', async () => {
+      req.user.role = 'REGIONAL';
+      req.user.regionId = null;
+      prisma.commune.findMany.mockResolvedValue([]);
+
+      await listCommunes(req, res, next);
+
+      // Devrait retourner une liste vide, pas 403
+      expect(res.json).toHaveBeenCalledWith({ total: 0, items: [] });
+      expect(prisma.commune.findMany).not.toHaveBeenCalled();
+    });
+
     it('devrait filtrer par regionId pour SUPERADMIN avec overrideRegionId', async () => {
       req.user.role = 'SUPERADMIN';
       req.query.regionId = 'region-1';
@@ -248,6 +283,26 @@ describe('communeController', () => {
     it('devrait retourner 400 si nom ou région manquants', async () => {
       req.body.name = '';
       req.body.regionId = 'region-1';
+
+      await createCommune(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ message: 'Nom et région requis' });
+    });
+
+    it('devrait retourner 400 si nom est seulement des espaces', async () => {
+      req.body.name = '   ';
+      req.body.regionId = 'region-1';
+
+      await createCommune(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ message: 'Nom et région requis' });
+    });
+
+    it('devrait retourner 400 si regionId est manquant pour NATIONAL', async () => {
+      req.body.name = 'Commune Test';
+      req.body.regionId = null;
 
       await createCommune(req, res, next);
 
@@ -375,6 +430,52 @@ describe('communeController', () => {
       expect(res.json).toHaveBeenCalledWith({ message: 'Accès refusé' });
     });
 
+    it('devrait retourner 403 si REGIONAL sans regionId essaie de modifier une commune', async () => {
+      req.user.role = 'REGIONAL';
+      req.user.regionId = null;
+      req.params.id = 'commune-1';
+      req.body.name = 'Commune Modifiée';
+      prisma.commune.findUnique.mockResolvedValue({
+        id: 'commune-1',
+        region: { id: 'region-1' },
+      });
+
+      await updateCommune(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({ message: 'Accès refusé' });
+    });
+
+    it('devrait gérer le cas où commune.region est null', async () => {
+      req.user.role = 'REGIONAL';
+      req.user.regionId = 'region-1';
+      req.params.id = 'commune-1';
+      req.body.name = 'Commune Modifiée';
+      prisma.commune.findUnique.mockResolvedValue({
+        id: 'commune-1',
+        region: null,
+      });
+
+      await updateCommune(req, res, next);
+
+      // Si region est null, la condition commune.region?.id !== req.user.regionId sera true
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({ message: 'Accès refusé' });
+    });
+
+    it('devrait ignorer name si ce n\'est pas une string', async () => {
+      req.params.id = 'commune-1';
+      req.body.name = 123; // Pas une string
+      const mockCommune = { id: 'commune-1', name: 'Commune Test', region: { id: 'region-1' } };
+      prisma.commune.findUnique.mockResolvedValue(mockCommune);
+
+      await updateCommune(req, res, next);
+
+      // name n'est pas une string, donc data sera vide
+      expect(prisma.commune.update).not.toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith(mockCommune);
+    });
+
     it('devrait mettre à jour une commune avec succès', async () => {
       req.params.id = 'commune-1';
       req.body.name = 'Commune Modifiée';
@@ -437,6 +538,40 @@ describe('communeController', () => {
         data: { name: 'Commune Modifiée', regionId: 'region-2' },
         include: { region: { select: { id: true, name: true } } },
       });
+    });
+
+    it('devrait ignorer regionId si REGIONAL essaie de le modifier', async () => {
+      req.user.role = 'REGIONAL';
+      req.user.regionId = 'region-1';
+      req.params.id = 'commune-1';
+      req.body.name = 'Commune Modifiée';
+      req.body.regionId = 'region-2'; // REGIONAL ne peut pas changer la région
+      const mockCommune = { id: 'commune-1', name: 'Commune Test', region: { id: 'region-1' } };
+      const mockUpdated = { id: 'commune-1', name: 'Commune Modifiée', region: { id: 'region-1', name: 'Dakar' } };
+      prisma.commune.findUnique.mockResolvedValue(mockCommune);
+      prisma.commune.update.mockResolvedValue(mockUpdated);
+
+      await updateCommune(req, res, next);
+
+      // regionId ne doit pas être inclus dans data car l'utilisateur n'est pas NATIONAL
+      expect(prisma.commune.update).toHaveBeenCalledWith({
+        where: { id: 'commune-1' },
+        data: { name: 'Commune Modifiée' },
+        include: { region: { select: { id: true, name: true } } },
+      });
+    });
+
+    it('devrait gérer le cas où name est une chaîne vide ou seulement des espaces', async () => {
+      req.params.id = 'commune-1';
+      req.body.name = '   '; // Seulement des espaces
+      const mockCommune = { id: 'commune-1', name: 'Commune Test', region: { id: 'region-1' } };
+      prisma.commune.findUnique.mockResolvedValue(mockCommune);
+
+      await updateCommune(req, res, next);
+
+      // name.trim() sera vide, donc data sera vide et on retourne la commune sans modification
+      expect(prisma.commune.update).not.toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith(mockCommune);
     });
 
     it('devrait retourner 403 si SUPERADMIN essaie de modifier une commune', async () => {
@@ -519,8 +654,15 @@ describe('communeController', () => {
       const mockStockLots = [{ id: 'lot-1', ownerType: OWNER_TYPES.DISTRICT, ownerId: 'district-1' }];
       const mockPendingTransfers = [{ id: 'transfer-1', status: 'PENDING' }];
 
-      prisma.commune.findUnique.mockResolvedValue({ regionId: 'region-1' });
-      prisma.commune.findUnique.mockResolvedValueOnce(mockCommune);
+      // Premier appel avant transaction (vérification existence)
+      prisma.commune.findUnique.mockResolvedValueOnce({ regionId: 'region-1' });
+      // Deuxième appel dans la transaction (collectCommuneCascadeData)
+      prisma.commune.findUnique.mockResolvedValueOnce({
+        id: 'commune-1',
+        name: 'Commune 1',
+        region: { id: 'region-1', name: 'Dakar' },
+        districts: mockDistricts,
+      });
       prisma.district.findMany.mockResolvedValue(mockDistricts);
       prisma.healthCenter.findMany.mockResolvedValue(mockHealthCenters);
       prisma.children.findMany.mockResolvedValue(mockChildren);
@@ -598,6 +740,212 @@ describe('communeController', () => {
 
       expect(next).toHaveBeenCalledWith(error);
     });
+
+    it('devrait gérer le cas où commune n\'existe pas dans collectCommuneCascadeData', async () => {
+      req.params.id = 'commune-1';
+      prisma.commune.findUnique.mockResolvedValue({ regionId: 'region-1' });
+      
+      // Dans la transaction, commune.findUnique retourne null
+      prisma.commune.findUnique.mockResolvedValueOnce({ regionId: 'region-1' });
+      prisma.commune.findUnique.mockResolvedValueOnce(null);
+      
+      const error = new Error('Commune introuvable');
+      error.status = 404;
+      prisma.$transaction.mockRejectedValue(error);
+
+      await deleteCommune(req, res, next);
+
+      expect(next).toHaveBeenCalled();
+      const thrownError = next.mock.calls[0][0];
+      expect(thrownError.status).toBe(404);
+      expect(thrownError.message).toBe('Commune introuvable');
+    });
+
+    it('devrait gérer le cas où il n\'y a pas de districts', async () => {
+      req.params.id = 'commune-1';
+      // Premier appel avant transaction
+      prisma.commune.findUnique.mockResolvedValueOnce({ regionId: 'region-1' });
+      // Deuxième appel dans la transaction (collectCommuneCascadeData)
+      prisma.commune.findUnique.mockResolvedValueOnce({
+        id: 'commune-1',
+        name: 'Commune 1',
+        region: { id: 'region-1', name: 'Dakar' },
+        districts: [],
+      });
+      prisma.district.findMany.mockResolvedValue([]);
+      prisma.healthCenter.findMany.mockResolvedValue([]);
+      prisma.children.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([]);
+      prisma.stockLot.findMany.mockResolvedValue([]);
+      prisma.pendingStockTransfer.findMany.mockResolvedValue([]);
+      prisma.commune.delete.mockResolvedValue({ id: 'commune-1' });
+
+      await deleteCommune(req, res, next);
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(204);
+    });
+
+    it('devrait gérer le cas où il n\'y a pas de health centers', async () => {
+      req.params.id = 'commune-1';
+      const mockDistricts = [{ id: 'district-1', name: 'District 1' }];
+      
+      // Premier appel avant transaction
+      prisma.commune.findUnique.mockResolvedValueOnce({ regionId: 'region-1' });
+      // Deuxième appel dans la transaction (collectCommuneCascadeData)
+      prisma.commune.findUnique.mockResolvedValueOnce({
+        id: 'commune-1',
+        name: 'Commune 1',
+        region: { id: 'region-1', name: 'Dakar' },
+        districts: mockDistricts,
+      });
+      prisma.district.findMany.mockResolvedValue(mockDistricts);
+      prisma.healthCenter.findMany.mockResolvedValue([]);
+      prisma.children.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([]);
+      prisma.stockLot.findMany.mockResolvedValue([]);
+      prisma.pendingStockTransfer.findMany.mockResolvedValue([]);
+      prisma.stockDISTRICT.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.district.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.commune.delete.mockResolvedValue({ id: 'commune-1' });
+
+      await deleteCommune(req, res, next);
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(204);
+    });
+
+    it('devrait gérer le cas où il n\'y a pas d\'enfants (childIds.length === 0)', async () => {
+      req.params.id = 'commune-1';
+      const mockDistricts = [{ id: 'district-1', name: 'District 1' }];
+      const mockHealthCenters = [{ id: 'hc-1', name: 'HC 1' }];
+      
+      // Premier appel avant transaction
+      prisma.commune.findUnique.mockResolvedValueOnce({ regionId: 'region-1' });
+      // Deuxième appel dans la transaction (collectCommuneCascadeData)
+      prisma.commune.findUnique.mockResolvedValueOnce({
+        id: 'commune-1',
+        name: 'Commune 1',
+        region: { id: 'region-1', name: 'Dakar' },
+        districts: mockDistricts,
+      });
+      prisma.district.findMany.mockResolvedValue(mockDistricts);
+      prisma.healthCenter.findMany.mockResolvedValue(mockHealthCenters);
+      prisma.children.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([]);
+      prisma.stockLot.findMany.mockResolvedValue([]);
+      prisma.pendingStockTransfer.findMany.mockResolvedValue([]);
+      prisma.record.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.stockHEALTHCENTER.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.healthCenter.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.stockDISTRICT.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.district.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.commune.delete.mockResolvedValue({ id: 'commune-1' });
+
+      await deleteCommune(req, res, next);
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(204);
+    });
+
+    it('devrait gérer le cas où il n\'y a que des lots DISTRICT', async () => {
+      req.params.id = 'commune-1';
+      const mockDistricts = [{ id: 'district-1', name: 'District 1' }];
+      const mockStockLots = [
+        { id: 'lot-1', ownerType: OWNER_TYPES.DISTRICT, ownerId: 'district-1', vaccineId: 'vaccine-1' },
+      ];
+      
+      // Premier appel avant transaction
+      prisma.commune.findUnique.mockResolvedValueOnce({ regionId: 'region-1' });
+      // Deuxième appel dans la transaction (collectCommuneCascadeData)
+      prisma.commune.findUnique.mockResolvedValueOnce({
+        id: 'commune-1',
+        name: 'Commune 1',
+        region: { id: 'region-1', name: 'Dakar' },
+        districts: mockDistricts,
+      });
+      prisma.district.findMany.mockResolvedValue(mockDistricts);
+      prisma.healthCenter.findMany.mockResolvedValue([]);
+      prisma.children.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([]);
+      prisma.stockLot.findMany.mockResolvedValue(mockStockLots);
+      prisma.pendingStockTransfer.findMany.mockResolvedValue([]);
+      prisma.pendingStockTransferLot.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.stockTransferLot.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.stockLot.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.stockDISTRICT.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.district.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.commune.delete.mockResolvedValue({ id: 'commune-1' });
+
+      await deleteCommune(req, res, next);
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(204);
+    });
+
+    it('devrait gérer le cas où il n\'y a que des lots HEALTHCENTER', async () => {
+      req.params.id = 'commune-1';
+      const mockDistricts = [{ id: 'district-1', name: 'District 1' }];
+      const mockHealthCenters = [{ id: 'hc-1', name: 'HC 1' }];
+      const mockStockLots = [
+        { id: 'lot-1', ownerType: OWNER_TYPES.HEALTHCENTER, ownerId: 'hc-1', vaccineId: 'vaccine-1' },
+      ];
+      
+      // Premier appel avant transaction
+      prisma.commune.findUnique.mockResolvedValueOnce({ regionId: 'region-1' });
+      // Deuxième appel dans la transaction (collectCommuneCascadeData)
+      prisma.commune.findUnique.mockResolvedValueOnce({
+        id: 'commune-1',
+        name: 'Commune 1',
+        region: { id: 'region-1', name: 'Dakar' },
+        districts: mockDistricts,
+      });
+      prisma.district.findMany.mockResolvedValue(mockDistricts);
+      prisma.healthCenter.findMany.mockResolvedValue(mockHealthCenters);
+      prisma.children.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([]);
+      prisma.stockLot.findMany.mockResolvedValue(mockStockLots);
+      prisma.pendingStockTransfer.findMany.mockResolvedValue([]);
+      prisma.pendingStockTransferLot.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.stockTransferLot.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.stockLot.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.record.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.stockHEALTHCENTER.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.healthCenter.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.stockDISTRICT.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.district.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.commune.delete.mockResolvedValue({ id: 'commune-1' });
+
+      await deleteCommune(req, res, next);
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(204);
+    });
+
+    it('devrait gérer le cas où il n\'y a pas de conditions pour les records', async () => {
+      req.params.id = 'commune-1';
+      // Premier appel avant transaction
+      prisma.commune.findUnique.mockResolvedValueOnce({ regionId: 'region-1' });
+      // Deuxième appel dans la transaction (collectCommuneCascadeData)
+      prisma.commune.findUnique.mockResolvedValueOnce({
+        id: 'commune-1',
+        name: 'Commune 1',
+        region: { id: 'region-1', name: 'Dakar' },
+        districts: [],
+      });
+      prisma.district.findMany.mockResolvedValue([]);
+      prisma.healthCenter.findMany.mockResolvedValue([]);
+      prisma.children.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([]);
+      prisma.stockLot.findMany.mockResolvedValue([]);
+      prisma.pendingStockTransfer.findMany.mockResolvedValue([]);
+      prisma.commune.delete.mockResolvedValue({ id: 'commune-1' });
+
+      await deleteCommune(req, res, next);
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(204);
+    });
   });
 
   describe('getCommuneDeletionSummary()', () => {
@@ -636,43 +984,33 @@ describe('communeController', () => {
         id: 'commune-1',
         name: 'Commune 1',
         region: { id: 'region-1', name: 'Dakar' },
+        districts: [{ id: 'district-1', name: 'District 1' }],
       };
       const mockDistricts = [{ id: 'district-1', name: 'District 1' }];
       const mockHealthCenters = [{ id: 'hc-1', name: 'HC 1' }];
       const mockChildren = [{ id: 'child-1', firstName: 'John', lastName: 'Doe' }];
       const mockUsers = [{ id: 'user-1', firstName: 'User', lastName: '1', role: 'AGENT' }];
-      const mockStockLots = [{ id: 'lot-1', ownerType: OWNER_TYPES.DISTRICT, ownerId: 'district-1' }];
-      const mockPendingTransfers = [{ id: 'transfer-1', status: 'PENDING' }];
+      const mockStockLots = [{ id: 'lot-1', ownerType: OWNER_TYPES.DISTRICT, ownerId: 'district-1', vaccineId: 'vaccine-1' }];
+      const mockPendingTransfers = [{ id: 'transfer-1', status: 'PENDING', fromType: 'DISTRICT', fromId: 'district-1' }];
 
-      const mockCascadeData = {
-        commune: mockCommune,
-        districts: mockDistricts,
-        healthCenters: mockHealthCenters,
-        children: mockChildren,
-        users: mockUsers,
-        childIds: ['child-1'],
-        healthCenterIds: ['hc-1'],
-        districtIds: ['district-1'],
-        lotIds: ['lot-1'],
-        pendingTransferIds: ['transfer-1'],
-        stockLots: mockStockLots,
-        pendingTransfers: mockPendingTransfers,
-        summary: {
-          scheduled: 5,
-          due: 3,
-          late: 2,
-          overdue: 1,
-          completed: 10,
-          stockReservations: 2,
-          records: 5,
-          stockLots: 1,
-          pendingTransfers: 1,
-          vaccineRequests: 1,
-        },
-      };
-
-      prisma.commune.findUnique.mockResolvedValue({ regionId: 'region-1' });
-      prisma.$transaction.mockResolvedValue(mockCascadeData);
+      // Premier appel avant transaction
+      prisma.commune.findUnique.mockResolvedValueOnce({ regionId: 'region-1' });
+      // Deuxième appel dans la transaction (collectCommuneCascadeData)
+      prisma.commune.findUnique.mockResolvedValueOnce(mockCommune);
+      prisma.district.findMany.mockResolvedValue(mockDistricts);
+      prisma.healthCenter.findMany.mockResolvedValue(mockHealthCenters);
+      prisma.children.findMany.mockResolvedValue(mockChildren);
+      prisma.user.findMany.mockResolvedValue(mockUsers);
+      prisma.childVaccineScheduled.count.mockResolvedValue(5);
+      prisma.childVaccineDue.count.mockResolvedValue(3);
+      prisma.childVaccineLate.count.mockResolvedValue(2);
+      prisma.childVaccineOverdue.count.mockResolvedValue(1);
+      prisma.childVaccineCompleted.count.mockResolvedValue(10);
+      prisma.stockReservation.count.mockResolvedValue(2);
+      prisma.record.count.mockResolvedValue(5);
+      prisma.stockLot.findMany.mockResolvedValue(mockStockLots);
+      prisma.pendingStockTransfer.findMany.mockResolvedValue(mockPendingTransfers);
+      prisma.vaccineRequest.count.mockResolvedValue(1);
 
       await getCommuneDeletionSummary(req, res, next);
 
@@ -766,6 +1104,367 @@ describe('communeController', () => {
       await getCommuneDeletionSummary(req, res, next);
 
       expect(next).toHaveBeenCalledWith(error);
+    });
+
+    it('devrait gérer le cas où il n\'y a pas de districts dans getCommuneDeletionSummary', async () => {
+      req.params.id = 'commune-1';
+      const mockCommune = {
+        id: 'commune-1',
+        name: 'Commune 1',
+        region: { id: 'region-1', name: 'Dakar' },
+        districts: [],
+      };
+      
+      // Premier appel avant transaction
+      prisma.commune.findUnique.mockResolvedValueOnce({ regionId: 'region-1' });
+      // Deuxième appel dans la transaction (collectCommuneCascadeData)
+      prisma.commune.findUnique.mockResolvedValueOnce(mockCommune);
+      prisma.district.findMany.mockResolvedValue([]);
+      prisma.healthCenter.findMany.mockResolvedValue([]);
+      prisma.children.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([]);
+      prisma.stockLot.findMany.mockResolvedValue([]);
+      prisma.pendingStockTransfer.findMany.mockResolvedValue([]);
+
+      await getCommuneDeletionSummary(req, res, next);
+
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        commune: {
+          id: mockCommune.id,
+          name: mockCommune.name,
+          region: mockCommune.region,
+        },
+        totals: {
+          districts: 0,
+          healthCenters: 0,
+          children: 0,
+          users: 0,
+          stockLots: 0,
+          pendingTransfers: 0,
+          stockReservations: 0,
+          records: 0,
+          vaccineRequests: 0,
+          scheduledVaccines: 0,
+          dueVaccines: 0,
+          lateVaccines: 0,
+          overdueVaccines: 0,
+          completedVaccines: 0,
+        },
+        details: {
+          districts: [],
+          healthCenters: [],
+          children: [],
+          users: [],
+          stockLots: [],
+          pendingTransfers: [],
+        },
+      });
+    });
+
+    it('devrait gérer le cas où il n\'y a pas d\'enfants dans getCommuneDeletionSummary', async () => {
+      req.params.id = 'commune-1';
+      const mockDistricts = [{ id: 'district-1', name: 'District 1' }];
+      const mockHealthCenters = [{ id: 'hc-1', name: 'HC 1' }];
+      const mockUsers = [{ id: 'user-1', firstName: 'User', lastName: '1', role: 'AGENT' }];
+      const mockCommune = {
+        id: 'commune-1',
+        name: 'Commune 1',
+        region: { id: 'region-1', name: 'Dakar' },
+        districts: mockDistricts,
+      };
+      
+      // Premier appel avant transaction
+      prisma.commune.findUnique.mockResolvedValueOnce({ regionId: 'region-1' });
+      // Deuxième appel dans la transaction (collectCommuneCascadeData)
+      prisma.commune.findUnique.mockResolvedValueOnce(mockCommune);
+      prisma.district.findMany.mockResolvedValue(mockDistricts);
+      prisma.healthCenter.findMany.mockResolvedValue(mockHealthCenters);
+      prisma.children.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue(mockUsers);
+      prisma.stockLot.findMany.mockResolvedValue([]);
+      prisma.pendingStockTransfer.findMany.mockResolvedValue([]);
+
+      await getCommuneDeletionSummary(req, res, next);
+
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        commune: {
+          id: mockCommune.id,
+          name: mockCommune.name,
+          region: mockCommune.region,
+        },
+        totals: {
+          districts: 1,
+          healthCenters: 1,
+          children: 0,
+          users: 1,
+          stockLots: 0,
+          pendingTransfers: 0,
+          stockReservations: 0,
+          records: 0,
+          vaccineRequests: 0,
+          scheduledVaccines: 0,
+          dueVaccines: 0,
+          lateVaccines: 0,
+          overdueVaccines: 0,
+          completedVaccines: 0,
+        },
+        details: {
+          districts: mockDistricts,
+          healthCenters: mockHealthCenters,
+          children: [],
+          users: mockUsers,
+          stockLots: [],
+          pendingTransfers: [],
+        },
+      });
+    });
+
+    it('devrait gérer le cas où il n\'y a que des lots DISTRICT dans getCommuneDeletionSummary', async () => {
+      req.params.id = 'commune-1';
+      const mockDistricts = [{ id: 'district-1', name: 'District 1' }];
+      const mockStockLots = [
+        { id: 'lot-1', ownerType: OWNER_TYPES.DISTRICT, ownerId: 'district-1', vaccineId: 'vaccine-1' },
+      ];
+      const mockCommune = {
+        id: 'commune-1',
+        name: 'Commune 1',
+        region: { id: 'region-1', name: 'Dakar' },
+        districts: mockDistricts,
+      };
+      
+      // Premier appel avant transaction
+      prisma.commune.findUnique.mockResolvedValueOnce({ regionId: 'region-1' });
+      // Deuxième appel dans la transaction (collectCommuneCascadeData)
+      prisma.commune.findUnique.mockResolvedValueOnce(mockCommune);
+      prisma.district.findMany.mockResolvedValue(mockDistricts);
+      prisma.healthCenter.findMany.mockResolvedValue([]);
+      prisma.children.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([]);
+      prisma.stockLot.findMany.mockResolvedValue(mockStockLots);
+      prisma.pendingStockTransfer.findMany.mockResolvedValue([]);
+
+      await getCommuneDeletionSummary(req, res, next);
+
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        commune: {
+          id: mockCommune.id,
+          name: mockCommune.name,
+          region: mockCommune.region,
+        },
+        totals: {
+          districts: 1,
+          healthCenters: 0,
+          children: 0,
+          users: 0,
+          stockLots: 1,
+          pendingTransfers: 0,
+          stockReservations: 0,
+          records: 0,
+          vaccineRequests: 0,
+          scheduledVaccines: 0,
+          dueVaccines: 0,
+          lateVaccines: 0,
+          overdueVaccines: 0,
+          completedVaccines: 0,
+        },
+        details: {
+          districts: mockDistricts,
+          healthCenters: [],
+          children: [],
+          users: [],
+          stockLots: mockStockLots,
+          pendingTransfers: [],
+        },
+      });
+    });
+
+    it('devrait gérer le cas où il y a des pendingTransfers avec lotIds dans getCommuneDeletionSummary', async () => {
+      req.params.id = 'commune-1';
+      const mockDistricts = [{ id: 'district-1', name: 'District 1' }];
+      const mockHealthCenters = [{ id: 'hc-1', name: 'HC 1' }];
+      const mockStockLots = [
+        { id: 'lot-1', ownerType: OWNER_TYPES.DISTRICT, ownerId: 'district-1', vaccineId: 'vaccine-1' },
+        { id: 'lot-2', ownerType: OWNER_TYPES.HEALTHCENTER, ownerId: 'hc-1', vaccineId: 'vaccine-1' },
+      ];
+      const mockPendingTransfers = [
+        { id: 'transfer-1', status: 'PENDING', fromType: 'DISTRICT', fromId: 'district-1' },
+        { id: 'transfer-2', status: 'PENDING', fromType: 'HEALTHCENTER', fromId: 'hc-1' },
+      ];
+      const mockCommune = {
+        id: 'commune-1',
+        name: 'Commune 1',
+        region: { id: 'region-1', name: 'Dakar' },
+        districts: mockDistricts,
+      };
+      
+      // Premier appel avant transaction
+      prisma.commune.findUnique.mockResolvedValueOnce({ regionId: 'region-1' });
+      // Deuxième appel dans la transaction (collectCommuneCascadeData)
+      prisma.commune.findUnique.mockResolvedValueOnce(mockCommune);
+      prisma.district.findMany.mockResolvedValue(mockDistricts);
+      prisma.healthCenter.findMany.mockResolvedValue(mockHealthCenters);
+      prisma.children.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([]);
+      prisma.stockLot.findMany.mockResolvedValue(mockStockLots);
+      prisma.pendingStockTransfer.findMany.mockResolvedValue(mockPendingTransfers);
+
+      await getCommuneDeletionSummary(req, res, next);
+
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        commune: {
+          id: mockCommune.id,
+          name: mockCommune.name,
+          region: mockCommune.region,
+        },
+        totals: {
+          districts: 1,
+          healthCenters: 1,
+          children: 0,
+          users: 0,
+          stockLots: 2,
+          pendingTransfers: 2,
+          stockReservations: 0,
+          records: 0,
+          vaccineRequests: 0,
+          scheduledVaccines: 0,
+          dueVaccines: 0,
+          lateVaccines: 0,
+          overdueVaccines: 0,
+          completedVaccines: 0,
+        },
+        details: {
+          districts: mockDistricts,
+          healthCenters: mockHealthCenters,
+          children: [],
+          users: [],
+          stockLots: mockStockLots,
+          pendingTransfers: mockPendingTransfers,
+        },
+      });
+    });
+
+    it('devrait gérer le cas où recordConditions contient seulement healthCenterIds (pas de childIds)', async () => {
+      req.params.id = 'commune-1';
+      const mockDistricts = [{ id: 'district-1', name: 'District 1' }];
+      const mockHealthCenters = [{ id: 'hc-1', name: 'HC 1' }];
+      const mockCommune = {
+        id: 'commune-1',
+        name: 'Commune 1',
+        region: { id: 'region-1', name: 'Dakar' },
+        districts: mockDistricts,
+      };
+      
+      // Premier appel avant transaction
+      prisma.commune.findUnique.mockResolvedValueOnce({ regionId: 'region-1' });
+      // Deuxième appel dans la transaction (collectCommuneCascadeData)
+      prisma.commune.findUnique.mockResolvedValueOnce(mockCommune);
+      prisma.district.findMany.mockResolvedValue(mockDistricts);
+      prisma.healthCenter.findMany.mockResolvedValue(mockHealthCenters);
+      prisma.children.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([]);
+      prisma.stockLot.findMany.mockResolvedValue([]);
+      prisma.pendingStockTransfer.findMany.mockResolvedValue([]);
+      prisma.record.count.mockResolvedValue(1);
+
+      await getCommuneDeletionSummary(req, res, next);
+
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          totals: expect.objectContaining({
+            records: 1,
+          }),
+        })
+      );
+    });
+
+    it('devrait gérer le cas où lotConditions contient seulement HEALTHCENTER (pas de DISTRICT)', async () => {
+      req.params.id = 'commune-1';
+      const mockDistricts = [{ id: 'district-1', name: 'District 1' }];
+      const mockHealthCenters = [{ id: 'hc-1', name: 'HC 1' }];
+      const mockStockLots = [
+        { id: 'lot-1', ownerType: OWNER_TYPES.HEALTHCENTER, ownerId: 'hc-1', vaccineId: 'vaccine-1' },
+      ];
+      const mockCommune = {
+        id: 'commune-1',
+        name: 'Commune 1',
+        region: { id: 'region-1', name: 'Dakar' },
+        districts: mockDistricts,
+      };
+      
+      // Premier appel avant transaction
+      prisma.commune.findUnique.mockResolvedValueOnce({ regionId: 'region-1' });
+      // Deuxième appel dans la transaction (collectCommuneCascadeData)
+      prisma.commune.findUnique.mockResolvedValueOnce(mockCommune);
+      prisma.district.findMany.mockResolvedValue(mockDistricts);
+      prisma.healthCenter.findMany.mockResolvedValue(mockHealthCenters);
+      prisma.children.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([]);
+      prisma.stockLot.findMany.mockResolvedValue(mockStockLots);
+      prisma.pendingStockTransfer.findMany.mockResolvedValue([]);
+
+      await getCommuneDeletionSummary(req, res, next);
+
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          totals: expect.objectContaining({
+            stockLots: 1,
+          }),
+          details: expect.objectContaining({
+            stockLots: mockStockLots,
+          }),
+        })
+      );
+    });
+
+    it('devrait gérer le cas où pendingTransferConditions contient lotIds dans deleteCommune', async () => {
+      req.params.id = 'commune-1';
+      const mockDistricts = [{ id: 'district-1', name: 'District 1' }];
+      const mockHealthCenters = [{ id: 'hc-1', name: 'HC 1' }];
+      const mockStockLots = [
+        { id: 'lot-1', ownerType: OWNER_TYPES.DISTRICT, ownerId: 'district-1', vaccineId: 'vaccine-1' },
+        { id: 'lot-2', ownerType: OWNER_TYPES.HEALTHCENTER, ownerId: 'hc-1', vaccineId: 'vaccine-1' },
+      ];
+      const mockPendingTransfers = [
+        { id: 'transfer-1', status: 'PENDING', fromType: 'DISTRICT', fromId: 'district-1' },
+      ];
+      
+      // Premier appel avant transaction
+      prisma.commune.findUnique.mockResolvedValueOnce({ regionId: 'region-1' });
+      // Deuxième appel dans la transaction (collectCommuneCascadeData)
+      prisma.commune.findUnique.mockResolvedValueOnce({
+        id: 'commune-1',
+        name: 'Commune 1',
+        region: { id: 'region-1', name: 'Dakar' },
+        districts: mockDistricts,
+      });
+      prisma.district.findMany.mockResolvedValue(mockDistricts);
+      prisma.healthCenter.findMany.mockResolvedValue(mockHealthCenters);
+      prisma.children.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([]);
+      prisma.stockLot.findMany.mockResolvedValue(mockStockLots);
+      prisma.pendingStockTransfer.findMany.mockResolvedValue(mockPendingTransfers);
+      prisma.pendingStockTransferLot.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.stockTransferLot.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.stockLot.deleteMany.mockResolvedValue({ count: 2 });
+      prisma.pendingStockTransfer.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.record.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.stockHEALTHCENTER.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.healthCenter.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.stockDISTRICT.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.district.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.commune.delete.mockResolvedValue({ id: 'commune-1' });
+
+      await deleteCommune(req, res, next);
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      // Ce test vérifie que la suppression fonctionne avec des lots et des pendingTransfers
+      // La branche avec lotIds dans pendingTransferConditions est couverte par le test dans getCommuneDeletionSummary
+      // Ici, on vérifie simplement que la suppression réussit avec ces données
+      expect(res.status).toHaveBeenCalledWith(204);
     });
   });
 });

@@ -14,4 +14,12 @@ module.exports = {
 
   // Exécuter les tests séquentiellement pour éviter les conflits de DB
   maxWorkers: 1,
+
+  // Configuration du coverage pour les tests d'intégration
+  collectCoverageFrom: [
+    'src/**/*.js',
+    '!src/server.js',
+    '!src/config/**',
+  ],
+  coverageDirectory: 'coverage-integration',
 };

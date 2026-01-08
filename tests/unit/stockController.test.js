@@ -208,6 +208,9 @@ jest.mock('../../src/config/prismaClient', () => ({
   region: {
     findUnique: jest.fn(),
   },
+  eventLog: {
+    create: jest.fn(),
+  },
   $transaction: jest.fn(async (callback) => {
     const mockPrisma = require('../../src/config/prismaClient');
     const mockTx = {
@@ -232,6 +235,7 @@ jest.mock('../../src/config/prismaClient', () => ({
       commune: mockPrisma.commune,
       healthCenter: mockPrisma.healthCenter,
       region: mockPrisma.region,
+      eventLog: mockPrisma.eventLog,
     };
     return await callback(mockTx);
   }),
@@ -270,6 +274,10 @@ describe('stockController', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+
+    // Définir des valeurs par défaut pour les mocks qui peuvent être appelés de manière asynchrone
+    prisma.user.findMany.mockResolvedValue([]);
+    prisma.eventLog.create.mockResolvedValue({ id: 'event-1' });
 
     req = {
       user: {
@@ -679,6 +687,81 @@ describe('stockController', () => {
       await updateStockNATIONAL(req, res, next);
 
       expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('devrait retourner 400 si vaccineId manquant', async () => {
+      req.body.quantity = 200;
+      await updateStockNATIONAL(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        message: 'vaccineId et quantity (>= 0) sont requis',
+      });
+    });
+
+    it('devrait retourner 400 si quantity est négative', async () => {
+      req.body.vaccineId = 'vaccine-1';
+      req.body.quantity = -10;
+      await updateStockNATIONAL(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        message: 'vaccineId et quantity (>= 0) sont requis',
+      });
+    });
+
+    it('devrait retourner 400 si quantity n\'est pas un nombre', async () => {
+      req.body.vaccineId = 'vaccine-1';
+      req.body.quantity = 'not-a-number';
+      await updateStockNATIONAL(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si expiration manquante quand delta > 0', async () => {
+      req.body.vaccineId = 'vaccine-1';
+      req.body.quantity = 200; // Plus que le stock actuel (100)
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          stockNATIONAL: {
+            findUnique: jest.fn().mockResolvedValue({ id: 'stock-1', quantity: 100 }),
+            update: jest.fn().mockResolvedValue({}),
+          },
+        };
+        try {
+          return await callback(mockTx);
+        } catch (error) {
+          throw error;
+        }
+      });
+
+      await updateStockNATIONAL(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        message: 'La date d\'expiration est requise pour l\'ajout de nouveaux lots',
+      });
+    });
+
+    it('devrait gérer les erreurs avec status', async () => {
+      req.body.vaccineId = 'vaccine-1';
+      req.body.quantity = 200;
+      const error = new Error('Erreur test');
+      error.status = 500;
+      prisma.$transaction.mockRejectedValue(error);
+
+      await updateStockNATIONAL(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith({ message: 'Erreur test' });
+    });
+
+    it('devrait gérer les erreurs sans status', async () => {
+      req.body.vaccineId = 'vaccine-1';
+      req.body.quantity = 200;
+      const error = new Error('Erreur DB');
+      prisma.$transaction.mockRejectedValue(error);
+
+      await updateStockNATIONAL(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(error);
     });
   });
 
@@ -1801,6 +1884,637 @@ describe('stockController', () => {
 
       expect(res.status).toHaveBeenCalledWith(403);
     });
+
+    it('devrait retourner 400 si REGIONAL n\'a pas de regionId', async () => {
+      req.user.role = 'REGIONAL';
+      req.user.id = 'user-1';
+      delete req.user.regionId; // Supprimer regionId pour forcer l'appel à la DB
+      req.params.transferId = 'transfer-1';
+      prisma.user.findUnique.mockResolvedValue(null); // Utilisateur non trouvé ou regionId null
+
+      await confirmPendingTransfer(req, res, next);
+
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        select: { regionId: true },
+      });
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ message: "Votre compte n'est pas rattaché à une région" });
+    });
+
+    it('devrait retourner 400 si DISTRICT n\'a pas de districtId', async () => {
+      req.user.role = 'DISTRICT';
+      req.user.id = 'user-1';
+      delete req.user.districtId; // Supprimer districtId pour forcer l'appel à la DB
+      req.params.transferId = 'transfer-1';
+      prisma.user.findUnique.mockResolvedValue(null); // Utilisateur non trouvé ou districtId null
+
+      await confirmPendingTransfer(req, res, next);
+
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        select: { districtId: true },
+      });
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ message: "Votre compte n'est pas rattaché à un district" });
+    });
+
+    it('devrait retourner 403 si AGENT n\'est pas ADMIN', async () => {
+      req.user.role = 'AGENT';
+      req.user.agentLevel = 'STAFF';
+      req.params.transferId = 'transfer-1';
+
+      await confirmPendingTransfer(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    it('devrait retourner 400 si AGENT n\'a pas de healthCenterId', async () => {
+      req.user.role = 'AGENT';
+      req.user.agentLevel = 'ADMIN';
+      req.user.healthCenterId = null;
+      req.params.transferId = 'transfer-1';
+
+      await confirmPendingTransfer(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ message: "Votre compte n'est pas rattaché à un centre de santé" });
+    });
+
+    it('devrait retourner 400 si transfert déjà confirmé', async () => {
+      req.user.role = 'REGIONAL';
+      req.params.transferId = 'transfer-1';
+      prisma.user.findUnique.mockResolvedValue({ regionId: 'region-1' });
+      const mockTransfer = {
+        id: 'transfer-1',
+        toType: 'REGIONAL',
+        toId: 'region-1',
+        status: 'CONFIRMED',
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          pendingStockTransfer: {
+            findUnique: jest.fn().mockResolvedValue(mockTransfer),
+          },
+        };
+        try {
+          return await callback(mockTx);
+        } catch (error) {
+          throw error;
+        }
+      });
+
+      await confirmPendingTransfer(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si transfert déjà annulé', async () => {
+      req.user.role = 'REGIONAL';
+      req.params.transferId = 'transfer-1';
+      prisma.user.findUnique.mockResolvedValue({ regionId: 'region-1' });
+      const mockTransfer = {
+        id: 'transfer-1',
+        toType: 'REGIONAL',
+        toId: 'region-1',
+        status: 'CANCELLED',
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          pendingStockTransfer: {
+            findUnique: jest.fn().mockResolvedValue(mockTransfer),
+          },
+        };
+        try {
+          return await callback(mockTx);
+        } catch (error) {
+          throw error;
+        }
+      });
+
+      await confirmPendingTransfer(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait créer le stock REGIONAL s\'il n\'existe pas', async () => {
+      req.user.role = 'REGIONAL';
+      req.params.transferId = 'transfer-1';
+      prisma.user.findUnique.mockResolvedValue({ regionId: 'region-1' });
+      const mockTransfer = {
+        id: 'transfer-1',
+        vaccineId: 'vaccine-1',
+        toType: 'REGIONAL',
+        toId: 'region-1',
+        status: 'PENDING',
+        quantity: 100,
+        createdAt: new Date(),
+        lots: [
+          { lotId: 'lot-1', quantity: 100, lot: { id: 'lot-1', expiration: new Date('2025-12-31'), status: 'VALID' } },
+        ],
+        vaccine: { name: 'BCG' },
+      };
+      const mockPendingLot = {
+        id: 'pending-lot-1',
+        pendingTransferId: 'transfer-1',
+        status: 'PENDING',
+        ownerType: 'REGIONAL',
+        ownerId: 'region-1',
+        expiration: new Date('2025-12-31'),
+      };
+      const mockUpdatedStock = {
+        id: 'stock-1',
+        quantity: 100,
+        vaccine: { name: 'BCG' },
+        region: { name: 'Dakar' },
+      };
+      stockLotService.recordTransfer.mockResolvedValue();
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          pendingStockTransfer: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce(mockTransfer)
+              .mockResolvedValueOnce({ ...mockTransfer, confirmedBy: null }),
+            delete: jest.fn().mockResolvedValue({}),
+          },
+          stockREGIONAL: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce(null) // Stock n'existe pas
+              .mockResolvedValueOnce(mockUpdatedStock),
+            create: jest.fn().mockResolvedValue({ id: 'stock-1', quantity: 0 }),
+            update: jest.fn().mockResolvedValue({ id: 'stock-1', quantity: 100 }),
+          },
+          stockLot: {
+            findFirst: jest.fn().mockResolvedValue(mockPendingLot),
+            update: jest.fn().mockResolvedValue({ ...mockPendingLot, status: 'VALID', quantity: 100 }),
+          },
+          stockTransferHistory: {
+            create: jest.fn().mockResolvedValue({ id: 'history-1' }),
+          },
+          region: {
+            findUnique: jest.fn().mockResolvedValue({ name: 'Dakar' }),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await confirmPendingTransfer(req, res, next);
+
+      expect(prisma.$transaction.mock.calls[0][0]).toBeDefined();
+      const mockTx = prisma.$transaction.mock.results[0].value;
+      await mockTx;
+      expect(res.json).toHaveBeenCalled();
+    });
+
+    it('devrait confirmer un transfert pour DISTRICT', async () => {
+      req.user.role = 'DISTRICT';
+      req.params.transferId = 'transfer-1';
+      prisma.user.findUnique.mockResolvedValue({ districtId: 'district-1' });
+      const mockTransfer = {
+        id: 'transfer-1',
+        vaccineId: 'vaccine-1',
+        toType: 'DISTRICT',
+        toId: 'district-1',
+        status: 'PENDING',
+        quantity: 100,
+        createdAt: new Date(),
+        lots: [
+          { lotId: 'lot-1', quantity: 100, lot: { id: 'lot-1', expiration: new Date('2025-12-31'), status: 'VALID' } },
+        ],
+        vaccine: { name: 'BCG' },
+      };
+      const mockPendingLot = {
+        id: 'pending-lot-1',
+        pendingTransferId: 'transfer-1',
+        status: 'PENDING',
+        ownerType: 'DISTRICT',
+        ownerId: 'district-1',
+        expiration: new Date('2025-12-31'),
+      };
+      const mockUpdatedStock = {
+        id: 'stock-1',
+        quantity: 100,
+        vaccine: { name: 'BCG' },
+        district: { name: 'District Test', commune: {} },
+      };
+      stockLotService.recordTransfer.mockResolvedValue();
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          pendingStockTransfer: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce(mockTransfer)
+              .mockResolvedValueOnce({ ...mockTransfer, confirmedBy: null }),
+            delete: jest.fn().mockResolvedValue({}),
+          },
+          stockDISTRICT: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce({ id: 'stock-1', quantity: 0 })
+              .mockResolvedValueOnce(mockUpdatedStock),
+            update: jest.fn().mockResolvedValue({ id: 'stock-1', quantity: 100 }),
+            create: jest.fn().mockResolvedValue({ id: 'stock-1', quantity: 0 }),
+          },
+          stockLot: {
+            findFirst: jest.fn().mockResolvedValue(mockPendingLot),
+            update: jest.fn().mockResolvedValue({ ...mockPendingLot, status: 'VALID', quantity: 100 }),
+          },
+          stockTransferHistory: {
+            create: jest.fn().mockResolvedValue({ id: 'history-1' }),
+          },
+          district: {
+            findUnique: jest.fn().mockResolvedValue({ name: 'District Test' }),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await confirmPendingTransfer(req, res, next);
+
+      expect(res.json).toHaveBeenCalled();
+    });
+
+    it('devrait confirmer un transfert pour AGENT ADMIN', async () => {
+      req.user.role = 'AGENT';
+      req.user.agentLevel = 'ADMIN';
+      req.user.healthCenterId = 'hc-1';
+      req.params.transferId = 'transfer-1';
+      const mockTransfer = {
+        id: 'transfer-1',
+        vaccineId: 'vaccine-1',
+        toType: 'HEALTHCENTER',
+        toId: 'hc-1',
+        status: 'PENDING',
+        quantity: 100,
+        createdAt: new Date(),
+        lots: [
+          { lotId: 'lot-1', quantity: 100, lot: { id: 'lot-1', expiration: new Date('2025-12-31'), status: 'VALID' } },
+        ],
+        vaccine: { name: 'BCG' },
+      };
+      const mockPendingLot = {
+        id: 'pending-lot-1',
+        pendingTransferId: 'transfer-1',
+        status: 'PENDING',
+        ownerType: 'HEALTHCENTER',
+        ownerId: 'hc-1',
+        expiration: new Date('2025-12-31'),
+      };
+      const mockUpdatedStock = {
+        id: 'stock-1',
+        quantity: 100,
+        vaccine: { name: 'BCG' },
+        healthCenter: { name: 'Centre Test' },
+      };
+      stockLotService.recordTransfer.mockResolvedValue();
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          pendingStockTransfer: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce(mockTransfer)
+              .mockResolvedValueOnce({ ...mockTransfer, confirmedBy: null }),
+            delete: jest.fn().mockResolvedValue({}),
+          },
+          stockHEALTHCENTER: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce({ id: 'stock-1', quantity: 0 })
+              .mockResolvedValueOnce(mockUpdatedStock),
+            update: jest.fn().mockResolvedValue({ id: 'stock-1', quantity: 100 }),
+            create: jest.fn().mockResolvedValue({ id: 'stock-1', quantity: 0 }),
+          },
+          stockLot: {
+            findFirst: jest.fn().mockResolvedValue(mockPendingLot),
+            update: jest.fn().mockResolvedValue({ ...mockPendingLot, status: 'VALID', quantity: 100 }),
+          },
+          stockTransferHistory: {
+            create: jest.fn().mockResolvedValue({ id: 'history-1' }),
+          },
+          healthCenter: {
+            findUnique: jest.fn().mockResolvedValue({ name: 'Centre Test' }),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await confirmPendingTransfer(req, res, next);
+
+      expect(res.json).toHaveBeenCalled();
+    });
+
+    it('devrait confirmer un transfert pour SUPERADMIN', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.params.transferId = 'transfer-1';
+      const mockTransfer = {
+        id: 'transfer-1',
+        vaccineId: 'vaccine-1',
+        toType: 'REGIONAL',
+        toId: 'region-1',
+        status: 'PENDING',
+        quantity: 100,
+        createdAt: new Date(),
+        lots: [
+          { lotId: 'lot-1', quantity: 100, lot: { id: 'lot-1', expiration: new Date('2025-12-31'), status: 'VALID' } },
+        ],
+        vaccine: { name: 'BCG' },
+      };
+      const mockPendingLot = {
+        id: 'pending-lot-1',
+        pendingTransferId: 'transfer-1',
+        status: 'PENDING',
+        ownerType: 'REGIONAL',
+        ownerId: 'region-1',
+        expiration: new Date('2025-12-31'),
+      };
+      const mockUpdatedStock = {
+        id: 'stock-1',
+        quantity: 100,
+        vaccine: { name: 'BCG' },
+        region: { name: 'Dakar' },
+      };
+      stockLotService.recordTransfer.mockResolvedValue();
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          pendingStockTransfer: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce(mockTransfer)
+              .mockResolvedValueOnce({ ...mockTransfer, confirmedBy: null }),
+            delete: jest.fn().mockResolvedValue({}),
+          },
+          stockREGIONAL: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce({ id: 'stock-1', quantity: 0 })
+              .mockResolvedValueOnce(mockUpdatedStock),
+            update: jest.fn().mockResolvedValue({ id: 'stock-1', quantity: 100 }),
+            create: jest.fn().mockResolvedValue({ id: 'stock-1', quantity: 0 }),
+          },
+          stockLot: {
+            findFirst: jest.fn().mockResolvedValue(mockPendingLot),
+            update: jest.fn().mockResolvedValue({ ...mockPendingLot, status: 'VALID', quantity: 100 }),
+          },
+          stockTransferHistory: {
+            create: jest.fn().mockResolvedValue({ id: 'history-1' }),
+          },
+          region: {
+            findUnique: jest.fn().mockResolvedValue({ name: 'Dakar' }),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await confirmPendingTransfer(req, res, next);
+
+      expect(res.json).toHaveBeenCalled();
+    });
+
+    it('devrait retourner 404 si lot PENDING introuvable', async () => {
+      req.user.role = 'REGIONAL';
+      req.params.transferId = 'transfer-1';
+      prisma.user.findUnique.mockResolvedValue({ regionId: 'region-1' });
+      const mockTransfer = {
+        id: 'transfer-1',
+        vaccineId: 'vaccine-1',
+        toType: 'REGIONAL',
+        toId: 'region-1',
+        status: 'PENDING',
+        quantity: 100,
+        lots: [],
+        vaccine: { name: 'BCG' },
+      };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          pendingStockTransfer: {
+            findUnique: jest.fn().mockResolvedValue(mockTransfer),
+          },
+          stockREGIONAL: {
+            findUnique: jest.fn().mockResolvedValue({ id: 'stock-1', quantity: 0 }),
+            create: jest.fn().mockResolvedValue({ id: 'stock-1', quantity: 0 }),
+          },
+          stockLot: {
+            findFirst: jest.fn().mockResolvedValue(null), // Lot PENDING introuvable
+          },
+        };
+        try {
+          return await callback(mockTx);
+        } catch (error) {
+          throw error;
+        }
+      });
+
+      await confirmPendingTransfer(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('devrait gérer le cas où firstValidLot n\'existe pas', async () => {
+      req.user.role = 'REGIONAL';
+      req.params.transferId = 'transfer-1';
+      prisma.user.findUnique.mockResolvedValue({ regionId: 'region-1' });
+      const mockTransfer = {
+        id: 'transfer-1',
+        vaccineId: 'vaccine-1',
+        toType: 'REGIONAL',
+        toId: 'region-1',
+        status: 'PENDING',
+        quantity: 100,
+        createdAt: new Date(),
+        lots: [
+          { lotId: 'lot-1', quantity: 100, lot: null }, // Lot supprimé
+        ],
+        vaccine: { name: 'BCG' },
+      };
+      const mockPendingLot = {
+        id: 'pending-lot-1',
+        pendingTransferId: 'transfer-1',
+        status: 'PENDING',
+        ownerType: 'REGIONAL',
+        ownerId: 'region-1',
+        expiration: new Date('2025-12-31'),
+      };
+      const mockUpdatedStock = {
+        id: 'stock-1',
+        quantity: 100,
+        vaccine: { name: 'BCG' },
+        region: { name: 'Dakar' },
+      };
+      stockLotService.recordTransfer.mockResolvedValue();
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          pendingStockTransfer: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce(mockTransfer)
+              .mockResolvedValueOnce({ ...mockTransfer, confirmedBy: null }),
+            delete: jest.fn().mockResolvedValue({}),
+          },
+          stockREGIONAL: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce({ id: 'stock-1', quantity: 0 })
+              .mockResolvedValueOnce(mockUpdatedStock),
+            update: jest.fn().mockResolvedValue({ id: 'stock-1', quantity: 100 }),
+            create: jest.fn().mockResolvedValue({ id: 'stock-1', quantity: 0 }),
+          },
+          stockLot: {
+            findFirst: jest.fn().mockResolvedValue(mockPendingLot),
+            update: jest.fn().mockResolvedValue({ ...mockPendingLot, status: 'VALID', quantity: 100 }),
+          },
+          stockTransferHistory: {
+            create: jest.fn().mockResolvedValue({ id: 'history-1' }),
+          },
+          region: {
+            findUnique: jest.fn().mockResolvedValue({ name: 'Dakar' }),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await confirmPendingTransfer(req, res, next);
+
+      expect(res.json).toHaveBeenCalled();
+    });
+
+    it('devrait gérer le cas où le lot est expiré', async () => {
+      req.user.role = 'REGIONAL';
+      req.params.transferId = 'transfer-1';
+      prisma.user.findUnique.mockResolvedValue({ regionId: 'region-1' });
+      const expiredDate = new Date('2020-01-01'); // Date passée
+      const mockTransfer = {
+        id: 'transfer-1',
+        vaccineId: 'vaccine-1',
+        toType: 'REGIONAL',
+        toId: 'region-1',
+        status: 'PENDING',
+        quantity: 100,
+        createdAt: new Date(),
+        lots: [
+          { lotId: 'lot-1', quantity: 100, lot: { id: 'lot-1', expiration: expiredDate, status: 'EXPIRED' } },
+        ],
+        vaccine: { name: 'BCG' },
+      };
+      const mockPendingLot = {
+        id: 'pending-lot-1',
+        pendingTransferId: 'transfer-1',
+        status: 'PENDING',
+        ownerType: 'REGIONAL',
+        ownerId: 'region-1',
+        expiration: expiredDate,
+      };
+      const mockUpdatedStock = {
+        id: 'stock-1',
+        quantity: 100,
+        vaccine: { name: 'BCG' },
+        region: { name: 'Dakar' },
+      };
+      stockLotService.recordTransfer.mockResolvedValue();
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          pendingStockTransfer: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce(mockTransfer)
+              .mockResolvedValueOnce({ ...mockTransfer, confirmedBy: null }),
+            delete: jest.fn().mockResolvedValue({}),
+          },
+          stockREGIONAL: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce({ id: 'stock-1', quantity: 0 })
+              .mockResolvedValueOnce(mockUpdatedStock),
+            update: jest.fn().mockResolvedValue({ id: 'stock-1', quantity: 100 }),
+            create: jest.fn().mockResolvedValue({ id: 'stock-1', quantity: 0 }),
+          },
+          stockLot: {
+            findFirst: jest.fn().mockResolvedValue(mockPendingLot),
+            update: jest.fn().mockResolvedValue({ ...mockPendingLot, status: 'EXPIRED', quantity: 100 }),
+          },
+          stockTransferHistory: {
+            create: jest.fn().mockResolvedValue({ id: 'history-1' }),
+          },
+          region: {
+            findUnique: jest.fn().mockResolvedValue({ name: 'Dakar' }),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await confirmPendingTransfer(req, res, next);
+
+      expect(res.json).toHaveBeenCalled();
+    });
+
+    it('devrait gérer le cas où validAllocations.length === 0', async () => {
+      req.user.role = 'REGIONAL';
+      req.params.transferId = 'transfer-1';
+      prisma.user.findUnique.mockResolvedValue({ regionId: 'region-1' });
+      const mockTransfer = {
+        id: 'transfer-1',
+        vaccineId: 'vaccine-1',
+        toType: 'REGIONAL',
+        toId: 'region-1',
+        status: 'PENDING',
+        quantity: 100,
+        createdAt: new Date(),
+        lots: [
+          { lotId: 'lot-1', quantity: 100, lot: null }, // Tous les lots supprimés
+        ],
+        vaccine: { name: 'BCG' },
+      };
+      const mockPendingLot = {
+        id: 'pending-lot-1',
+        pendingTransferId: 'transfer-1',
+        status: 'PENDING',
+        ownerType: 'REGIONAL',
+        ownerId: 'region-1',
+        expiration: new Date('2025-12-31'),
+      };
+      const mockUpdatedStock = {
+        id: 'stock-1',
+        quantity: 100,
+        vaccine: { name: 'BCG' },
+        region: { name: 'Dakar' },
+      };
+      stockLotService.recordTransfer.mockClear();
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          pendingStockTransfer: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce(mockTransfer)
+              .mockResolvedValueOnce({ ...mockTransfer, confirmedBy: null }),
+            delete: jest.fn().mockResolvedValue({}),
+          },
+          stockREGIONAL: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce({ id: 'stock-1', quantity: 0 })
+              .mockResolvedValueOnce(mockUpdatedStock),
+            update: jest.fn().mockResolvedValue({ id: 'stock-1', quantity: 100 }),
+            create: jest.fn().mockResolvedValue({ id: 'stock-1', quantity: 0 }),
+          },
+          stockLot: {
+            findFirst: jest.fn().mockResolvedValue(mockPendingLot),
+            update: jest.fn().mockResolvedValue({ ...mockPendingLot, status: 'VALID', quantity: 100 }),
+          },
+          stockTransferHistory: {
+            create: jest.fn().mockResolvedValue({ id: 'history-1' }),
+          },
+          region: {
+            findUnique: jest.fn().mockResolvedValue({ name: 'Dakar' }),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await confirmPendingTransfer(req, res, next);
+
+      // recordTransfer ne devrait pas être appelé si validAllocations.length === 0
+      expect(stockLotService.recordTransfer).not.toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalled();
+    });
+
+    it('devrait gérer les erreurs sans status', async () => {
+      req.user.role = 'REGIONAL';
+      req.params.transferId = 'transfer-1';
+      prisma.user.findUnique.mockResolvedValue({ regionId: 'region-1' });
+      const error = new Error('Erreur base de données');
+      prisma.$transaction.mockRejectedValue(error);
+
+      await confirmPendingTransfer(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(error);
+    });
   });
 
   describe('createStockDISTRICT', () => {
@@ -2216,6 +2930,119 @@ describe('stockController', () => {
       await updateStockREGIONAL(req, res, next);
       expect(res.status).toHaveBeenCalledWith(400);
     });
+
+    it('devrait retourner 400 si vaccineId manquant', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.regionId = 'region-1';
+      req.body.quantity = 300;
+      await updateStockREGIONAL(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si quantity est négative', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.regionId = 'region-1';
+      req.body.quantity = -10;
+      await updateStockREGIONAL(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si quantity n\'est pas un nombre', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.regionId = 'region-1';
+      req.body.quantity = 'not-a-number';
+      await updateStockREGIONAL(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si expiration manquante quand delta > 0', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.regionId = 'region-1';
+      req.body.quantity = 300; // Plus que le stock actuel (200)
+      const mockStock = { id: 'stock-1', vaccineId: 'vaccine-1', regionId: 'region-1', quantity: 200 };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          stockREGIONAL: {
+            findUnique: jest.fn().mockResolvedValue(mockStock),
+            update: jest.fn().mockResolvedValue({ ...mockStock, quantity: 300 }),
+          },
+        };
+        try {
+          return await callback(mockTx);
+        } catch (error) {
+          throw error;
+        }
+      });
+
+      await updateStockREGIONAL(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        message: "La date d'expiration est requise pour l'ajout de nouveaux lots",
+      });
+    });
+
+    it('devrait mettre à jour sans créer de lot si delta <= 0', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.regionId = 'region-1';
+      req.body.quantity = 100; // Moins que le stock actuel (200)
+      const mockStock = { id: 'stock-1', vaccineId: 'vaccine-1', regionId: 'region-1', quantity: 200 };
+      stockLotService.createLot.mockClear();
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          stockREGIONAL: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce(mockStock)
+              .mockResolvedValueOnce({ ...mockStock, quantity: 100, vaccine: { name: 'BCG' }, region: { name: 'Région Test' } }),
+            update: jest.fn().mockResolvedValue({ ...mockStock, quantity: 100 }),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await updateStockREGIONAL(req, res, next);
+
+      expect(stockLotService.createLot).not.toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalled();
+    });
+
+    it('devrait retourner 404 si stock régional introuvable', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.regionId = 'region-1';
+      req.body.quantity = 300;
+      req.body.expiration = '2025-12-31';
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          stockREGIONAL: {
+            findUnique: jest.fn().mockResolvedValue(null),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await updateStockREGIONAL(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('devrait gérer les erreurs sans status', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.regionId = 'region-1';
+      req.body.quantity = 300;
+      req.body.expiration = '2025-12-31';
+      const error = new Error('Erreur base de données');
+      prisma.$transaction.mockRejectedValue(error);
+
+      await updateStockREGIONAL(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(error);
+    });
   });
 
   describe('updateStockDISTRICT', () => {
@@ -2258,6 +3085,93 @@ describe('stockController', () => {
       expect(res.json).toHaveBeenCalled();
     });
 
+    it('devrait retourner 400 si vaccineId manquant', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.districtId = 'district-1';
+      req.body.quantity = 300;
+      await updateStockDISTRICT(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si districtId manquant', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.quantity = 300;
+      await updateStockDISTRICT(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si quantity est négative', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.districtId = 'district-1';
+      req.body.quantity = -10;
+      await updateStockDISTRICT(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si quantity n\'est pas un nombre', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.districtId = 'district-1';
+      req.body.quantity = 'not-a-number';
+      await updateStockDISTRICT(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si expiration manquante quand delta > 0', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.districtId = 'district-1';
+      req.body.quantity = 300; // Plus que le stock actuel (200)
+      const mockStock = { id: 'stock-1', vaccineId: 'vaccine-1', districtId: 'district-1', quantity: 200 };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          stockDISTRICT: {
+            findUnique: jest.fn().mockResolvedValue(mockStock),
+            update: jest.fn().mockResolvedValue({ ...mockStock, quantity: 300 }),
+          },
+        };
+        try {
+          return await callback(mockTx);
+        } catch (error) {
+          throw error;
+        }
+      });
+
+      await updateStockDISTRICT(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        message: "La date d'expiration est requise pour l'ajout de nouveaux lots",
+      });
+    });
+
+    it('devrait mettre à jour sans créer de lot si delta <= 0', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.districtId = 'district-1';
+      req.body.quantity = 100; // Moins que le stock actuel (200)
+      const mockStock = { id: 'stock-1', vaccineId: 'vaccine-1', districtId: 'district-1', quantity: 200 };
+      stockLotService.createLot.mockClear();
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          stockDISTRICT: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce(mockStock)
+              .mockResolvedValueOnce({ ...mockStock, quantity: 100, vaccine: { name: 'BCG' }, district: { name: 'District Test', commune: {} } }),
+            update: jest.fn().mockResolvedValue({ ...mockStock, quantity: 100 }),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await updateStockDISTRICT(req, res, next);
+
+      expect(stockLotService.createLot).not.toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalled();
+    });
+
     it('devrait retourner 404 si stock district introuvable', async () => {
       req.user.role = 'SUPERADMIN';
       req.body.vaccineId = 'vaccine-1';
@@ -2276,6 +3190,20 @@ describe('stockController', () => {
       await updateStockDISTRICT(req, res, next);
 
       expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('devrait gérer les erreurs sans status', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.districtId = 'district-1';
+      req.body.quantity = 300;
+      req.body.expiration = '2025-12-31';
+      const error = new Error('Erreur base de données');
+      prisma.$transaction.mockRejectedValue(error);
+
+      await updateStockDISTRICT(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(error);
     });
   });
 
@@ -2320,6 +3248,93 @@ describe('stockController', () => {
       expect(res.json).toHaveBeenCalled();
     });
 
+    it('devrait retourner 400 si vaccineId manquant', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.healthCenterId = 'healthcenter-1';
+      req.body.quantity = 300;
+      await updateStockHEALTHCENTER(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si healthCenterId manquant', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.quantity = 300;
+      await updateStockHEALTHCENTER(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si quantity est négative', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.healthCenterId = 'healthcenter-1';
+      req.body.quantity = -10;
+      await updateStockHEALTHCENTER(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si quantity n\'est pas un nombre', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.healthCenterId = 'healthcenter-1';
+      req.body.quantity = 'not-a-number';
+      await updateStockHEALTHCENTER(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait retourner 400 si expiration manquante quand delta > 0', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.healthCenterId = 'healthcenter-1';
+      req.body.quantity = 300; // Plus que le stock actuel (200)
+      const mockStock = { id: 'stock-1', vaccineId: 'vaccine-1', healthCenterId: 'healthcenter-1', quantity: 200 };
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          stockHEALTHCENTER: {
+            findUnique: jest.fn().mockResolvedValue(mockStock),
+            update: jest.fn().mockResolvedValue({ ...mockStock, quantity: 300 }),
+          },
+        };
+        try {
+          return await callback(mockTx);
+        } catch (error) {
+          throw error;
+        }
+      });
+
+      await updateStockHEALTHCENTER(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        message: "La date d'expiration est requise pour l'ajout de nouveaux lots",
+      });
+    });
+
+    it('devrait mettre à jour sans créer de lot si delta <= 0', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.healthCenterId = 'healthcenter-1';
+      req.body.quantity = 100; // Moins que le stock actuel (200)
+      const mockStock = { id: 'stock-1', vaccineId: 'vaccine-1', healthCenterId: 'healthcenter-1', quantity: 200 };
+      stockLotService.createLot.mockClear();
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          stockHEALTHCENTER: {
+            findUnique: jest.fn()
+              .mockResolvedValueOnce(mockStock)
+              .mockResolvedValueOnce({ ...mockStock, quantity: 100, vaccine: { name: 'BCG' }, healthCenter: { name: 'Centre Test' } }),
+            update: jest.fn().mockResolvedValue({ ...mockStock, quantity: 100 }),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await updateStockHEALTHCENTER(req, res, next);
+
+      expect(stockLotService.createLot).not.toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalled();
+    });
+
     it('devrait retourner 404 si stock health center introuvable', async () => {
       req.user.role = 'SUPERADMIN';
       req.body.vaccineId = 'vaccine-1';
@@ -2338,6 +3353,20 @@ describe('stockController', () => {
       await updateStockHEALTHCENTER(req, res, next);
 
       expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('devrait gérer les erreurs sans status', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.body.vaccineId = 'vaccine-1';
+      req.body.healthCenterId = 'healthcenter-1';
+      req.body.quantity = 300;
+      req.body.expiration = '2025-12-31';
+      const error = new Error('Erreur base de données');
+      prisma.$transaction.mockRejectedValue(error);
+
+      await updateStockHEALTHCENTER(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(error);
     });
   });
 
@@ -3006,6 +4035,313 @@ describe('stockController', () => {
       expect(res.status).toHaveBeenCalledWith(404);
       expect(res.json).toHaveBeenCalledWith({ message: 'Transfert introuvable' });
     });
+
+    it('devrait retourner 400 si REGIONAL n\'a pas de regionId', async () => {
+      req.user.role = 'REGIONAL';
+      req.user.id = 'user-1';
+      delete req.user.regionId; // Supprimer regionId pour forcer l'appel à la DB
+      req.params.transferId = 'transfer-1';
+      prisma.user.findUnique.mockResolvedValue(null); // Utilisateur non trouvé ou regionId null
+
+      await rejectPendingTransfer(req, res, next);
+
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        select: { regionId: true },
+      });
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ message: "Votre compte n'est pas rattaché à une région" });
+    });
+
+    it('devrait retourner 400 si DISTRICT n\'a pas de districtId', async () => {
+      req.user.role = 'DISTRICT';
+      req.user.id = 'user-1';
+      delete req.user.districtId; // Supprimer districtId pour forcer l'appel à la DB
+      req.params.transferId = 'transfer-1';
+      prisma.user.findUnique.mockResolvedValue(null); // Utilisateur non trouvé ou districtId null
+
+      await rejectPendingTransfer(req, res, next);
+
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        select: { districtId: true },
+      });
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ message: "Votre compte n'est pas rattaché à un district" });
+    });
+
+    it('devrait retourner 403 si AGENT n\'est pas ADMIN', async () => {
+      req.user.role = 'AGENT';
+      req.user.agentLevel = 'STAFF';
+      req.params.transferId = 'transfer-1';
+
+      await rejectPendingTransfer(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    it('devrait retourner 400 si AGENT n\'a pas de healthCenterId', async () => {
+      req.user.role = 'AGENT';
+      req.user.agentLevel = 'ADMIN';
+      req.user.healthCenterId = null;
+      req.params.transferId = 'transfer-1';
+
+      await rejectPendingTransfer(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ message: "Votre compte n'est pas rattaché à un centre de santé" });
+    });
+
+    it('devrait rejeter un transfert pour SUPERADMIN', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.params.transferId = 'transfer-1';
+      
+      const mockTransfer = {
+        id: 'transfer-1',
+        status: 'PENDING',
+        vaccineId: 'vaccine-1',
+        fromType: 'NATIONAL',
+        fromId: null,
+        toType: 'REGIONAL',
+        toId: 'region-1',
+        quantity: 100,
+        createdAt: new Date(),
+        vaccine: { name: 'Test Vaccine' },
+        lots: [
+          { lotId: 'lot-1', quantity: 100, lot: { id: 'lot-1', expiration: new Date('2025-12-31'), status: 'VALID' } },
+        ],
+      };
+
+      stockLotService.restoreOrRecreateLotForRejectedTransfer.mockResolvedValue({ restored: true });
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          pendingStockTransfer: {
+            findUnique: jest.fn().mockResolvedValue(mockTransfer),
+            delete: jest.fn().mockResolvedValue({}),
+          },
+          stockLot: {
+            findFirst: jest.fn().mockResolvedValue(null),
+            findUnique: jest.fn().mockResolvedValue({ id: 'lot-1', expiration: new Date('2025-12-31'), status: 'VALID' }),
+          },
+          stockTransferHistory: {
+            create: jest.fn().mockResolvedValue({ id: 'history-1' }),
+          },
+          region: {
+            findUnique: jest.fn().mockResolvedValue({ name: 'Dakar' }),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await rejectPendingTransfer(req, res, next);
+
+      expect(res.json).toHaveBeenCalled();
+    });
+
+    it('devrait gérer le cas où le lot existe encore', async () => {
+      req.user.role = 'REGIONAL';
+      req.user.regionId = 'region-1';
+      req.params.transferId = 'transfer-1';
+      
+      const mockTransfer = {
+        id: 'transfer-1',
+        status: 'PENDING',
+        vaccineId: 'vaccine-1',
+        fromType: 'NATIONAL',
+        fromId: null,
+        toType: 'REGIONAL',
+        toId: 'region-1',
+        quantity: 100,
+        createdAt: new Date(),
+        vaccine: { name: 'Test Vaccine' },
+        lots: [
+          { lotId: 'lot-1', quantity: 100, lot: { id: 'lot-1', expiration: new Date('2025-12-31'), status: 'VALID' } },
+        ],
+      };
+
+      stockLotService.restoreOrRecreateLotForRejectedTransfer.mockResolvedValue({ restored: true });
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          pendingStockTransfer: {
+            findUnique: jest.fn().mockResolvedValue(mockTransfer),
+            delete: jest.fn().mockResolvedValue({}),
+          },
+          stockLot: {
+            findFirst: jest.fn().mockResolvedValue(null),
+            findUnique: jest.fn().mockResolvedValue({ id: 'lot-1', expiration: new Date('2025-12-31'), status: 'VALID' }),
+          },
+          stockTransferHistory: {
+            create: jest.fn().mockResolvedValue({ id: 'history-1' }),
+          },
+          region: {
+            findUnique: jest.fn().mockResolvedValue({ name: 'Dakar' }),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await rejectPendingTransfer(req, res, next);
+
+      expect(stockLotService.restoreOrRecreateLotForRejectedTransfer).toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalled();
+    });
+
+    it('devrait gérer le cas où le lot a été supprimé', async () => {
+      req.user.role = 'REGIONAL';
+      req.user.regionId = 'region-1';
+      req.params.transferId = 'transfer-1';
+      
+      const mockTransfer = {
+        id: 'transfer-1',
+        status: 'PENDING',
+        vaccineId: 'vaccine-1',
+        fromType: 'NATIONAL',
+        fromId: null,
+        toType: 'REGIONAL',
+        toId: 'region-1',
+        quantity: 100,
+        createdAt: new Date(),
+        vaccine: { name: 'Test Vaccine' },
+        lots: [
+          { 
+            lotId: 'lot-1', 
+            quantity: 100, 
+            lot: null, // Lot supprimé
+            lotExpiration: new Date('2025-12-31'),
+            lotStatus: 'VALID',
+            lotOwnerType: 'NATIONAL',
+            lotVaccineId: 'vaccine-1',
+          },
+        ],
+      };
+
+      stockLotService.restoreOrRecreateLotForRejectedTransfer.mockResolvedValue({ restored: true });
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          pendingStockTransfer: {
+            findUnique: jest.fn().mockResolvedValue(mockTransfer),
+            delete: jest.fn().mockResolvedValue({}),
+          },
+          stockLot: {
+            findFirst: jest.fn().mockResolvedValue(null),
+            findUnique: jest.fn().mockResolvedValue(null), // Lot supprimé
+          },
+          stockTransferHistory: {
+            create: jest.fn().mockResolvedValue({ id: 'history-1' }),
+          },
+          region: {
+            findUnique: jest.fn().mockResolvedValue({ name: 'Dakar' }),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await rejectPendingTransfer(req, res, next);
+
+      expect(stockLotService.restoreOrRecreateLotForRejectedTransfer).toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalled();
+    });
+
+    it('devrait gérer le cas où pendingLot existe', async () => {
+      req.user.role = 'REGIONAL';
+      req.user.regionId = 'region-1';
+      req.params.transferId = 'transfer-1';
+      
+      const mockTransfer = {
+        id: 'transfer-1',
+        status: 'PENDING',
+        vaccineId: 'vaccine-1',
+        fromType: 'NATIONAL',
+        fromId: null,
+        toType: 'REGIONAL',
+        toId: 'region-1',
+        quantity: 100,
+        createdAt: new Date(),
+        vaccine: { name: 'Test Vaccine' },
+        lots: [],
+      };
+
+      const mockPendingLot = {
+        id: 'pending-lot-1',
+        pendingTransferId: 'transfer-1',
+        status: 'PENDING',
+        ownerType: 'REGIONAL',
+        ownerId: 'region-1',
+        expiration: new Date('2025-12-31'),
+      };
+
+      stockLotService.deleteLotDirect.mockResolvedValue({ deleted: true });
+      stockLotService.restoreOrRecreateLotForRejectedTransfer.mockResolvedValue({ restored: true });
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          pendingStockTransfer: {
+            findUnique: jest.fn().mockResolvedValue(mockTransfer),
+            delete: jest.fn().mockResolvedValue({}),
+          },
+          stockLot: {
+            findFirst: jest.fn().mockResolvedValue(mockPendingLot),
+            findUnique: jest.fn().mockResolvedValue(null),
+          },
+          stockTransferHistory: {
+            create: jest.fn().mockResolvedValue({ id: 'history-1' }),
+          },
+          region: {
+            findUnique: jest.fn().mockResolvedValue({ name: 'Dakar' }),
+          },
+        };
+        return callback(mockTx);
+      });
+
+      await rejectPendingTransfer(req, res, next);
+
+      expect(stockLotService.deleteLotDirect).toHaveBeenCalledWith(
+        expect.anything(),
+        'pending-lot-1'
+      );
+      expect(res.json).toHaveBeenCalled();
+    });
+
+    it('devrait retourner 400 si transfert déjà confirmé', async () => {
+      req.user.role = 'REGIONAL';
+      req.user.regionId = 'region-1';
+      req.params.transferId = 'transfer-1';
+      
+      const mockTransfer = {
+        id: 'transfer-1',
+        status: 'CONFIRMED',
+        toType: 'REGIONAL',
+        toId: 'region-1',
+      };
+
+      prisma.$transaction.mockImplementation(async (callback) => {
+        const mockTx = {
+          pendingStockTransfer: {
+            findUnique: jest.fn().mockResolvedValue(mockTransfer),
+          },
+        };
+        try {
+          return await callback(mockTx);
+        } catch (error) {
+          throw error;
+        }
+      });
+
+      await rejectPendingTransfer(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('devrait gérer les erreurs sans status', async () => {
+      req.user.role = 'REGIONAL';
+      req.user.regionId = 'region-1';
+      req.params.transferId = 'transfer-1';
+      const error = new Error('Erreur base de données');
+      prisma.$transaction.mockRejectedValue(error);
+
+      await rejectPendingTransfer(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(error);
+    });
   });
 
   describe('cancelPendingTransfer', () => {
@@ -3048,8 +4384,22 @@ describe('stockController', () => {
   });
 
   describe('getTransferHistory', () => {
+    beforeEach(() => {
+      prisma.user.findUnique = jest.fn();
+      prisma.region.findUnique = jest.fn();
+      prisma.district.findUnique = jest.fn();
+      prisma.healthCenter.findUnique = jest.fn();
+    });
+
     it('devrait retourner 403 si utilisateur n\'est pas autorisé', async () => {
       req.user.role = 'PARENT';
+      await getTransferHistory(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    it('devrait retourner 403 si AGENT n\'est pas ADMIN ou STAFF', async () => {
+      req.user.role = 'AGENT';
+      req.user.agentLevel = 'USER';
       await getTransferHistory(req, res, next);
       expect(res.status).toHaveBeenCalledWith(403);
     });
@@ -3072,6 +4422,566 @@ describe('stockController', () => {
           page: expect.any(Number),
           limit: expect.any(Number),
         })
+      );
+    });
+
+    it('devrait retourner l\'historique pour SUPERADMIN sans filtre d\'entité', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.query = { page: '1', limit: '20' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      expect(prisma.stockTransferHistory.findMany).toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          history: [],
+          total: 0,
+        })
+      );
+    });
+
+    it('devrait filtrer par REGIONAL avec regionId', async () => {
+      req.user.role = 'REGIONAL';
+      req.user.id = 'user-1';
+      req.user.regionId = 'region-1';
+      req.query = { page: '1', limit: '20' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      expect(prisma.stockTransferHistory.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([
+              expect.objectContaining({
+                OR: expect.arrayContaining([
+                  expect.objectContaining({ fromType: 'REGIONAL', fromId: 'region-1' }),
+                  expect.objectContaining({ toType: 'REGIONAL', toId: 'region-1' }),
+                ]),
+              }),
+            ]),
+          }),
+        }),
+      );
+    });
+
+    it('devrait retourner tableau vide si REGIONAL sans regionId', async () => {
+      req.user.role = 'REGIONAL';
+      req.user.id = 'user-1';
+      req.user.regionId = null;
+      prisma.user.findUnique.mockResolvedValue(null);
+      req.query = { page: '1', limit: '20' };
+
+      await getTransferHistory(req, res, next);
+
+      expect(res.json).toHaveBeenCalledWith({
+        history: [],
+        total: 0,
+        page: 1,
+        limit: 20,
+      });
+    });
+
+    it('devrait filtrer par DISTRICT avec districtId', async () => {
+      req.user.role = 'DISTRICT';
+      req.user.id = 'user-1';
+      req.user.districtId = 'district-1';
+      req.query = { page: '1', limit: '20' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      expect(prisma.stockTransferHistory.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([
+              expect.objectContaining({
+                OR: expect.arrayContaining([
+                  expect.objectContaining({ fromType: 'DISTRICT', fromId: 'district-1' }),
+                  expect.objectContaining({ toType: 'DISTRICT', toId: 'district-1' }),
+                ]),
+              }),
+            ]),
+          }),
+        }),
+      );
+    });
+
+    it('devrait retourner tableau vide si DISTRICT sans districtId', async () => {
+      req.user.role = 'DISTRICT';
+      req.user.id = 'user-1';
+      req.user.districtId = null;
+      prisma.user.findUnique.mockResolvedValue(null);
+      req.query = { page: '1', limit: '20' };
+
+      await getTransferHistory(req, res, next);
+
+      expect(res.json).toHaveBeenCalledWith({
+        history: [],
+        total: 0,
+        page: 1,
+        limit: 20,
+      });
+    });
+
+    it('devrait filtrer par AGENT avec healthCenterId', async () => {
+      req.user.role = 'AGENT';
+      req.user.agentLevel = 'ADMIN';
+      req.user.id = 'user-1';
+      req.user.healthCenterId = 'hc-1';
+      req.query = { page: '1', limit: '20' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      expect(prisma.stockTransferHistory.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([
+              expect.objectContaining({
+                OR: expect.arrayContaining([
+                  expect.objectContaining({ fromType: 'HEALTHCENTER', fromId: 'hc-1' }),
+                  expect.objectContaining({ toType: 'HEALTHCENTER', toId: 'hc-1' }),
+                ]),
+              }),
+            ]),
+          }),
+        }),
+      );
+    });
+
+    it('devrait retourner tableau vide si AGENT sans healthCenterId', async () => {
+      req.user.role = 'AGENT';
+      req.user.agentLevel = 'ADMIN';
+      req.user.id = 'user-1';
+      req.user.healthCenterId = null;
+      prisma.user.findUnique.mockResolvedValue(null);
+      req.query = { page: '1', limit: '20' };
+
+      await getTransferHistory(req, res, next);
+
+      expect(res.json).toHaveBeenCalledWith({
+        history: [],
+        total: 0,
+        page: 1,
+        limit: 20,
+      });
+    });
+
+    it('devrait filtrer par SUPERADMIN avec overrideRegionId', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.query = { page: '1', limit: '20', regionId: 'region-1' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      expect(prisma.stockTransferHistory.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([
+              expect.objectContaining({
+                OR: expect.arrayContaining([
+                  expect.objectContaining({ fromType: 'REGIONAL', fromId: 'region-1' }),
+                  expect.objectContaining({ toType: 'REGIONAL', toId: 'region-1' }),
+                ]),
+              }),
+            ]),
+          }),
+        }),
+      );
+    });
+
+    it('devrait filtrer par SUPERADMIN avec overrideDistrictId', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.query = { page: '1', limit: '20', districtId: 'district-1' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      expect(prisma.stockTransferHistory.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([
+              expect.objectContaining({
+                OR: expect.arrayContaining([
+                  expect.objectContaining({ fromType: 'DISTRICT', fromId: 'district-1' }),
+                  expect.objectContaining({ toType: 'DISTRICT', toId: 'district-1' }),
+                ]),
+              }),
+            ]),
+          }),
+        }),
+      );
+    });
+
+    it('devrait filtrer par SUPERADMIN avec overrideHealthCenterId', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.query = { page: '1', limit: '20', healthCenterId: 'hc-1' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      expect(prisma.stockTransferHistory.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([
+              expect.objectContaining({
+                OR: expect.arrayContaining([
+                  expect.objectContaining({ fromType: 'HEALTHCENTER', fromId: 'hc-1' }),
+                  expect.objectContaining({ toType: 'HEALTHCENTER', toId: 'hc-1' }),
+                ]),
+              }),
+            ]),
+          }),
+        }),
+      );
+    });
+
+    it('devrait appliquer fromType et toType pour REGIONAL', async () => {
+      req.user.role = 'REGIONAL';
+      req.user.id = 'user-1';
+      req.user.regionId = 'region-1';
+      req.query = { page: '1', limit: '20', fromType: 'REGIONAL', toType: 'DISTRICT' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      const callArgs = prisma.stockTransferHistory.findMany.mock.calls[0][0];
+      const roleFilter = callArgs.where.AND.find(cond => cond.OR);
+      expect(roleFilter.OR[0].fromType).toBe('REGIONAL');
+      expect(roleFilter.OR[1].toType).toBe('DISTRICT');
+    });
+
+    it('devrait filtrer par vaccineId pour NATIONAL', async () => {
+      req.user.role = 'NATIONAL';
+      req.query = { page: '1', limit: '20', vaccineId: 'vaccine-1' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      expect(prisma.stockTransferHistory.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            vaccineId: 'vaccine-1',
+          }),
+        }),
+      );
+    });
+
+    it('devrait filtrer par fromType, toType, fromId, toId pour NATIONAL', async () => {
+      req.user.role = 'NATIONAL';
+      req.query = {
+        page: '1',
+        limit: '20',
+        fromType: 'REGIONAL',
+        toType: 'DISTRICT',
+        fromId: 'region-1',
+        toId: 'district-1',
+      };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      const callArgs = prisma.stockTransferHistory.findMany.mock.calls[0][0];
+      expect(callArgs.where.fromType).toBe('REGIONAL');
+      expect(callArgs.where.toType).toBe('DISTRICT');
+      expect(callArgs.where.fromId).toBe('region-1');
+      expect(callArgs.where.toId).toBe('district-1');
+    });
+
+    it('devrait filtrer par vaccineId et fromId/toId pour REGIONAL (pas fromType/toType)', async () => {
+      req.user.role = 'REGIONAL';
+      req.user.id = 'user-1';
+      req.user.regionId = 'region-1';
+      req.query = {
+        page: '1',
+        limit: '20',
+        vaccineId: 'vaccine-1',
+        fromId: 'region-1',
+        toId: 'district-1',
+      };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      const callArgs = prisma.stockTransferHistory.findMany.mock.calls[0][0];
+      expect(callArgs.where.vaccineId).toBe('vaccine-1');
+      expect(callArgs.where.fromId).toBe('region-1');
+      expect(callArgs.where.toId).toBe('district-1');
+      expect(callArgs.where.fromType).toBeUndefined();
+      expect(callArgs.where.toType).toBeUndefined();
+    });
+
+    it('devrait appliquer fromType et toType pour DISTRICT', async () => {
+      req.user.role = 'DISTRICT';
+      req.user.id = 'user-1';
+      req.user.districtId = 'district-1';
+      req.query = { page: '1', limit: '20', fromType: 'DISTRICT', toType: 'HEALTHCENTER' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      const callArgs = prisma.stockTransferHistory.findMany.mock.calls[0][0];
+      const roleFilter = callArgs.where.AND.find(cond => cond.OR);
+      expect(roleFilter.OR[0].fromType).toBe('DISTRICT');
+      expect(roleFilter.OR[1].toType).toBe('HEALTHCENTER');
+    });
+
+    it('devrait appliquer fromType et toType pour AGENT', async () => {
+      req.user.role = 'AGENT';
+      req.user.agentLevel = 'ADMIN';
+      req.user.id = 'user-1';
+      req.user.healthCenterId = 'hc-1';
+      req.query = { page: '1', limit: '20', fromType: 'HEALTHCENTER', toType: 'DISTRICT' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      const callArgs = prisma.stockTransferHistory.findMany.mock.calls[0][0];
+      const roleFilter = callArgs.where.AND.find(cond => cond.OR);
+      expect(roleFilter.OR[0].fromType).toBe('HEALTHCENTER');
+      expect(roleFilter.OR[1].toType).toBe('DISTRICT');
+    });
+
+    it('devrait appliquer fromType et toType pour SUPERADMIN avec overrideDistrictId', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.query = { page: '1', limit: '20', districtId: 'district-1', fromType: 'DISTRICT', toType: 'HEALTHCENTER' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      const callArgs = prisma.stockTransferHistory.findMany.mock.calls[0][0];
+      const roleFilter = callArgs.where.AND.find(cond => cond.OR);
+      expect(roleFilter.OR[0].fromType).toBe('DISTRICT');
+      expect(roleFilter.OR[1].toType).toBe('HEALTHCENTER');
+    });
+
+    it('devrait appliquer fromType et toType pour SUPERADMIN avec overrideHealthCenterId', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.query = { page: '1', limit: '20', healthCenterId: 'hc-1', fromType: 'HEALTHCENTER', toType: 'DISTRICT' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      const callArgs = prisma.stockTransferHistory.findMany.mock.calls[0][0];
+      const roleFilter = callArgs.where.AND.find(cond => cond.OR);
+      expect(roleFilter.OR[0].fromType).toBe('HEALTHCENTER');
+      expect(roleFilter.OR[1].toType).toBe('DISTRICT');
+    });
+
+    it('devrait appliquer fromType et toType pour DISTRICT', async () => {
+      req.user.role = 'DISTRICT';
+      req.user.id = 'user-1';
+      req.user.districtId = 'district-1';
+      req.query = { page: '1', limit: '20', fromType: 'DISTRICT', toType: 'HEALTHCENTER' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      const callArgs = prisma.stockTransferHistory.findMany.mock.calls[0][0];
+      const roleFilter = callArgs.where.AND.find(cond => cond.OR);
+      expect(roleFilter.OR[0].fromType).toBe('DISTRICT');
+      expect(roleFilter.OR[1].toType).toBe('HEALTHCENTER');
+    });
+
+    it('devrait appliquer fromType et toType pour AGENT', async () => {
+      req.user.role = 'AGENT';
+      req.user.agentLevel = 'ADMIN';
+      req.user.id = 'user-1';
+      req.user.healthCenterId = 'hc-1';
+      req.query = { page: '1', limit: '20', fromType: 'HEALTHCENTER', toType: 'DISTRICT' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      const callArgs = prisma.stockTransferHistory.findMany.mock.calls[0][0];
+      const roleFilter = callArgs.where.AND.find(cond => cond.OR);
+      expect(roleFilter.OR[0].fromType).toBe('HEALTHCENTER');
+      expect(roleFilter.OR[1].toType).toBe('DISTRICT');
+    });
+
+    it('devrait appliquer fromType et toType pour SUPERADMIN avec overrideDistrictId', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.query = { page: '1', limit: '20', districtId: 'district-1', fromType: 'DISTRICT', toType: 'HEALTHCENTER' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      const callArgs = prisma.stockTransferHistory.findMany.mock.calls[0][0];
+      const roleFilter = callArgs.where.AND.find(cond => cond.OR);
+      expect(roleFilter.OR[0].fromType).toBe('DISTRICT');
+      expect(roleFilter.OR[1].toType).toBe('HEALTHCENTER');
+    });
+
+    it('devrait appliquer fromType et toType pour SUPERADMIN avec overrideHealthCenterId', async () => {
+      req.user.role = 'SUPERADMIN';
+      req.query = { page: '1', limit: '20', healthCenterId: 'hc-1', fromType: 'HEALTHCENTER', toType: 'DISTRICT' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      const callArgs = prisma.stockTransferHistory.findMany.mock.calls[0][0];
+      const roleFilter = callArgs.where.AND.find(cond => cond.OR);
+      expect(roleFilter.OR[0].fromType).toBe('HEALTHCENTER');
+      expect(roleFilter.OR[1].toType).toBe('DISTRICT');
+    });
+
+    it('devrait filtrer par search (vaccineName, fromName, toName)', async () => {
+      req.user.role = 'NATIONAL';
+      req.query = { page: '1', limit: '20', search: 'BCG' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      const callArgs = prisma.stockTransferHistory.findMany.mock.calls[0][0];
+      const searchCondition = callArgs.where.AND.find(cond => cond.OR);
+      expect(searchCondition.OR).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ vaccineName: expect.objectContaining({ contains: 'BCG' }) }),
+          expect.objectContaining({ fromName: expect.objectContaining({ contains: 'BCG' }) }),
+          expect.objectContaining({ toName: expect.objectContaining({ contains: 'BCG' }) }),
+        ])
+      );
+    });
+
+    it('devrait filtrer par sentStartDate uniquement', async () => {
+      req.user.role = 'NATIONAL';
+      req.query = { page: '1', limit: '20', sentStartDate: '2024-01-01' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      expect(prisma.stockTransferHistory.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            sentAt: expect.objectContaining({
+              gte: expect.any(Date),
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('devrait filtrer par sentEndDate uniquement', async () => {
+      req.user.role = 'NATIONAL';
+      req.query = { page: '1', limit: '20', sentEndDate: '2024-12-31' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      expect(prisma.stockTransferHistory.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            sentAt: expect.objectContaining({
+              lte: expect.any(Date),
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('devrait filtrer par sentStartDate et sentEndDate', async () => {
+      req.user.role = 'NATIONAL';
+      req.query = { page: '1', limit: '20', sentStartDate: '2024-01-01', sentEndDate: '2024-12-31' };
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      expect(prisma.stockTransferHistory.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            sentAt: expect.objectContaining({
+              gte: expect.any(Date),
+              lte: expect.any(Date),
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('devrait filtrer par confirmedStartDate uniquement', async () => {
+      req.user.role = 'NATIONAL';
+      req.query = { page: '1', limit: '20', confirmedStartDate: '2024-01-01' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      expect(prisma.stockTransferHistory.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            confirmedAt: expect.objectContaining({
+              gte: expect.any(Date),
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('devrait filtrer par confirmedEndDate uniquement', async () => {
+      req.user.role = 'NATIONAL';
+      req.query = { page: '1', limit: '20', confirmedEndDate: '2024-12-31' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      expect(prisma.stockTransferHistory.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            confirmedAt: expect.objectContaining({
+              lte: expect.any(Date),
+            }),
+          }),
+        }),
       );
     });
 
@@ -3108,6 +5018,101 @@ describe('stockController', () => {
           where: expect.objectContaining({
             AND: expect.any(Array),
           }),
+        }),
+      );
+    });
+
+    it('devrait utiliser undefined pour where si aucune condition', async () => {
+      req.user.role = 'NATIONAL';
+      req.query = { page: '1', limit: '20' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      const callArgs = prisma.stockTransferHistory.findMany.mock.calls[0][0];
+      expect(callArgs.where).toBeUndefined();
+    });
+
+    it('devrait gérer la pagination avec page et limit', async () => {
+      req.user.role = 'NATIONAL';
+      req.query = { page: '2', limit: '10' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(50);
+
+      await getTransferHistory(req, res, next);
+
+      expect(prisma.stockTransferHistory.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          skip: 10,
+          take: 10,
+        }),
+      );
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          page: 2,
+          limit: 10,
+          totalPages: 5,
+        }),
+      );
+    });
+
+    it('devrait limiter limit à 100 maximum', async () => {
+      req.user.role = 'NATIONAL';
+      req.query = { page: '1', limit: '200' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      expect(prisma.stockTransferHistory.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          take: 100,
+        }),
+      );
+    });
+
+    it('devrait utiliser page 1 par défaut si page invalide', async () => {
+      req.user.role = 'NATIONAL';
+      req.query = { page: 'invalid', limit: '20' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      expect(prisma.stockTransferHistory.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          skip: 0,
+        }),
+      );
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          page: 1,
+        }),
+      );
+    });
+
+    it('devrait utiliser limit 20 par défaut si limit invalide', async () => {
+      req.user.role = 'NATIONAL';
+      req.query = { page: '1', limit: 'invalid' };
+      
+      prisma.stockTransferHistory.findMany.mockResolvedValue([]);
+      prisma.stockTransferHistory.count.mockResolvedValue(0);
+
+      await getTransferHistory(req, res, next);
+
+      expect(prisma.stockTransferHistory.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          take: 20,
+        }),
+      );
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          limit: 20,
         }),
       );
     });
@@ -3213,21 +5218,33 @@ describe('stockController', () => {
 
     it('devrait retourner un tableau vide si regionId non trouvé pour REGIONAL', async () => {
       req.user.role = 'REGIONAL';
+      req.user.id = 'user-1';
+      delete req.user.regionId;
       prisma.user.findUnique.mockResolvedValue(null);
       prisma.pendingStockTransfer.findMany.mockResolvedValue([]);
 
       await getPendingTransfersForSender(req, res, next);
 
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        select: { regionId: true },
+      });
       expect(res.json).toHaveBeenCalledWith({ transfers: [] });
     });
 
     it('devrait retourner un tableau vide si districtId non trouvé pour DISTRICT', async () => {
       req.user.role = 'DISTRICT';
+      req.user.id = 'user-1';
+      delete req.user.districtId;
       prisma.user.findUnique.mockResolvedValue(null);
       prisma.pendingStockTransfer.findMany.mockResolvedValue([]);
 
       await getPendingTransfersForSender(req, res, next);
 
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        select: { districtId: true },
+      });
       expect(res.json).toHaveBeenCalledWith({ transfers: [] });
     });
 

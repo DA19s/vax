@@ -1,6 +1,6 @@
 const prisma = require("../config/prismaClient");
 const { generateAccessCode } = require("../utils/accessCode");
-const { sendParentAccessCode, sendVerificationCode } = require("../services/notification");
+const { sendParentAccessCode, sendVerificationCode, sendPhoneChangeVerificationCode, sendPinResetVerificationCode } = require("../services/notification");
 const tokenService = require("../services/tokenService");
 const bcrypt = require("bcryptjs");
 const {
@@ -1451,6 +1451,62 @@ const getChildDashboard = async (req, res, next) => {
 
     // L'accès est déjà vérifié par le middleware requireMobileAuth
 
+    // Récupérer les demandes de rendez-vous en attente
+    const pendingRequests = await prisma.vaccineRequest.findMany({
+      where: {
+        childId: childId,
+        status: "PENDING",
+      },
+      select: {
+        vaccineId: true,
+        dose: true,
+      },
+    });
+
+    // Créer des Maps pour vérifier rapidement si une demande ou un rendez-vous existe
+    const requestMap = new Map();
+    pendingRequests.forEach((request) => {
+      const key = `${request.vaccineId}_${request.dose ?? 1}`;
+      requestMap.set(key, true);
+    });
+
+    const scheduledMap = new Map();
+    child.scheduledVaccines.forEach((item) => {
+      const key = `${item.vaccineId}_${item.dose ?? 1}`;
+      scheduledMap.set(key, true);
+    });
+
+    // Fonctions helper pour vérifier l'état de la demande
+    const hasRequested = (vaccineId, dose) => {
+      const key = `${vaccineId}_${dose ?? 1}`;
+      return requestMap.has(key);
+    };
+
+    const isScheduled = (vaccineId, dose) => {
+      const key = `${vaccineId}_${dose ?? 1}`;
+      return scheduledMap.has(key);
+    };
+
+    // Filtrer les vaccins "due" pour ne garder que la plus petite dose par vaccin
+    const dueByVaccine = new Map();
+    child.dueVaccines.forEach((entry) => {
+      const key = entry.vaccineId;
+      const currentDose = entry.dose ?? 1;
+      if (!dueByVaccine.has(key) || currentDose < (dueByVaccine.get(key).dose ?? 1)) {
+        dueByVaccine.set(key, entry);
+      }
+    });
+
+    // Filtrer les vaccins "late" pour ne garder que la plus petite dose par vaccin
+    const lateByVaccine = new Map();
+    child.lateVaccines.forEach((entry) => {
+      const key = entry.vaccineId;
+      const currentDose = entry.dose ?? 1;
+      if (!lateByVaccine.has(key) || currentDose < (lateByVaccine.get(key).dose ?? 1)) {
+        lateByVaccine.set(key, entry);
+      }
+    });
+
     // Calculer l'âge de l'enfant
     const now = new Date();
     const birth = new Date(child.birthDate);
@@ -1493,20 +1549,25 @@ const getChildDashboard = async (req, res, next) => {
         },
       },
       vaccinations: {
-        due: child.dueVaccines.map((entry) => ({
-          id: entry.id,
-          vaccineId: entry.vaccineId,
-          vaccineName: entry.vaccine.name,
-          dosesRequired: entry.vaccine.dosesRequired,
-          scheduledFor: entry.scheduledFor,
-          calendarId: entry.vaccineCalendarId,
-          calendarDescription: entry.vaccineCalendar?.description ?? null,
-          ageUnit: entry.vaccineCalendar?.ageUnit ?? null,
-          specificAge: entry.vaccineCalendar?.specificAge ?? null,
-          minAge: entry.vaccineCalendar?.minAge ?? null,
-          maxAge: entry.vaccineCalendar?.maxAge ?? null,
-          dose: entry.dose ?? 1,
-        })),
+        due: Array.from(dueByVaccine.values()).map((entry) => {
+          const dose = entry.dose ?? 1;
+          return {
+            id: entry.id,
+            vaccineId: entry.vaccineId,
+            vaccineName: entry.vaccine.name,
+            dosesRequired: entry.vaccine.dosesRequired,
+            scheduledFor: entry.scheduledFor,
+            calendarId: entry.vaccineCalendarId,
+            calendarDescription: entry.vaccineCalendar?.description ?? null,
+            ageUnit: entry.vaccineCalendar?.ageUnit ?? null,
+            specificAge: entry.vaccineCalendar?.specificAge ?? null,
+            minAge: entry.vaccineCalendar?.minAge ?? null,
+            maxAge: entry.vaccineCalendar?.maxAge ?? null,
+            dose: dose,
+            hasRequested: hasRequested(entry.vaccineId, dose),
+            isScheduled: isScheduled(entry.vaccineId, dose),
+          };
+        }),
         scheduled: child.scheduledVaccines.map((entry) => ({
           id: entry.id,
           vaccineId: entry.vaccineId,
@@ -1521,30 +1582,40 @@ const getChildDashboard = async (req, res, next) => {
           calendarDescription: entry.vaccineCalendar?.description ?? null,
           dose: entry.dose ?? 1,
         })),
-        late: child.lateVaccines.map((entry) => ({
-          id: entry.id,
-          vaccineId: entry.vaccineId,
-          vaccineName: entry.vaccine.name,
-          dosesRequired: entry.vaccine.dosesRequired,
-          dueDate: entry.dueDate,
-          calendarId: entry.vaccineCalendarId,
-          calendarDescription: entry.vaccineCalendar?.description ?? null,
-          ageUnit: entry.vaccineCalendar?.ageUnit ?? null,
-          specificAge: entry.vaccineCalendar?.specificAge ?? null,
-          minAge: entry.vaccineCalendar?.minAge ?? null,
-          maxAge: entry.vaccineCalendar?.maxAge ?? null,
-          dose: entry.dose ?? 1,
-        })),
-        overdue: child.overdueVaccines.map((entry) => ({
-          id: entry.id,
-          vaccineId: entry.vaccineId,
-          vaccineName: entry.vaccine.name,
-          dosesRequired: entry.vaccine.dosesRequired,
-          dueDate: entry.dueDate,
-          calendarId: entry.vaccineCalendarId,
-          calendarDescription: entry.vaccineCalendar?.description ?? null,
-          dose: entry.dose ?? 1,
-        })),
+        late: Array.from(lateByVaccine.values()).map((entry) => {
+          const dose = entry.dose ?? 1;
+          return {
+            id: entry.id,
+            vaccineId: entry.vaccineId,
+            vaccineName: entry.vaccine.name,
+            dosesRequired: entry.vaccine.dosesRequired,
+            dueDate: entry.dueDate,
+            calendarId: entry.vaccineCalendarId,
+            calendarDescription: entry.vaccineCalendar?.description ?? null,
+            ageUnit: entry.vaccineCalendar?.ageUnit ?? null,
+            specificAge: entry.vaccineCalendar?.specificAge ?? null,
+            minAge: entry.vaccineCalendar?.minAge ?? null,
+            maxAge: entry.vaccineCalendar?.maxAge ?? null,
+            dose: dose,
+            hasRequested: hasRequested(entry.vaccineId, dose),
+            isScheduled: isScheduled(entry.vaccineId, dose),
+          };
+        }),
+        overdue: child.overdueVaccines.map((entry) => {
+          const dose = entry.dose ?? 1;
+          return {
+            id: entry.id,
+            vaccineId: entry.vaccineId,
+            vaccineName: entry.vaccine.name,
+            dosesRequired: entry.vaccine.dosesRequired,
+            dueDate: entry.dueDate,
+            calendarId: entry.vaccineCalendarId,
+            calendarDescription: entry.vaccineCalendar?.description ?? null,
+            dose: dose,
+            hasRequested: hasRequested(entry.vaccineId, dose),
+            isScheduled: isScheduled(entry.vaccineId, dose),
+          };
+        }),
         completed: child.completedVaccines.map((entry) => ({
           id: entry.id,
           vaccineId: entry.vaccineId,
@@ -1561,9 +1632,9 @@ const getChildDashboard = async (req, res, next) => {
         })),
       },
       stats: {
-        totalDue: child.dueVaccines.length,
+        totalDue: Array.from(dueByVaccine.values()).length,
         totalScheduled: child.scheduledVaccines.length,
-        totalLate: child.lateVaccines.length,
+        totalLate: Array.from(lateByVaccine.values()).length,
         totalOverdue: child.overdueVaccines.length,
         totalCompleted: child.completedVaccines.length,
       },
@@ -1707,11 +1778,18 @@ const getAdvice = async (req, res, next) => {
 /**
  * GET /api/mobile/campaigns
  * Obtenir les campagnes de vaccination (pour les parents mobiles)
+ * Ne retourne que les campagnes non terminées (endDate >= aujourd'hui)
  */
 const getCampaigns = async (req, res, next) => {
   try {
-    // Les parents mobiles peuvent voir toutes les campagnes actives
+    const now = new Date();
+    // Les parents mobiles peuvent voir uniquement les campagnes non terminées
     const campaigns = await prisma.campaign.findMany({
+      where: {
+        endDate: {
+          gte: now, // Seulement les campagnes dont la date de fin est >= aujourd'hui
+        },
+      },
       include: {
         region: {
           select: {
@@ -2299,6 +2377,425 @@ const changeParentPin = async (req, res, next) => {
   }
 };
 
+/**
+ * POST /api/mobile/parent-pin/forgot-pin-request
+ * Demander un code de réinitialisation pour un PIN oublié
+ */
+const requestForgotPinCode = async (req, res, next) => {
+  try {
+    const { phone } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({
+        success: false,
+        message: "Numéro de téléphone requis",
+      });
+    }
+
+    // Trouver un enfant avec ce numéro de téléphone
+    const child = await prisma.children.findFirst({
+      where: {
+        phoneParent: phone,
+      },
+    });
+
+    if (!child) {
+      return res.status(404).json({
+        success: false,
+        message: "Aucun compte trouvé avec ce numéro de téléphone",
+      });
+    }
+
+    // Vérifier que le PIN est configuré (pas le PIN par défaut)
+    if (!child.passwordParent || child.passwordParent === "0000") {
+      return res.status(400).json({
+        success: false,
+        message: "Aucun PIN configuré pour ce compte",
+      });
+    }
+
+    // Générer un code de vérification à 6 chiffres
+    const verificationCode = generateAccessCode(6);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Stocker le code temporairement dans le champ code (format: FORGOT_PIN_CODE_EXPIRESAT)
+    await prisma.children.update({
+      where: { id: child.id },
+      data: {
+        code: `FORGOT_PIN_${verificationCode}_${expiresAt.getTime()}`,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: "Code de réinitialisation envoyé par WhatsApp",
+    });
+
+    // Envoyer le code par WhatsApp (après la réponse)
+    try {
+      const parentName = child.fatherName || child.motherName || "Parent";
+      await sendPinResetVerificationCode({
+        to: phone,
+        parentName,
+        verificationCode,
+      });
+    } catch (whatsappError) {
+      console.error("Erreur envoi code réinitialisation PIN WhatsApp:", whatsappError);
+      // Ne pas bloquer la réponse si WhatsApp échoue
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/mobile/parent-pin/verify-forgot-pin-code
+ * Vérifier le code de réinitialisation avant de permettre la saisie du nouveau PIN
+ */
+const verifyForgotPinCode = async (req, res, next) => {
+  try {
+    const { phone, verificationCode } = req.body;
+
+    if (!phone || !verificationCode) {
+      return res.status(400).json({
+        success: false,
+        message: "phone et verificationCode requis",
+      });
+    }
+
+    // Trouver tous les enfants avec ce numéro de téléphone
+    const children = await prisma.children.findMany({
+      where: {
+        phoneParent: phone,
+      },
+    });
+
+    if (children.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Aucun compte trouvé avec ce numéro de téléphone",
+      });
+    }
+
+    // Trouver un enfant avec un code de réinitialisation valide
+    let validChild = null;
+    for (const child of children) {
+      if (child.code && child.code.startsWith("FORGOT_PIN_")) {
+        const codeParts = child.code.split("_");
+        if (codeParts.length === 4) {
+          const storedCode = codeParts[2];
+          const expiresAt = parseInt(codeParts[3]);
+
+          if (storedCode === verificationCode && Date.now() <= expiresAt) {
+            validChild = child;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!validChild) {
+      // Nettoyer les codes expirés
+      for (const child of children) {
+        if (child.code && child.code.startsWith("FORGOT_PIN_")) {
+          const codeParts = child.code.split("_");
+          if (codeParts.length === 4) {
+            const expiresAt = parseInt(codeParts[3]);
+            if (Date.now() > expiresAt) {
+              await prisma.children.update({
+                where: { id: child.id },
+                data: { code: null },
+              });
+            }
+          }
+        }
+      }
+      
+      return res.status(401).json({
+        success: false,
+        message: "Code de vérification incorrect ou expiré",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Code de vérification valide",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/mobile/parent-pin/reset-pin
+ * Réinitialiser le PIN après vérification du code WhatsApp
+ */
+const resetForgotPin = async (req, res, next) => {
+  try {
+    const { phone, verificationCode, newPin } = req.body;
+
+    if (!phone || !verificationCode || !newPin || newPin.length !== 4) {
+      return res.status(400).json({
+        success: false,
+        message: "phone, verificationCode et newPin (4 chiffres) requis",
+      });
+    }
+
+    // Trouver tous les enfants avec ce numéro de téléphone
+    const children = await prisma.children.findMany({
+      where: {
+        phoneParent: phone,
+      },
+    });
+
+    if (children.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Aucun compte trouvé avec ce numéro de téléphone",
+      });
+    }
+
+    // Trouver un enfant avec un code de réinitialisation valide
+    let validChild = null;
+    for (const child of children) {
+      if (child.code && child.code.startsWith("FORGOT_PIN_")) {
+        const codeParts = child.code.split("_");
+        if (codeParts.length === 4) {
+          const storedCode = codeParts[2];
+          const expiresAt = parseInt(codeParts[3]);
+
+          if (storedCode === verificationCode && Date.now() <= expiresAt) {
+            validChild = child;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!validChild) {
+      return res.status(401).json({
+        success: false,
+        message: "Code de vérification incorrect ou expiré",
+      });
+    }
+
+    // Hasher le nouveau PIN
+    const hashedPin = await bcrypt.hash(newPin, 10);
+
+    // Mettre à jour le PIN pour tous les enfants avec ce numéro de téléphone
+    await prisma.$transaction(
+      children.map((c) =>
+        prisma.children.update({
+          where: { id: c.id },
+          data: {
+            passwordParent: hashedPin,
+            code: null, // Nettoyer le code temporaire
+          },
+        })
+      )
+    );
+
+    res.json({
+      success: true,
+      message: "PIN réinitialisé avec succès. Vous pouvez maintenant vous connecter.",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/mobile/parent-phone/request-change-code
+ * Demander un code de vérification pour changer le numéro de téléphone
+ */
+const requestChangePhoneCode = async (req, res, next) => {
+  try {
+    const { childId, parentPhone, pin, newPhone } = req.body;
+
+    if (!childId || !parentPhone || !pin || !newPhone) {
+      return res.status(400).json({
+        success: false,
+        message: "childId, parentPhone, pin et newPhone requis",
+      });
+    }
+
+    // Vérifier le format du nouveau numéro
+    if (!/^\+?[0-9]{8,15}$/.test(newPhone.replace(/\s/g, ""))) {
+      return res.status(400).json({
+        success: false,
+        message: "Format de numéro de téléphone invalide",
+      });
+    }
+
+    // Trouver l'enfant
+    const child = await prisma.children.findUnique({
+      where: { id: childId },
+    });
+
+    if (!child || child.phoneParent !== parentPhone) {
+      return res.status(404).json({
+        success: false,
+        message: "Enfant non trouvé",
+      });
+    }
+
+    // Vérifier le PIN
+    if (!child.passwordParent || child.passwordParent === "0000") {
+      return res.status(401).json({
+        success: false,
+        message: "PIN non configuré",
+      });
+    }
+
+    const isPinValid = await bcrypt.compare(pin, child.passwordParent);
+
+    if (!isPinValid) {
+      return res.status(401).json({
+        success: false,
+        message: "PIN incorrect",
+      });
+    }
+
+    // Vérifier que le nouveau numéro est différent
+    const normalizedNewPhone = newPhone.replace(/\s/g, "");
+    const normalizedCurrentPhone = parentPhone.replace(/\s/g, "");
+    
+    if (normalizedNewPhone === normalizedCurrentPhone) {
+      return res.status(400).json({
+        success: false,
+        message: "Le nouveau numéro doit être différent de l'actuel",
+      });
+    }
+
+    // Générer un code de vérification à 6 chiffres
+    const verificationCode = generateAccessCode(6);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Stocker le code temporairement dans le champ code (format: CHANGE_PHONE_CODE_NEWPHONE_EXPIRESAT)
+    await prisma.children.update({
+      where: { id: childId },
+      data: {
+        code: `CHANGE_PHONE_${verificationCode}_${normalizedNewPhone}_${expiresAt.getTime()}`,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: "Code de vérification envoyé par WhatsApp",
+    });
+
+    // Envoyer le code par WhatsApp sur le nouveau numéro (après la réponse)
+    try {
+      const parentName = child.fatherName || child.motherName || "Parent";
+      await sendPhoneChangeVerificationCode({
+        to: normalizedNewPhone,
+        parentName,
+        verificationCode,
+      });
+    } catch (whatsappError) {
+      console.error("Erreur envoi code changement numéro WhatsApp:", whatsappError);
+      // Ne pas bloquer la réponse si WhatsApp échoue
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/mobile/parent-phone/change
+ * Changer le numéro de téléphone après vérification du code WhatsApp
+ */
+const changeParentPhone = async (req, res, next) => {
+  try {
+    const { childId, parentPhone, verificationCode } = req.body;
+
+    if (!childId || !parentPhone || !verificationCode) {
+      return res.status(400).json({
+        success: false,
+        message: "childId, parentPhone et verificationCode requis",
+      });
+    }
+
+    // Trouver l'enfant
+    const child = await prisma.children.findUnique({
+      where: { id: childId },
+    });
+
+    if (!child || child.phoneParent !== parentPhone) {
+      return res.status(404).json({
+        success: false,
+        message: "Enfant non trouvé",
+      });
+    }
+
+    // Vérifier le code de vérification
+    if (!child.code || !child.code.startsWith("CHANGE_PHONE_")) {
+      return res.status(400).json({
+        success: false,
+        message: "Aucune demande de changement de numéro en cours",
+      });
+    }
+
+    const codeParts = child.code.split("_");
+    if (codeParts.length !== 5) {
+      return res.status(400).json({
+        success: false,
+        message: "Format de code invalide",
+      });
+    }
+
+    const storedCode = codeParts[2];
+    const newPhone = codeParts[3];
+    const expiresAt = parseInt(codeParts[4]);
+
+    if (storedCode !== verificationCode) {
+      return res.status(401).json({
+        success: false,
+        message: "Code de vérification incorrect",
+      });
+    }
+
+    if (Date.now() > expiresAt) {
+      await prisma.children.update({
+        where: { id: childId },
+        data: { code: null },
+      });
+      return res.status(400).json({
+        success: false,
+        message: "Code de vérification expiré",
+      });
+    }
+
+    // Trouver tous les enfants avec le même numéro de téléphone
+    const allChildren = await prisma.children.findMany({
+      where: {
+        phoneParent: parentPhone,
+      },
+    });
+
+    // Mettre à jour tous les enfants avec le nouveau numéro
+    await prisma.$transaction(
+      allChildren.map((c) =>
+        prisma.children.update({
+          where: { id: c.id },
+          data: {
+            phoneParent: newPhone,
+            code: null, // Nettoyer le code temporaire
+          },
+        })
+      )
+    );
+
+    res.json({
+      success: true,
+      message: "Numéro de téléphone modifié avec succès",
+      newPhone: newPhone,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   requestVerificationCode,
   resendVerificationCode,
@@ -2309,6 +2806,11 @@ module.exports = {
   verifyParentPin,
   requestChangePinCode,
   changeParentPin,
+  requestForgotPinCode,
+  verifyForgotPinCode,
+  resetForgotPin,
+  requestChangePhoneCode,
+  changeParentPhone,
   getRegions,
   getHealthCenters,
   getVaccineCalendar,
